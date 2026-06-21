@@ -55,8 +55,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-lake-
 
-      - name: Build everything
-        run: lake build
+      - name: Build CI test binaries
+        run: lake build persist_spec security_spec pure_spec leanjs_spec
 
       # ──────────────────────────────────────────────────────────────
       # Self-contained smoke binaries. Each one is an LSpec-shaped
