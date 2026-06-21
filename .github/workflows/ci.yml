@@ -41,9 +41,6 @@ jobs:
             | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
-      - name: Install libssl-dev (linker needs `-lcrypto` for pure_spec)
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev
-
       - name: Show toolchain
         run: |
           lean --version

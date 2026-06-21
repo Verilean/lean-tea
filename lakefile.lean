@@ -285,14 +285,16 @@ lean_exe persist_spec where
 /-- Aggregated LSpec runner for the pure-Lean subsystems
     (Template engine + Crypto known-answer + JWT + SAML + native
     libcrypto FFI parity + Auth.Security helpers). One binary, one
-    CI step, ~30 LSpec assertions. -/
+    CI step, ~30 LSpec assertions.
+
+    No `weakLinkArgs := ["-lcrypto"]` here — the default build runs
+    the C wrapper in stub mode (no `LEANTEA_HAVE_CRYPTO`), so the
+    binary doesn't reference any libcrypto symbols. Locally, build
+    with `LEANTEA_CRYPTO=1 NIX_LDFLAGS="… -lcrypto"` to exercise
+    the FFI parity assertions. -/
 lean_exe pure_spec where
   srcDir := "examples"
   root := `Tests.PureSpec
-  weakLinkArgs := #[
-    "-L/opt/homebrew/opt/openssl@3/lib",
-    "-L/usr/local/opt/openssl@3/lib",
-    "-lcrypto"]
 
 /-- LeanJs CLI trio:
     * `leanjs_compile file.leanjs [-o out.js]` — pure compiler
