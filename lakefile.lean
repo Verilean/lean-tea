@@ -25,7 +25,7 @@ lean_lib Examples where
     `Reversi.Game,
     `Tools.GenSite,
     `Tools.LeanJsCompile, `Tools.LeanJsInterp, `Tools.LeanJsRun,
-    `Smoke.Crypto
+    `Tests.PureSpec
   ]
   /- Private examples (English Learning + game shells under
      `examples/_private/`) ship third-party content (arXiv quotes,
@@ -205,9 +205,12 @@ lean_exe counter_web where
   srcDir := "examples"
   root := `CounterWeb.Main
 
-lean_exe sqlite_smoke where
-  srcDir := "examples"
-  root := `Smoke.Sqlite
+/-! ## Subsystem smokes
+
+The Persist-related smokes (sqlite / query / migrate / auth_proof /
+safequery) are consolidated into `persist_spec` — see further below.
+The construction-time security smokes (safehtml / safepath / safecmd /
+safeheader / saferedirect) are consolidated into `security_spec`. -/
 
 lean_exe http_smoke where
   srcDir := "examples"
@@ -217,21 +220,9 @@ lean_exe http_client_smoke where
   srcDir := "examples"
   root := `Smoke.HttpClient
 
-lean_exe template_smoke where
-  srcDir := "examples"
-  root := `Smoke.Template
-
-lean_exe query_smoke where
-  srcDir := "examples"
-  root := `Smoke.Query
-
 lean_exe backend_smoke where
   srcDir := "examples"
   root := `Smoke.Backend
-
-lean_exe migrate_smoke where
-  srcDir := "examples"
-  root := `Smoke.Migrate
 
 lean_exe memcached_smoke where
   srcDir := "examples"
@@ -276,19 +267,28 @@ lean_exe leanjs_spec where
   srcDir := "examples"
   root := `Tests.LeanJsSpec
 
-/-- Crypto smoke test (SHA-256 / HMAC / PBKDF2 / Base64 / Password)
-    against RFC test vectors. With `LEANTEA_CRYPTO=1` the smoke also
-    exercises the native libcrypto path.
-
-    `weakLinkArgs` below hard-codes the Homebrew openssl@3 location
-    so this works out of the box on macOS dev machines. Linux: swap
-    in `-L/usr/lib -lcrypto` or set `NIX_LDFLAGS` if your build is
-    Nix-managed. Without `LEANTEA_CRYPTO=1` the C wrapper compiles
-    to stubs that don't reference libcrypto symbols, so the flags
-    are harmless. -/
-lean_exe crypto_smoke where
+/-- Aggregated LSpec runner for the construction-time security
+    primitives (SafeHtml + SafePath + SafeCmd + SafeHeader +
+    SafeRedirect). One binary, one CI step, ~60 LSpec assertions. -/
+lean_exe security_spec where
   srcDir := "examples"
-  root := `Smoke.Crypto
+  root := `Tests.SecuritySpec
+
+/-- Aggregated LSpec runner for the SQLite-backed integration tests
+    (Store roundtrips + Persist.Query DSL + Migration runner +
+    Auth.Proof dispatch + SafeQuery typed SQL). One binary, one CI
+    step, ~32 LSpec assertions. Each group uses its own temp DB. -/
+lean_exe persist_spec where
+  srcDir := "examples"
+  root := `Tests.PersistSpec
+
+/-- Aggregated LSpec runner for the pure-Lean subsystems
+    (Template engine + Crypto known-answer + JWT + SAML + native
+    libcrypto FFI parity + Auth.Security helpers). One binary, one
+    CI step, ~30 LSpec assertions. -/
+lean_exe pure_spec where
+  srcDir := "examples"
+  root := `Tests.PureSpec
   weakLinkArgs := #[
     "-L/opt/homebrew/opt/openssl@3/lib",
     "-L/usr/local/opt/openssl@3/lib",
@@ -449,30 +449,20 @@ lean_exe reversi_serve where
   srcDir := "examples"
   root := `Reversi.Serve
 
-/-- Smoke / PoC for `LeanTea.Auth.Proof`. Mints sessions, runs the
-    Sigma-wrapped dispatcher across multiple capabilities, exercises
-    the dependent-type `Proof (.owner id)` form. See `SECURITY.md`
-    §"Primitive 3" for the design rationale. -/
-lean_exe auth_proof_smoke where
-  srcDir := "examples"
-  root := `Smoke.AuthProof
+/-! ## Construction-time security primitives
 
-/-- Smoke / PoC for `LeanTea.Persist.SafeQuery`. Exercises typed SELECT
-    (with eq / IN / LIKE / AND / NOT), UPDATE, DELETE, COUNT, and the
-    `.trusted decl_name% "…"` audit escape hatch. See `SECURITY.md`
-    §"Primitive 1" for the design rationale. -/
-lean_exe safequery_smoke where
-  srcDir := "examples"
-  root := `Smoke.SafeQuery
+The five primitives below ship a single aggregated LSpec runner
+(`security_spec` defined above) instead of one binary each:
 
-/-- Smoke / PoC for `LeanTea.Html.SafeAttr`. Demonstrates that
-    `javascript:` URL schemes, `on*` event-handler attribute names,
-    and unsafe `style`-style attribute names are rejected at
-    construction time. See `SECURITY.md` §"Primitive 2" for the
-    design rationale. -/
-lean_exe safehtml_smoke where
-  srcDir := "examples"
-  root := `Smoke.SafeHtml
+  * SafeHtml     — `javascript:` / `on*` attribute reject
+  * SafePath     — workspace-relative + `..` / NUL / sibling-prefix
+  * SafeCmd      — `args : List String` + shell-name reject
+  * SafeHeader   — Response.setHeader CRLF + defaultSecurityHeaders
+  * SafeRedirect — origin allow-list + scheme reject
+
+Source: `examples/Tests/SecuritySpec.lean`. The heavier integration
+smokes (`auth_proof_smoke`, `safequery_smoke`) still have their own
+binaries because they need a real SQLite. -/
 
 /-! ## Private game targets
 

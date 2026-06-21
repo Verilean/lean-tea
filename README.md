@@ -57,16 +57,24 @@ and ports them into Lean 4:
 ## Secure by Construction
 
 LeanTEA's headline property is that whole classes of vulnerabilities
-**can't be expressed in user code that compiles**. Three primitives
-ship today; one more is planned. See [SECURITY.md](SECURITY.md) for
-the design + threat model and [ROADMAP.md](ROADMAP.md) for sequencing.
+**can't be expressed in user code that compiles**. **Eight primitives
+ship today**; one more is planned. The shipped set covers most of
+the IPA 「安全なウェブサイトの作り方」 11 categories and OWASP Top 10
+2021. See [SECURITY.md](SECURITY.md) for the design + threat model,
+[docs/11](docs/11-secure-by-construction.md) for the walk-through,
+and [ROADMAP.md](ROADMAP.md) for sequencing.
 
-| Vulnerability class | LeanTEA primitive | Status |
-|---|---|---|
-| Authorization bypass | `LeanTea.Auth.Proof` (`Proof c` + `Capability` lattice + dependent `Proof (.owner id)`) | ✅ shipped — [walk-through](docs/11-secure-by-construction.md#2--authproof--authorization-that-cant-be-forgotten) · [demo](examples/Smoke/AuthProof.lean) |
-| SQL / command injection | `LeanTea.Persist.SafeQuery` (typed `Where` / `Select` / `Update` / `Delete` with **AST-driven** positional binding + `.trusted decl_name%` audit escape) | ✅ shipped — [walk-through](docs/11-secure-by-construction.md#3--safequery--sql-injection-that-cannot-be-expressed) · [demo](examples/Smoke/SafeQuery.lean) |
-| Reflected / stored XSS | `LeanTea.Html.SafeAttr` (private `mk` + URL-scheme allow-list + event-handler name rejection) | ✅ shipped — [walk-through](docs/11-secure-by-construction.md#4--safehtml--xss-that-cant-be-introduced) · [demo](examples/Smoke/SafeHtml.lean) |
-| Invalid state transitions | `OrderState` / `Transition s s'` style proofs | 🚧 planned |
+| Vulnerability class | LeanTEA primitive | IPA / OWASP | Status |
+|---|---|---|---|
+| Authorization bypass / IDOR | `LeanTea.Auth.Proof` (`Proof c` + `Capability` lattice + dependent `Proof (.owner id)`) | IPA §3.7 / A01 | ✅ shipped — [walk](docs/11-secure-by-construction.md#2--authproof--authorization-that-cant-be-forgotten) · [demo](examples/Tests/PersistSpec.lean) |
+| SQL injection | `LeanTea.Persist.SafeQuery` (typed `Where` / `Select` / `Update` / `Delete` + `.trusted decl_name%` audit) | IPA §3.1 / A03 | ✅ shipped — [walk](docs/11-secure-by-construction.md#3--safequery--sql-injection-that-cannot-be-expressed) · [demo](examples/Tests/PersistSpec.lean) |
+| XSS (URL scheme + event-handler names) | `LeanTea.Html.SafeAttr` (private `mk` + URL allow-list + `on*` rejection) | IPA §3.5 / A03 | ✅ shipped — [walk](docs/11-secure-by-construction.md#4--safehtml--xss-that-cant-be-introduced) · [demo](examples/Tests/SecuritySpec.lean) |
+| Path traversal | `LeanTea.Net.SafePath` (workspace-relative + `..` / NUL / sibling-prefix reject) | IPA §3.4 / A01 | ✅ shipped — [walk](docs/11-secure-by-construction.md#5--safepath--paths-that-cant-escape-their-workspace) · [demo](examples/Tests/SecuritySpec.lean) |
+| OS command injection | `LeanTea.Os.SafeCmd` (`args : List String` + shell-name allow-list reject + grep-able `SafeCmd.shell` audit) | IPA §3.3 / A03 | ✅ shipped — [walk](docs/11-secure-by-construction.md#6--safecmd--ioprocessrun-that-cant-get-shell-injected) · [demo](examples/Tests/SecuritySpec.lean) |
+| HTTP header injection | `Response.setHeader` (CR / LF / NUL reject) | IPA §3.6 / A03 | ✅ shipped — [walk](docs/11-secure-by-construction.md#7--responsesetheader--defaultsecurityheaders--header-injection--clickjacking) · [demo](examples/Tests/SecuritySpec.lean) |
+| Clickjacking + MIME sniffing | `Response.defaultSecurityHeaders` (XFO / nosniff / Referrer-Policy / Permissions-Policy) | IPA §3.10 / A05 | ✅ shipped — [walk](docs/11-secure-by-construction.md#7--responsesetheader--defaultsecurityheaders--header-injection--clickjacking) · [demo](examples/Tests/SecuritySpec.lean) |
+| Open redirect | `LeanTea.Net.SafeRedirect` (allow-listed origin + relative-path-only mode + scheme reject + sibling-prefix reject) | IPA §3.9 / A01 | ✅ shipped — [walk](docs/11-secure-by-construction.md#8--saferedirect--open-redirect-that-needs-an-allow-list) · [demo](examples/Tests/SecuritySpec.lean) |
+| Invalid state transitions | `OrderState` / `Transition s s'` style proofs | — | 🚧 planned |
 
 ### Snippet — `SafeQuery` rejects string-shaped SQL at compile time
 
@@ -101,7 +109,8 @@ is now a build failure, not a CVE.
 
 For the full walk-through (capability lattice, dependent
 `Proof (.owner id)`, the `.trusted decl_name%` audit-grep escape, the
-~240-LOC trusted core), see **[docs/11-secure-by-construction.md](docs/11-secure-by-construction.md)**.
+~480-LOC trusted core across all eight primitives), see
+**[docs/11-secure-by-construction.md](docs/11-secure-by-construction.md)**.
 
 ## Layout
 
@@ -190,11 +199,20 @@ open http://127.0.0.1:8002/
 ./.lake/build/bin/chrome_cdp_mcp_serve --stdio
 ```
 
-Most subsystems have a `*_smoke` binary that exercises just that
-module (`http_client_smoke`, `sqlite_smoke`, `crypto_smoke`,
-`auth_proof_smoke`, `safequery_smoke`, …). Read the smoke source
-under `examples/Smoke/` as the shortest "this is what works"
-demonstration of any given area.
+Tests are organised into two consolidated LSpec runners plus a
+handful of subsystem smokes:
+
+- **`persist_spec`** — Store roundtrips + Query DSL + Migration
+  runner + Auth.Proof dispatch + SafeQuery typed SQL (32
+  assertions, one binary, one CI step).
+- **`security_spec`** — SafeHtml + SafePath + SafeCmd + SafeHeader
+  + SafeRedirect construction-time guarantees (60 assertions, one
+  binary, one CI step).
+- **`template_smoke` / `crypto_smoke` / `http_*_smoke`** — narrower
+  per-module subsystem smokes that don't yet have an LSpec runner.
+
+Read the runner source under `examples/Tests/` as the shortest
+"this is what works" demonstration of any given area.
 
 ## Architecture
 

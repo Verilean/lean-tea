@@ -53,27 +53,91 @@ def Response.notFound : Response := .text 404 "not found\n"
 def Response.badRequest : Response := .text 400 "bad request\n"
 def Response.serverError (msg : String) : Response := .text 500 (msg ++ "\n")
 
-/-- 302 Found redirect. -/
-def Response.redirect (location : String) : Response := {
-  status := 302,
-  headers := #[("location", location), ("content-type", "text/plain; charset=utf-8")],
-  body := "redirecting...\n".toUTF8
-}
+/-! ## Header injection guard
+
+We refuse to put CR (`\r`), LF (`\n`), or NUL (`\0`) into a header
+*name* or *value*. Sneaking those characters through is the classic
+HTTP-response / mail-header injection trick: a user-controlled
+`?next=…` ends up in a `Location:` header containing
+`\r\nSet-Cookie: …`, and the browser sees a second header line.
+
+`Response.setHeader` returns `Except String Response` so callers
+forward bad input as a 400. `setHeader!` is the panic variant for
+literal headers in trusted code. Other helpers in this file
+(`redirect`, `withCookie`, `clearCookie`) now route through the
+same guard. -/
+
+private def hasHeaderInjection (s : String) : Bool :=
+  s.contains '\r' || s.contains '\n' || s.contains '\u0000'
+
+/-- Append a header. Refuses CR / LF / NUL in either the name or
+    the value — those characters split the header line and let
+    attackers inject extra headers (or an entire body). -/
+def Response.setHeader (r : Response) (name value : String)
+  : Except String Response :=
+  if hasHeaderInjection name then
+    .error s!"Response.setHeader: CR/LF/NUL in header name ({repr name})"
+  else if hasHeaderInjection value then
+    .error s!"Response.setHeader: CR/LF/NUL in header value (name={name})"
+  else
+    .ok { r with headers := r.headers.push (name, value) }
+
+/-- Panic variant for literal headers in trusted code. -/
+def Response.setHeader! (r : Response) (name value : String) : Response :=
+  match r.setHeader name value with
+  | .ok r    => r
+  | .error e => panic! s!"Response.setHeader!: {e}"
+
+/-- Recommended baseline security headers. Add them once to every
+    HTML / API response and most clickjacking + MIME-sniff +
+    referer-leak issues become structurally impossible:
+
+      * `X-Frame-Options: DENY`           — IPA クリックジャッキング §3.10
+      * `X-Content-Type-Options: nosniff` — MIME sniffing
+      * `Referrer-Policy: no-referrer`    — referer-leak
+      * `Permissions-Policy: ...`         — opt-out of geolocation,
+                                            camera, microphone
+
+    Apps that need iframing should pass `frameOptions := none` and
+    set a CSP `frame-ancestors` instead. -/
+def Response.defaultSecurityHeaders (r : Response)
+    (frameOptions : Option String := some "DENY") : Response :=
+  let r1 := match frameOptions with
+            | some v => r.setHeader! "x-frame-options" v
+            | none   => r
+  let r2 := r1.setHeader! "x-content-type-options" "nosniff"
+  let r3 := r2.setHeader! "referrer-policy" "no-referrer"
+  r3.setHeader! "permissions-policy" "geolocation=(), camera=(), microphone=()"
+
+/-- 302 Found redirect. CR/LF in `location` are stripped because they
+    would inject extra response headers — see
+    `Response.setHeader` doc for the threat model. For an *audited*
+    open-redirect guard (allow-list of trusted origins), use
+    `LeanTea.Net.SafeRedirect` instead. -/
+def Response.redirect (location : String) : Response :=
+  let safe := location.replace "\r" "" |>.replace "\n" "" |>.replace "\u0000" ""
+  {
+    status := 302,
+    headers := #[("location", safe), ("content-type", "text/plain; charset=utf-8")],
+    body := "redirecting...\n".toUTF8
+  }
 
 /-- Attach a Set-Cookie header to a response. Default flags are
     `Path=/; HttpOnly; SameSite=Lax`. Pass `secure := true` for HTTPS
-    deployments. -/
+    deployments. CR/LF/NUL in `name` or `value` panic — cookies are
+    headers, so a CRLF here is the same injection vector as
+    `setHeader`. Validate `value` upstream when it carries user input. -/
 def Response.withCookie (r : Response) (name value : String)
     (maxAgeSec : Nat := 86400 * 7) (secure := false) : Response :=
   let secureFlag := if secure then "; Secure" else ""
   let v := s!"{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={maxAgeSec}{secureFlag}"
-  { r with headers := r.headers.push ("set-cookie", v) }
+  r.setHeader! "set-cookie" v
 
 /-- Set an expired cookie to delete it on the client. -/
 def Response.clearCookie (r : Response) (name : String) (secure := false) : Response :=
   let secureFlag := if secure then "; Secure" else ""
   let v := s!"{name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secureFlag}"
-  { r with headers := r.headers.push ("set-cookie", v) }
+  r.setHeader! "set-cookie" v
 
 private def statusText : Nat → String
   | 200 => "OK"        | 201 => "Created"

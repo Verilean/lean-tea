@@ -2,10 +2,22 @@
 
 LeanTEA's headline property is that whole classes of vulnerabilities
 **can't be expressed in user code that compiles**. This chapter walks
-through the three primitives that ship in v0.1: `Auth.Proof`
-(authorization), `SafeQuery` (SQL), and `SafeHtml` (XSS). All three
-are real code under `LeanTea/`, and each comes with a smoke binary
-that runs the demo end-to-end.
+through the eight primitives that ship in v0.1:
+
+| § | Primitive | Bug class | IPA category | OWASP |
+|---|---|---|---|---|
+| 2 | `Auth.Proof` | Authorization bypass / IDOR | アクセス制御 §3.7 | A01 |
+| 3 | `Persist.SafeQuery` | SQL injection | SQL インジェクション §3.1 | A03 |
+| 4 | `Html.SafeAttr` | Reflected / stored XSS | XSS §3.5 | A03 |
+| 5 | `Net.SafePath` | Path traversal | パス・トラバーサル §3.4 | A01 |
+| 6 | `Os.SafeCmd` | OS command injection | OS コマンド・インジェクション §3.3 | A03 |
+| 7 | `Response.setHeader` + `defaultSecurityHeaders` | HTTP header injection + clickjacking + MIME sniff | HTTP ヘッダ §3.6 + クリックジャッキング §3.10 | A03 + A05 |
+| 8 | `Net.SafeRedirect` | Open redirect | オープンリダイレクト §3.9 | A01 |
+
+All eight are real code under `LeanTea/`, and each comes with a smoke
+binary that runs the demo end-to-end. The IPA column maps to 「安全
+なウェブサイトの作り方」 (IPA Japan's de facto enterprise web-app
+audit standard); the OWASP column maps to OWASP Top 10 2021.
 
 > **What this chapter is for**: showing *why* the framework is safe,
 > with the exact compile errors that prove it. The other chapters
@@ -19,18 +31,31 @@ this chapter is the prose / worked-example side of the same story.
 
 ## 1 · The threat model in one paragraph
 
-A LeanTEA codebase makes **four classes of vulnerability
+A LeanTEA codebase makes **eight classes of vulnerability
 unrepresentable** at compile time:
 
 1. **Authorization bypass** — a handler runs without the auth check.
-2. **SQL / command injection** — user input concatenated into a query.
-3. **Reflected / stored XSS** — untrusted text reaches the DOM unescaped.
-4. **Invalid state transitions** — paying out below zero, double-spend, etc.
+2. **SQL injection** — user input concatenated into a query.
+3. **XSS via attribute name / URL scheme** — untrusted text reaches
+   the DOM via `onclick=…` or `href="javascript:…"`.
+4. **Path traversal** — `?file=../../etc/passwd`.
+5. **OS command injection** — `IO.Process.run` called via a shell.
+6. **HTTP header injection** — `\r\n` smuggled into `Location:`.
+7. **Open redirect** — `?next=https://evil.example`.
+8. **Clickjacking + MIME sniffing** — missing `X-Frame-Options` /
+   `X-Content-Type-Options`.
 
-The framework's TCB (trusted core) is **~270 LOC** of auth + persist +
-HTML modules. **Anything you build on top is automatically safe**,
-because the type system rejects every call that bypasses the typed
-entry points. (1), (2), and (3) ship today; (4) is on the roadmap.
+The framework's TCB (trusted core) is **~480 LOC** of auth + persist +
+HTML + path + cmd + header + redirect modules. **Anything you build
+on top is automatically safe**, because the type system rejects every
+call that bypasses the typed entry points.
+
+The pattern is the same in every case:
+
+> A `Safe*` structure with `private mk` → the only way to construct
+> one is the smart constructor → the smart constructor runs the
+> allow-list / scheme check / normalisation → user code that goes
+> around the smart constructor doesn't compile.
 
 ---
 
@@ -142,7 +167,7 @@ error: examples/Smoke/AuthProof.lean:98:17: Type mismatch
   got:      Request → IO Response
 ```
 
-This is the demo `examples/Smoke/AuthProof.lean` runs end-to-end:
+This is the demo `examples/Tests/PersistSpec.lean` (`AuthProofGroup`) runs end-to-end:
 
 ```
 [200] admin → /admin/delete: deleted (auth'd as admin@example.com)
@@ -316,22 +341,6 @@ src/Reports.lean:78:   let rows ← SafeQuery.trusted users  decl_name%
 
 **Two lines for the auditor to review, not the entire repo.**
 
-### Worked example — `examples/Smoke/SafeQuery.lean`
-
-```
-1. SELECT … WHERE email = ?  → 1 row
-   params : #[alice@x.com]
-2. WHERE id IN (?, ?)  → 2 rows
-   params : #[1, 3]
-3. WHERE email LIKE '%@y.com' (suffix LIKE)  → 2 rows
-   params : #[%@y.com]
-4. AND/NOT combinator  → 1 row
-5. UPDATE SET name = ? WHERE id = ?  → 1 row updated
-6. COUNT(*) WHERE deleted = false  → 3
-7. DELETE WHERE deleted = true  → 1 row deleted
-8. .trusted decl_name% escape  → 1 row (audit-tagged)
-```
-
 ### TCB and audit story
 
 The trusted core is **~80 LOC** of `renderWhere` / `Select.render` /
@@ -389,25 +398,6 @@ that isn't on the curated allow-list (`class`, `id`, `href`, `data-*`,
 variants that throw at build time — useful when both `name` and
 `value` are literal strings you control.
 
-### What ships in v1
-
-- The `SafeAttr` structure with `private mk` (the unforgeability gate).
-- `SafeAttr.text` / `.url` / `.num` smart constructors that return
-  `Except String SafeAttr`; rejection is explicit, callers decide
-  whether to log / redirect / 400.
-- `text!` / `url!` / `num!` panicking variants for literal names you
-  control (good for static class names; bad for user-supplied URLs).
-- `aSafe` / `divSafe` / `spanSafe` / `buttonSafe` / `inputSafe` /
-  `imgSafe` / `h1Safe` / `pSafe` builders that take
-  `List SafeAttr` directly, so the safe path stays as ergonomic as
-  the existing unsafe one.
-- `SafeAttr.toAttrs` so a list of validated `SafeAttr` can also feed
-  the existing `Html.elem` / `div_` builders.
-
-The existing `LeanTea.Html` API is **unchanged** — apps migrate
-incrementally. New code (and any place a user-controlled URL or
-attribute name ever reaches the DOM) should use the safe builders.
-
 ### The compile error that *cannot happen*
 
 ```lean
@@ -424,9 +414,9 @@ error: Unknown constant `LeanTea.Html.SafeAttr.mk`
 other file you have to go through the smart constructors, which
 enforce the allow-list.
 
-### Worked example — `examples/Smoke/SafeHtml.lean`
+### Worked example — `examples/Tests/SecuritySpec.lean` (SafeHtml group)
 
-The smoke runner exercises 13 scenarios and prints a tree:
+The smoke runner exercises 13 scenarios — all `✓`:
 
 ```
 ── rejected names ─────────────────────────────
@@ -455,27 +445,312 @@ The trusted core is **~30 LOC** (`SafeAttr` structure +
 Add to the curated `nameAllowList` only after auditing that the new
 name can't carry executable content.
 
-### When you need a richer URL policy
+---
 
-The default `isSchemeRejected` blocks `javascript:`, `data:text/html`,
-and `vbscript:` — the three known XSS vectors. If your app needs a
-stricter policy (e.g. "only same-origin URLs"), wrap `SafeAttr.url`
-with your own helper that runs the additional check and forwards on
-success.
+## 5 · `SafePath` — paths that can't escape their workspace
+
+### The bug class
+
+```lean
+-- THE BUG
+let raw := req.query.find "file" |>.getD ""    -- user input
+let path := workspace ++ "/" ++ raw            -- "/srv/uploads/../../../etc/passwd"
+IO.FS.readFile path                            -- 💥
+```
+
+Path traversal sits behind half of all "file read" CVEs (`?file=../`,
+`?include=../../wp-config.php`, `?theme=../../etc/passwd`). The
+framework can't tell whether a `String` is a user-controlled path
+vs. a developer-controlled one — until you tag it.
+
+### How LeanTEA closes it
+
+`LeanTea.Net.SafePath` is a structure with `private mk`. The only
+public constructor `SafePath.under` takes a workspace + raw path,
+normalises `.` / `..`, and **refuses to return** a path that resolves
+outside the workspace. NUL bytes (the classic libc truncation trick:
+`foo.txt\0.png`) are rejected up front.
+
+```lean
+structure SafePath where
+  private mk ::
+  value : String              -- absolute, normalised, under workspace
+
+def SafePath.under (workspace path : String) : Except String SafePath
+```
+
+### The compile error that *cannot happen*
+
+```lean
+example : SafePath := SafePath.mk "/etc/passwd"
+-- error: SafePath.mk is private to LeanTea.Net.SafePath
+```
+
+`SafePath.mk` is module-private. The reader (or future code-reviewer)
+who sees a `SafePath` knows the only path it could have come from is
+`SafePath.under` — and that already ran the workspace check.
+
+### Sibling-prefix attack — why we compare `/foo/bar/` and not `/foo/bar`
+
+A naive prefix check on `/srv/uploads` lets `/srv/uploads-attacker/x`
+slip past. The smart constructor compares against `workspace ++ "/"`,
+so sibling-prefixes are explicitly rejected. The smoke test covers
+this case (`✓ sibling-prefix rejected`).
+
+### Worked example — `examples/Tests/SecuritySpec.lean` (SafePath group)
+
+```
+── accepted paths under workspace ─────────────
+  ✓ relative joined under ws
+  ✓ nested relative (/srv/uploads/sub/dir/b.txt)
+  ✓ absolute already under ws
+  ✓ `.` / `..` normalised (/srv/uploads/a/c.txt)
+  ✓ `.` resolves to ws root
+── rejected paths that escape workspace ───────
+  ✓ `..` rejected
+  ✓ deep `..` rejected
+  ✓ absolute outside ws rejected
+  ✓ sibling-prefix rejected
+── rejected: NUL byte (libc truncation guard) ─
+  ✓ NUL byte rejected
+```
+
+### TCB and audit story
+
+**~30 LOC** (`normalise` + `under`). The `normalise` function is
+idempotent and operates purely on `splitOn "/"` segments — auditing
+once is enough. The framework explicitly does not follow symlinks
+(no `realpath`): if your workspace itself contains a symlink to
+`/etc`, that is an operator-deployment issue, not a framework
+guarantee. We document this limitation in the module's docstring.
 
 ---
 
-## 5 · What's planned (not in v0.1)
+## 6 · `SafeCmd` — `IO.Process.run` that can't get shell-injected
+
+### The bug class
+
+```lean
+-- THE BUG
+let cmd := "convert " ++ userInput ++ " out.png"
+IO.Process.run { cmd := "sh", args := #["-c", cmd] }
+-- userInput = "in.png; rm -rf /" → game over
+```
+
+Lean's `IO.Process.run` already takes `args : Array String` and
+`execvp`s directly — using it correctly is structurally safe. The
+ergonomic temptation is to drop down to `sh -c` for "just one pipe"
+and lose the guarantee.
+
+### How LeanTEA closes it
+
+`LeanTea.Os.SafeCmd` is a structure with `private mk` whose `args`
+is a `List String` (never concatenated). The smart constructor
+`SafeCmd.exec` refuses programs whose basename is a shell
+(`sh`, `bash`, `zsh`, `dash`, `pwsh`, `cmd`, …) — those need the
+grep-able audit escape `SafeCmd.shell`.
+
+```lean
+structure SafeCmd where
+  private mk ::
+  cmd  : String
+  args : List String
+
+def SafeCmd.exec (cmd : String) (args : List String) : Except String SafeCmd
+def SafeCmd.shell (script : String) : SafeCmd      -- audit-escape, grep for it
+```
+
+### Basename detection — `/usr/bin/bash` is still a shell
+
+The detection looks at the basename (last `/`-separated segment),
+so `/usr/bin/bash` and `/bin/zsh` are both refused. NUL bytes in
+either `cmd` or any `args` element are rejected up front.
+
+### Worked example — `examples/Tests/SecuritySpec.lean` (SafeCmd group)
+
+```
+── accepted argv-style commands ───────────────
+  ✓ echo accepted
+  ✓ /usr/bin/env accepted
+  ✓ ls accepted
+── rejected shells (by basename) ──────────────
+  ✓ sh rejected
+  ✓ bash rejected
+  ✓ /usr/bin/bash rejected (basename)
+  ✓ /bin/zsh rejected (basename)
+── end-to-end: spawn echo via SafeCmd.output ──
+  ✓ spawn + stdout matches
+```
+
+### TCB and audit story
+
+**~30 LOC**. The shell allow-list (`sh`, `bash`, `zsh`, `dash`,
+`ksh`, `csh`, `tcsh`, `fish`, `pwsh`, `powershell`, `cmd`,
+`cmd.exe`) is conservative; any name added needs a code review.
+`SafeCmd.shell` is the grep-able audit point — every intentional
+shell use sticks out as `SafeCmd.shell` in `grep -rn`.
+
+---
+
+## 7 · `Response.setHeader` + `defaultSecurityHeaders` — header injection & clickjacking
+
+### The bug class — header injection
+
+```lean
+-- THE BUG
+let next := req.query.find "next" |>.getD "/"      -- attacker: "/x\r\nSet-Cookie: ev=1"
+Response.redirect next
+-- Browser sees:  Location: /x\r\n
+--                Set-Cookie: ev=1\r\n
+```
+
+A CRLF sneaks a second header line in. Same pattern affects mail-
+agent code that takes user-controlled `Subject:` / `To:` strings.
+
+### How LeanTEA closes it
+
+`Response.setHeader` refuses any header name or value that contains
+`\r`, `\n`, or `\u0000`. `withCookie` and `redirect` route through
+the same guard. The default constructor for `Response` accepts
+`headers : Array (String × String)` so old code keeps working — but
+*every shipped helper* now passes through `setHeader!`.
+
+```lean
+def Response.setHeader (r : Response) (name value : String)
+  : Except String Response
+def Response.setHeader! (r : Response) (name value : String) : Response
+```
+
+### The bug class — clickjacking & MIME sniffing
+
+These aren't about input-validation — they're about *headers you
+forgot to add*. `X-Frame-Options: DENY` stops your login page from
+being iframed into `evil.example`. `X-Content-Type-Options: nosniff`
+stops the browser from MIME-guessing a CSV as HTML.
+
+### How LeanTEA closes it
+
+`Response.defaultSecurityHeaders` is a single call that adds the
+baseline. The default is locked-down (`X-Frame-Options: DENY`);
+apps that intentionally embed themselves set
+`frameOptions := none` and configure a CSP `frame-ancestors`
+directive instead.
+
+```lean
+def Response.defaultSecurityHeaders
+    (r : Response) (frameOptions : Option String := some "DENY")
+    : Response :=
+  -- adds:  X-Frame-Options, X-Content-Type-Options,
+  --        Referrer-Policy, Permissions-Policy
+```
+
+### Worked example — `examples/Tests/SecuritySpec.lean` (SafeHeader group)
+
+```
+── CR/LF/NUL in header name or value rejected ─
+  ✓ CRLF in name rejected
+  ✓ CRLF in value rejected
+  ✓ LF-only in value rejected
+  ✓ NUL in value rejected
+── defaultSecurityHeaders applies the baseline ─
+  ✓ X-Frame-Options: DENY present
+  ✓ X-Content-Type-Options: nosniff present
+  ✓ Referrer-Policy: no-referrer present
+  ✓ Permissions-Policy present
+── Response.redirect strips CR/LF defence in depth ─
+  ✓ injected `\r\nset-cookie:` removed
+```
+
+### TCB and audit story
+
+**~10 LOC** (`hasHeaderInjection` + the two `setHeader` shells).
+`defaultSecurityHeaders` adds another ~10 LOC of pure header-list
+mutation. The list of "shipped baseline headers" is in the
+docstring; auditors review it once.
+
+---
+
+## 8 · `SafeRedirect` — open redirect that needs an allow-list
+
+### The bug class
+
+```lean
+-- THE BUG
+let next := req.query.find "next" |>.getD "/"     -- attacker: "?next=https://evil.example"
+Response.redirect next
+```
+
+The attacker phishes a link that *looks* like it lives on `your-app.com`
+because the URL bar shows your domain. After login, the browser
+redirects to `evil.example`, where credentials get re-prompted on a
+look-alike form. Open redirect is the OAuth callback footgun and the
+single most common "post-login open-redirect → phishing" CWE.
+
+### How LeanTEA closes it
+
+`LeanTea.Net.SafeRedirect.to` requires the caller to declare which
+origins are acceptable. The smart constructor:
+
+* accepts safe relative paths (`/dashboard`)
+* **rejects** protocol-relative URLs (`//evil.example`)
+* **rejects** `javascript:` / `data:` / `vbscript:` / `file:` schemes
+* accepts absolute URLs only if the origin appears in the allow-list
+
+```lean
+structure SafeRedirect where
+  private mk ::
+  location : String
+
+def SafeRedirect.to (trustedOrigins : List String) (loc : String)
+  : Except String SafeRedirect
+def SafeRedirect.toForced (loc : String) : SafeRedirect   -- grep-able escape
+```
+
+### Sibling-prefix attack again — `https://app.example.evil.com`
+
+A naive `startsWith` would let `https://app.example.evil.com` slip
+past an allow-list entry of `https://app.example`. The smart
+constructor compares against `origin ++ "/"`, so sibling-prefix
+domains are rejected. The smoke covers this (`✓ sibling-prefix
+origin rejected`).
+
+### Worked example — `examples/Tests/SecuritySpec.lean` (SafeRedirect group)
+
+```
+── accepted: relative paths ──────────────────
+  ✓ /dashboard
+  ✓ path+query
+── accepted: trusted origins ─────────────────
+  ✓ exact origin (https://app.example)
+  ✓ path under trusted origin (https://app.example/foo/bar)
+── rejected: protocol-relative ───────────────
+  ✓ //evil.example rejected
+  ✓ /\evil.example rejected
+── rejected: dangerous schemes ───────────────
+  ✓ javascript: rejected
+  ✓ data: rejected
+  ✓ vbscript: rejected
+  ✓ file: rejected
+── rejected: origin not on allow-list ────────
+  ✓ evil origin rejected
+  ✓ sibling-prefix origin rejected
+```
+
+### TCB and audit story
+
+**~30 LOC**. `SafeRedirect.toForced` is the grep-able audit escape
+— every intentional non-allow-listed redirect is one `grep -rn
+SafeRedirect.toForced` away.
+
+---
+
+## 9 · What's planned (not in v0.1)
 
 | Bug class | Primitive | Status |
 |---|---|---|
-| XSS — DOM injection | `Html.SafeAttr` (URL allow-list, escape-on-construction) | Planned for v0.2 |
 | Invalid state transitions | `Transition s s'` GADT (e.g. `Order .draft → Order .submitted`) | Planned for v0.2 |
-
-`SafeAttr` is straightforward — `Html.attr` becomes
-`(String × SafeAttr)` instead of `(String × String)`, and `SafeAttr`
-has private constructors with sanitiser-only smart entry points,
-mirroring the `Where`-style approach.
+| CSRF | `Form.csrf` token wired through `<form>` builder + middleware | Partial (cookie infra ships; helper TBD) |
+| CSP | `Response.csp` typed builder | Planned for v0.2 |
 
 `Transition s s'` is domain-shaped rather than framework-shaped, so
 the framework ships *the shape* and apps write the inductive for
@@ -483,7 +758,7 @@ their own domain.
 
 ---
 
-## 6 · Limitations — what we don't claim
+## 10 · Limitations — what we don't claim
 
 This is the section that lets auditors trust the rest. We are
 **explicit about what we do not guarantee**:
@@ -494,31 +769,41 @@ This is the section that lets auditors trust the rest. We are
   needs constant-time crypto, use the audited C backends behind
   `LEANTEA_CRYPTO=1` rather than the pure-Lean fallbacks.
 - **Implementation bugs inside the TCB itself** are still possible.
-  We keep the TCB small (~240 LOC) precisely so a single audit pass
-  is feasible.
-- **App-supplied callbacks** (`resolveRole`, `checkOwnership`) are
-  part of the TCB by composition. A `fun _ _ => return true`
-  `checkOwnership` defeats the entire owner-proof story; treat the
-  role-lookup table as a security-critical asset.
+  We keep the TCB small (~480 LOC across all eight primitives)
+  precisely so a single audit pass is feasible.
+- **App-supplied callbacks** (`resolveRole`, `checkOwnership`,
+  `trustedOrigins`) are part of the TCB by composition. A
+  `fun _ _ => return true` `checkOwnership` defeats the entire
+  owner-proof story; an over-broad `trustedOrigins := ["https://"]`
+  defeats `SafeRedirect`. Treat the role-lookup table and the
+  redirect allow-list as security-critical assets.
+- **`SafePath` does not follow symlinks.** If your workspace contains
+  a symlink to `/etc`, that escape is on the operator. Best-effort
+  guarantee, documented in the module.
+- **`SafeCmd.shell` is allowed** — it has to be, for any framework
+  that ships at all. The guarantee is that every call site is
+  grep-able under one fixed identifier.
 
 The pitch isn't "we have type safety" — every modern language does
 that. The pitch is: **the compiler rejects code that violates these
-four properties**. Compile succeeds → those four bug classes are gone,
-at no test cost. The auditor verifies the property by reading 240
-lines. **No other Web framework can match this today**, because none
-of their host languages have a dependently typed proof system in
-their core.
+eight properties**. Compile succeeds → those eight bug classes are
+gone, at no test cost. The auditor verifies the property by reading
+480 lines. **No other Web framework can match this today**, because
+none of their host languages have a dependently typed proof system
+in their core.
 
 ---
 
 ## Try it yourself
 
 ```sh
-# Run the Auth.Proof PoC
-./.lake/build/bin/auth_proof_smoke
+# SQLite-backed integration: Store + Query DSL + Migrate +
+# Auth.Proof + SafeQuery, 32 LSpec assertions in one binary.
+./.lake/build/bin/persist_spec
 
-# Run the SafeQuery PoC
-./.lake/build/bin/safequery_smoke
+# Construction-time guarantees: SafeHtml + SafePath + SafeCmd +
+# SafeHeader + SafeRedirect, 60 LSpec assertions in one binary.
+./.lake/build/bin/security_spec
 
 # Reproduce the compile error: try to call Where.eq from outside SafeQuery.lean
 cat > /tmp/oops.lean <<'EOF'

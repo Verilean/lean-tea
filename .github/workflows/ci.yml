@@ -63,29 +63,14 @@ jobs:
       # runner; exit non-zero on the first failure.
       # ──────────────────────────────────────────────────────────────
 
-      - name: SQLite smoke (typed Entity + Repo round-trips)
-        run: ./.lake/build/bin/sqlite_smoke
+      - name: Persistence integration (Sqlite + Query DSL + Migrate + Auth.Proof + SafeQuery, ~32 LSpec assertions)
+        run: ./.lake/build/bin/persist_spec
 
-      - name: Template engine ({{var}} / {{#each}} / {{#if}} / {{#include}})
-        run: ./.lake/build/bin/template_smoke
+      - name: Construction-time security (SafeHtml + SafePath + SafeCmd + SafeHeader + SafeRedirect, ~60 LSpec assertions)
+        run: ./.lake/build/bin/security_spec
 
-      - name: Persist.Query — typed query DSL
-        run: ./.lake/build/bin/query_smoke
-
-      - name: Persist.Migrate — versioned migration runner
-        run: ./.lake/build/bin/migrate_smoke
-
-      - name: Crypto — SHA-1/256, HMAC, PBKDF2, JWT (FIPS / RFC vectors)
-        run: ./.lake/build/bin/crypto_smoke
-
-      - name: Auth.Proof — Capability + dependent Proof (.owner id)
-        run: ./.lake/build/bin/auth_proof_smoke
-
-      - name: SafeQuery — typed Where / Select / Update / Delete + .trusted escape
-        run: ./.lake/build/bin/safequery_smoke
-
-      - name: SafeHtml — `javascript:` / `on*` rejection at attribute construction
-        run: ./.lake/build/bin/safehtml_smoke
+      - name: Pure subsystems (Template + Crypto + JWT + SAML + Auth.Security, ~36 LSpec assertions)
+        run: ./.lake/build/bin/pure_spec
 
       - name: LeanJs spec runner (parser + check + codegen + eval cross-check)
         run: ./.lake/build/bin/leanjs_spec
