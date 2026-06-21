@@ -1,0 +1,10 @@
+{
+  "name": "lean-elm-browser-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "JSON-line bridge between Lean (LeanTea.Browser) and a real Chromium via Playwright.",
+  "dependencies": {
+    "playwright": "^1.49.0"
+  }
+}

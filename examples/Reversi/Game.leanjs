@@ -1,0 +1,130 @@
+-- examples/Reversi/Game.leanjs — Reversi game logic in the LeanJs subset.
+--
+-- Read at startup by examples/Reversi/Serve.lean, parsed by
+-- LeanJs.Parser, compiled to JavaScript by LeanJs.Codegen, and
+-- spliced into the served HTML. Edit this file freely without
+-- touching any .lean source.
+--
+-- This file uses the Lean-prover-style space-separated application
+-- form (`f a b` instead of `f(a, b)`). Negative literals still need
+-- parens (`(-1)`) because `-` is reserved for binary subtract at
+-- the call site to avoid ambiguity with `f - 1`.
+
+-- The five primitives the game needs, dropped in via FFI.
+extern js "(n) => Array(n).fill(0)" mkArray
+extern js "(arr, i, v) => arr.map((x, j) => j === i ? v : x)" arrSet
+extern js "(arr, i) => arr[i]" arrGet
+extern js "(a, b) => '' + a + b" sconcat
+extern js "(a, b) => (a / b) | 0" idiv
+
+-- 0 = empty, 1 = black (x), 2 = white (o)
+def at(b, x, y)    := arrGet b (y * 8 + x)
+def put(b, x, y, v) := arrSet b (y * 8 + x) v
+
+def opp(c)   := if c == 1 then 2 else 1
+def inB(x, y) := 0 <= x && x < 8 && 0 <= y && y < 8
+
+-- Walk one direction from (x, y) counting opponent cells until we
+-- meet our own colour (return the count) or break the chain (0).
+def walkCap(b, x, y, dx, dy, color, count) :=
+  if inB x y then
+    let cell := at b x y;
+    if cell == 0 then 0
+    else if cell == color then count
+    else walkCap b (x + dx) (y + dy) dx dy color (count + 1)
+  else 0
+
+def capDir(b, x, y, dx, dy, c) :=
+  walkCap b (x + dx) (y + dy) dx dy c 0
+
+def totalCap(b, x, y, c) :=
+  capDir b x y (-1) (-1) c + capDir b x y (-1) 0 c +
+  capDir b x y (-1)  1  c + capDir b x y  0 (-1) c +
+  capDir b x y  0   1  c + capDir b x y  1 (-1) c +
+  capDir b x y  1   0  c + capDir b x y  1   1 c
+
+def isValid(b, x, y, c) :=
+  if at b x y == 0 then
+    if totalCap b x y c > 0 then 1 else 0
+  else 0
+
+-- Flip `count` cells walking from (x+dx, y+dy).
+def flipDir(b, x, y, dx, dy, color, count) :=
+  if count > 0 then
+    let b2 := put b (x + dx) (y + dy) color;
+    flipDir b2 (x + dx) (y + dy) dx dy color (count - 1)
+  else b
+
+def applyOne(b, x, y, dx, dy, color) :=
+  let n := capDir b x y dx dy color;
+  flipDir b x y dx dy color n
+
+def makeMove(b, x, y, c) :=
+  let b0 := put b x y c;
+  let b1 := applyOne b0 x y (-1) (-1) c;
+  let b2 := applyOne b1 x y (-1)  0  c;
+  let b3 := applyOne b2 x y (-1)  1  c;
+  let b4 := applyOne b3 x y  0  (-1) c;
+  let b5 := applyOne b4 x y  0   1  c;
+  let b6 := applyOne b5 x y  1  (-1) c;
+  let b7 := applyOne b6 x y  1   0  c;
+  applyOne b7 x y 1 1 c
+
+def countLoop(b, color, i, total) :=
+  if i < 64 then
+    if arrGet b i == color then countLoop b color (i + 1) (total + 1)
+    else countLoop b color (i + 1) total
+  else total
+def score(b, c) := countLoop b c 0 0
+
+-- Initial Othello / Reversi opening.
+def initBoard :=
+  let e  := mkArray 64;
+  let b1 := put e  3 3 2;
+  let b2 := put b1 4 4 2;
+  let b3 := put b2 3 4 1;
+  put b3 4 3 1
+
+def initModel := { board: initBoard, player: 1 }
+
+def pieceChar(c) :=
+  if c == 1 then "x"
+  else if c == 2 then "o"
+  else "."
+
+def renderCell(b, i) :=
+  let c := arrGet b i;
+  sconcat (sconcat (sconcat "<button class=cell data-i=" i) ">")
+          (sconcat (pieceChar c) "</button>")
+
+def boardLoop(b, i, acc) :=
+  if i < 64 then boardLoop b (i + 1) (sconcat acc (renderCell b i))
+  else acc
+
+def view(model) :=
+  let b  := model.board;
+  let p  := model.player;
+  let bs := score b 1;
+  let ws := score b 2;
+  sconcat
+    (sconcat "<div class=board>"
+       (sconcat (boardLoop b 0 "") "</div>"))
+    (sconcat "<div class=hud>x "
+       (sconcat bs
+          (sconcat " - o "
+             (sconcat ws
+                (sconcat " - next "
+                   (sconcat (pieceChar p) "</div>"))))))
+
+def update(msg, model) :=
+  let idx := msg;
+  let y   := idiv idx 8;
+  let x   := idx - y * 8;
+  let b   := model.board;
+  let p   := model.player;
+  if isValid b x y p == 1 then
+    { board: makeMove b x y p, player: opp p }
+  else model
+
+-- Smoke-test entry point so node can verify the program compiles.
+def main := score initBoard 1

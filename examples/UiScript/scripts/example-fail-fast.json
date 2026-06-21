@@ -1,0 +1,17 @@
+{
+  "name": "example.fail_fast_demo",
+  "description": "On example.com, take a baseline screenshot, then click a corner that triggers nothing. The runner should byte-compare the post-click capture with the baseline, see they're identical, and fail-fast WITHOUT spending a classifier round-trip — because if the screen hasn't moved the answer can only be 'still on example.com'.",
+  "steps": [
+    {
+      "act": "screenshot",
+      "note": "baseline: just establish 'lastEvidence' so step 2 has something to diff against"
+    },
+    {
+      "act": "click_xy",
+      "x": 5,
+      "y": 5,
+      "expect": "page_after_login",
+      "note": "Click top-left corner — example.com has nothing there. Expecting 'page_after_login' (a screen that doesn't exist) is a guaranteed-fail. With byte-equal detection it fails in milliseconds instead of after a 3-7s Qwen call."
+    }
+  ]
+}

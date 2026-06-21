@@ -1,0 +1,11 @@
+# Build artifacts that should be regenerated inside the image.
+.lake/
+.leantea-state/
+dist/
+
+# Misc noise
+.DS_Store
+**/.DS_Store
+*.bak
+*~
+.git/

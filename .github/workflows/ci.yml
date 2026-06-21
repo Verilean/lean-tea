@@ -1,0 +1,91 @@
+# Build + smoke-test the framework on every PR and every push to main.
+#
+# We run the full `lake build` (all targets including every Smoke binary,
+# the Auth.Proof / SafeQuery PoCs, and `leanjs_spec`) and then execute
+# the smoke binaries that **run to completion** (not the demo servers
+# that block on `serve` / stdio).
+#
+# Intentionally skipped:
+#   * http_smoke / http_client_smoke / jsonrpc_smoke — they `serve` and
+#     block forever (these are demo binaries, not regression tests).
+#   * browser_vision_smoke / openai_smoke / mysql_smoke /
+#     memcached_smoke / backend_smoke — need a live external service
+#     (LM Studio / MySQL / memcached / browser bridge) that GitHub
+#     runners don't have.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install elan + Lean toolchain
+        run: |
+          set -euo pipefail
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Show toolchain
+        run: |
+          lean --version
+          lake --version
+          node --version
+
+      - name: Cache Lake build artifacts
+        uses: actions/cache@v4
+        with:
+          path: .lake
+          key: ${{ runner.os }}-lake-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
+          restore-keys: |
+            ${{ runner.os }}-lake-
+
+      - name: Build everything
+        run: lake build
+
+      # ──────────────────────────────────────────────────────────────
+      # Self-contained smoke binaries. Each one is an LSpec-shaped
+      # runner; exit non-zero on the first failure.
+      # ──────────────────────────────────────────────────────────────
+
+      - name: SQLite smoke (typed Entity + Repo round-trips)
+        run: ./.lake/build/bin/sqlite_smoke
+
+      - name: Template engine ({{var}} / {{#each}} / {{#if}} / {{#include}})
+        run: ./.lake/build/bin/template_smoke
+
+      - name: Persist.Query — typed query DSL
+        run: ./.lake/build/bin/query_smoke
+
+      - name: Persist.Migrate — versioned migration runner
+        run: ./.lake/build/bin/migrate_smoke
+
+      - name: Crypto — SHA-1/256, HMAC, PBKDF2, JWT (FIPS / RFC vectors)
+        run: ./.lake/build/bin/crypto_smoke
+
+      - name: Auth.Proof — Capability + dependent Proof (.owner id)
+        run: ./.lake/build/bin/auth_proof_smoke
+
+      - name: SafeQuery — typed Where / Select / Update / Delete + .trusted escape
+        run: ./.lake/build/bin/safequery_smoke
+
+      - name: SafeHtml — `javascript:` / `on*` rejection at attribute construction
+        run: ./.lake/build/bin/safehtml_smoke
+
+      - name: LeanJs spec runner (parser + check + codegen + eval cross-check)
+        run: ./.lake/build/bin/leanjs_spec

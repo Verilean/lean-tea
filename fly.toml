@@ -1,0 +1,50 @@
+# Fly.io configuration for the LeanTea English trainer.
+#
+# Free hobby tier (as of 2026):
+#   * up to 3 shared-cpu-1x machines (256 MB RAM each)
+#   * 3 GB total persistent volume (plenty for our SQLite + dist)
+#   * auto-stop / auto-start keeps cost at $0 for personal use.
+#     Expect ~10-20s cold start when waking from stopped.
+#
+# Deploy from inside lean-elm/:
+#   flyctl launch --no-deploy
+#   flyctl volumes create english_data --region nrt --size 1
+#   flyctl deploy
+
+app = "english-trainer"
+primary_region = "nrt"   # Tokyo. Change to your closest region.
+
+[build]
+  # Dockerfile in this directory is used.
+
+[env]
+  PORT     = "8080"
+  DIST_DIR = "/app/dist"
+  DB_PATH  = "/data/english.sqlite"
+
+[[mounts]]
+  source      = "english_data"
+  destination = "/data"
+
+[http_service]
+  internal_port        = 8080
+  force_https          = true
+  auto_stop_machines   = "stop"
+  auto_start_machines  = true
+  min_machines_running = 0
+  [http_service.concurrency]
+    type       = "requests"
+    soft_limit = 50
+    hard_limit = 100
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval     = "30s"
+    method       = "GET"
+    timeout      = "5s"
+    path         = "/"
+
+[[vm]]
+  memory   = "256mb"
+  cpu_kind = "shared"
+  cpus     = 1
