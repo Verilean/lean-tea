@@ -12,6 +12,7 @@ import LeanTea.Persist.Query
 import LeanTea.Persist.Backend
 import LeanTea.Persist.Migrate
 import LeanTea.Persist.Mysql
+import LeanTea.Persist.Postgres
 import LeanTea.Persist.SafeQuery
 import LeanTea.Net.Http
 import LeanTea.Net.HttpClient

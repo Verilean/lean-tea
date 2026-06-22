@@ -110,6 +110,38 @@ extern_lib libleantea_mysql pkg := do
   let wrapperO ← leantea_mysql_o.fetch
   buildStaticLib (pkg.staticLibDir / name) #[wrapperO]
 
+/-! ## PostgreSQL FFI — conditional on `LEANTEA_POSTGRES=1`
+
+Same opt-in shape as MySQL. The wrapper always compiles so links
+don't fail; `-DLEANTEA_HAVE_POSTGRES` toggles between the real
+driver and stub-mode. When enabled we shell out to `pg_config` for
+include + link flags. -/
+
+target leantea_postgres_o pkg : FilePath := do
+  let oFile := pkg.buildDir / "c" / "leantea_postgres.o"
+  let srcJob ← inputTextFile <| pkg.dir / "c" / "leantea_postgres.c"
+  let enabled := (← IO.getEnv "LEANTEA_POSTGRES").map (·.toLower == "1")
+                  |>.getD false
+  let mut weakArgs : Array String := #[
+    "-I", (← getLeanIncludeDir).toString
+  ]
+  let mut traceArgs : Array String := #["-fPIC", "-O2"]
+  if enabled then
+    let cf ← (IO.Process.output {
+      cmd := "pg_config", args := #["--includedir"] }
+        ).catchExceptions (fun _ => pure { exitCode := 1, stdout := "", stderr := "" })
+    if cf.exitCode == 0 then
+      let inc : String := cf.stdout.trimAscii.toString
+      if !inc.isEmpty then
+        weakArgs := weakArgs ++ #["-I", inc]
+    traceArgs := traceArgs.push "-DLEANTEA_HAVE_POSTGRES"
+  buildO oFile srcJob weakArgs traceArgs "cc"
+
+extern_lib libleantea_postgres pkg := do
+  let name := nameToStaticLib "leantea_postgres"
+  let wrapperO ← leantea_postgres_o.fetch
+  buildStaticLib (pkg.staticLibDir / name) #[wrapperO]
+
 /-! ## Crypto FFI — conditional on `LEANTEA_CRYPTO=1`
 
 OpenSSL libcrypto wrapper for SHA-256 / HMAC / PBKDF2 / RSA / ECDSA
@@ -256,6 +288,24 @@ lean_exe valkey_smoke where
 lean_exe mysql_smoke where
   srcDir := "examples"
   root := `Smoke.Mysql
+
+/-- PostgreSQL round-trip smoke. Stub-mode by default — the C
+    wrapper compiles to a stub without `LEANTEA_HAVE_POSTGRES`, so
+    no libpq symbols hit the link line and the binary builds on
+    machines without libpq.
+
+    Real builds need `-lpq` on the link line. Pass it via the env:
+
+      Linux  (apt libpq-dev):
+        LEANTEA_POSTGRES=1 NIX_LDFLAGS="-L/usr/lib/x86_64-linux-gnu -lpq" lake build
+      macOS  (brew libpq):
+        LEANTEA_POSTGRES=1 NIX_LDFLAGS="-L$(brew --prefix libpq)/lib -lpq" lake build
+
+    CI does the Linux variant against the `postgres:16` service
+    container. -/
+lean_exe postgres_smoke where
+  srcDir := "examples"
+  root := `Smoke.Postgres
 
 /-! ## Executable documentation
 
