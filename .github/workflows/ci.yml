@@ -104,7 +104,7 @@ jobs:
       - name: Build CI test binaries
         env:
           LEANTEA_POSTGRES: "1"
-        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve valkey_smoke s3_smoke postgres_smoke leanjs_spec
+        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve valkey_smoke s3_smoke postgres_smoke webdav_serve webdav_smoke leanjs_spec
 
       # ──────────────────────────────────────────────────────────────
       # Self-contained smoke binaries. Each one is an LSpec-shaped
@@ -133,6 +133,9 @@ jobs:
         env:
           PG_CONN_STR: postgresql://postgres:postgres@127.0.0.1:5432/postgres
         run: ./.lake/build/bin/postgres_smoke
+
+      - name: WebDAV server (OPTIONS / MKCOL / PUT / GET / PROPFIND / DELETE round-trip via spawned subprocess, 11 LSpec assertions)
+        run: ./.lake/build/bin/webdav_smoke
 
       - name: LeanJs spec runner (parser + check + codegen + eval cross-check)
         run: ./.lake/build/bin/leanjs_spec

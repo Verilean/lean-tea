@@ -278,6 +278,19 @@ lean_exe webspec_smoke where
   srcDir := "examples"
   root := `Smoke.WebSpec
 
+/-- WebDAV server exposing a directory mountable by Finder /
+    GNOME Files / Windows Explorer. Uses `LeanTea.Net.WebDav.handler`. -/
+lean_exe webdav_serve where
+  srcDir := "examples"
+  root := `WebDav.Serve
+
+/-- WebDAV round-trip smoke. Spawns webdav_serve as a subprocess
+    against a tempdir, runs the 11-assertion LSpec via HttpClient,
+    tears down. No external services — pure-Lean network test. -/
+lean_exe webdav_smoke where
+  srcDir := "examples"
+  root := `Smoke.WebDav
+
 lean_exe http_smoke where
   srcDir := "examples"
   root := `Smoke.Http
