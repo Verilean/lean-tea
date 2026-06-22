@@ -16,8 +16,9 @@ ends of the wire, with one mental model: the Elm-style triple
 - **7 · [Template](07-template.md)** — `.html` files with `{{var}}`, `{{#each}}`, `{{#if}}`, `{{#include}}` and hot-reload via `Provider`.
 - **8 · [MCP servers](08-mcp.md)** — the `LeanTea.Mcp` library, stdio + HTTP transports, and how the bundled Chrome-CDP / ComfyUI / Browser / Desktop / Image servers are built.
 - **9 · [Architecture overview](09-architecture.md)** — the system map. Once you've seen the parts, here's how they fit and where state lives across a restart.
-- **10 · [Testing](10-testing.md)** — three strategies (compiler-as-test + LSpec + LLM-driven `UiScript`; deterministic `WebSpec` in v0.2) and what you *don't* test because the type system already did.
+- **10 · [Testing](10-testing.md)** — three strategies (compiler-as-test + LSpec + LLM-driven `UiScript` + deterministic `WebSpec`) and what you *don't* test because the type system already did.
 - **11 · [Secure by Construction](11-secure-by-construction.md)** — `Auth.Proof`, `SafeQuery`, `SafeHtml`, `SafePath`, `SafeCmd`, `SafeRedirect`, `Response.setHeader` + `defaultSecurityHeaders` — eight shipped construction-time security primitives, walked through with the exact compile errors and IPA/OWASP mapping. **Read this if you came for the headline.**
+- **12 · [WebSpec](12-webspec.md)** — typed deterministic E2E tests. `do`-notation over Chrome DevTools Protocol, LSpec-shaped tree, ten primitives (`navigate` / `fill` / `click` / `waitFor` / `expectText` / `screenshot` / …). The complement to UiScript when you want CI-friendly golden runs instead of LLM-judged exploratory ones.
 
 ## Skim by question
 

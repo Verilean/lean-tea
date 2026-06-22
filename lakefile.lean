@@ -212,6 +212,14 @@ safequery) are consolidated into `persist_spec` — see further below.
 The construction-time security smokes (safehtml / safepath / safecmd /
 safeheader / saferedirect) are consolidated into `security_spec`. -/
 
+/-- WebSpec end-to-end smoke against `counter_web`. Skipped in CI
+    because it needs a live Chrome (`--remote-debugging-port=9222`)
+    and a live LeanTEA app. See `examples/Smoke/WebSpec.lean` for
+    the bootstrap. -/
+lean_exe webspec_smoke where
+  srcDir := "examples"
+  root := `Smoke.WebSpec
+
 lean_exe http_smoke where
   srcDir := "examples"
   root := `Smoke.Http

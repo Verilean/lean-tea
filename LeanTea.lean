@@ -28,6 +28,8 @@ import LeanTea.Rpc
 import LeanTea.JsonRpc
 import LeanTea.WebGpu
 import LeanTea.LSpec
+import LeanTea.Cdp
+import LeanTea.WebSpec
 import LeanTea.Template
 import LeanTea.Markdown
 import LeanTea.Llm.Openai

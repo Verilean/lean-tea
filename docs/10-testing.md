@@ -9,7 +9,7 @@ mix them per app.
 | **0 — type-level proof** | The compiler + `Auth.Proof` + `SafeQuery` | "Can `class X of bug` *ever* happen?" — statically. |
 | **1 — unit / smoke** | `LeanTea.LSpec` | "Does this pure function compute the right value?" |
 | **2 — E2E exploratory** | `UiScript` + `browser_mcp_serve` | "Does the UI still work after we refactored the DOM?" — LLM-driven, resilient. |
-| **3 — E2E deterministic** | `LeanTea.WebSpec` (planned v0.2) | "Does *this exact* button click produce *this exact* outcome?" — golden, CI-friendly. |
+| **3 — E2E deterministic** | `LeanTea.WebSpec` (shipped v0.2) | "Does *this exact* button click produce *this exact* outcome?" — golden, CI-friendly. See [Chapter 12](12-webspec.md). |
 
 The hole — Layer 0 — is where most frameworks have nothing. LeanTEA
 fills it with the type system. That's the secure-by-construction story
@@ -101,46 +101,48 @@ break because of a CSS refactor are noise; this layer kills that noise.
 want golden screenshots for a brand-critical button colour or a pixel-
 exact dashboard layout. That's Layer 3 territory.
 
-## Layer 3 — `LeanTea.WebSpec` (planned v0.2)
+## Layer 3 — `LeanTea.WebSpec` (shipped v0.2)
 
-`do`-notation over `ChromeCdpMcp`'s tool surface. Shape:
+`do`-notation over `ChromeCdpMcp`'s tool surface. The framework
+ships [`LeanTea.WebSpec`](../LeanTea/WebSpec.lean) plus a
+worked-example smoke at [`examples/Smoke/WebSpec.lean`](../examples/Smoke/WebSpec.lean)
+that drives `counter_web`. Full walk-through (env setup, CDP
+plumbing, primitives, escape hatches) is **[Chapter 12](12-webspec.md)**.
+
+The minimum-viable shape:
 
 ```lean
 import LeanTea
+import LeanTea.WebSpec
 open LeanTea.WebSpec
 
-def specs : WebSpec := group "login flow" [
-  it "renders empty form" do
-    navigate "/login"
-    waitFor "form#login"
-    expectText "h1" "Sign in",
-
-  it "rejects bad password" do
-    fill "#email"    "alice@x.com"
-    fill "#password" "wrong"
-    click "button[type=submit]"
-    waitFor ".error"
-    expectText ".error" "Invalid",
-
-  it "lets the owner edit their note" do
-    asUser "alice@x.com"          -- mint a session via Auth.Proof
-    navigate "/edit/doc-42"
-    fill "#note" "updated text"
-    click "button.save"
-    waitFor ".saved"
-    expectModel (fun m => m.savedNote == "updated text")
+def counterSpec : Spec := group "counter_web" [
+  it "initial render shows count = 0" do
+    navigate "/"
+    waitFor ".card p"
+    expectContains ".card p" "count = 0"
+  ,
+  it "two inc clicks bump the counter to 2" do
+    navigate "/"
+    waitFor "a[data-msg=inc]"
+    click "a[data-msg=inc]"
+    click "a[data-msg=inc]"
+    expectContains ".card p" "count = 2"
 ]
 
-def main : IO Unit := webSpecIO specs
+def main : IO Unit := do
+  let d ← Driver.openFresh "http://127.0.0.1:9222" "http://127.0.0.1:8001"
+  let code ← runSpec d counterSpec
+  d.close
+  if code != 0 then IO.Process.exit code.toUInt8
 ```
 
-API surface (target):
-
-- `navigate`, `waitFor`, `click`, `fill`, `expectText`, `expectHidden`,
-  `expectModel` (decode the `X-Model` header)
-- Session helpers: `asUser email`, `asGuest`, `asAdmin`
-- `do` is the right choice; E2E is genuinely sequential with implicit
-  waits (Playwright / Cypress agree)
+Shipped primitives: `navigate`, `evaluate`, `getText`, `fill`, `click`,
+`waitFor`, `expectText`, `expectContains`, `expectUrlContains`,
+`screenshot`. The spec tree is the same `it` / `group` value you
+already know from LSpec, but each `it` takes a `StepM Unit` (Reader +
+Except + IO) instead of a raw `Bool`. Failures bubble through
+`throw` and surface in the tree exactly like LSpec failures.
 
 Why this is its own layer instead of "just use UiScript":
 
@@ -156,6 +158,10 @@ proves that the framework *can* be tested without a typed harness, so
 WebSpec doesn't have to be the only path. Some teams might prefer
 UiScript alone; others want both. Two-layer testing — typed +
 exploratory — is the proposition we put forward.
+
+For everything else (Chrome bootstrap, CI integration patterns, the
+session-aware `asUser` helper that's still on the v0.3 roadmap), see
+**[Chapter 12 · WebSpec](12-webspec.md)**.
 
 ## Dev loop
 
