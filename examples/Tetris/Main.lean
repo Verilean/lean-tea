@@ -388,14 +388,36 @@ parser handles below. -/
 
 namespace Tty
 
+/-- stty with inherited stdin so it sees the parent's terminal.
+    `IO.Process.output` connects stdin to /dev/null, which makes
+    stty silently no-op against a non-tty fd — that's the
+    previous bug that ate every keypress. -/
+private def sttyInherit (args : Array String) : IO Unit := do
+  let child ← IO.Process.spawn {
+    cmd := "stty", args,
+    stdin := .inherit, stdout := .inherit, stderr := .inherit
+  }
+  let _ ← child.wait
+
+/-- stty `-g` captures the current settings (so we can restore on
+    exit). Stdin is inherited; stdout is piped so we can read the
+    saved-settings string. -/
+private def sttySaveCurrent : IO String := do
+  let child ← IO.Process.spawn {
+    cmd := "stty", args := #["-g"],
+    stdin := .inherit, stdout := .piped, stderr := .inherit
+  }
+  let out ← child.stdout.readToEnd
+  let _ ← child.wait
+  return out.trimAscii.toString
+
 def saveAndRaw : IO String := do
-  let out ← IO.Process.output { cmd := "stty", args := #["-g"] }
-  let saved := out.stdout.trimAscii.toString
-  let _ ← IO.Process.output { cmd := "stty", args := #["-icanon", "-echo"] }
+  let saved ← sttySaveCurrent
+  sttyInherit #["-icanon", "-echo"]
   return saved
 
-def restore (saved : String) : IO Unit := do
-  let _ ← IO.Process.output { cmd := "stty", args := #[saved] }
+def restore (saved : String) : IO Unit :=
+  sttyInherit #[saved]
 
 /-- Read one byte from stdin and return it. Blocks until a key is
     pressed. -/
