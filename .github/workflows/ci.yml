@@ -56,7 +56,7 @@ jobs:
             ${{ runner.os }}-lake-
 
       - name: Build CI test binaries
-        run: lake build persist_spec security_spec pure_spec leanjs_spec
+        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve leanjs_spec
 
       # ──────────────────────────────────────────────────────────────
       # Self-contained smoke binaries. Each one is an LSpec-shaped
@@ -71,6 +71,9 @@ jobs:
 
       - name: Pure subsystems (Template + Crypto + JWT + SAML + Auth.Security, ~36 LSpec assertions)
         run: ./.lake/build/bin/pure_spec
+
+      - name: Auth integration (OAuth2 round-trip via in-process IdP subprocess + SAML fixtures, ~17 LSpec assertions)
+        run: ./.lake/build/bin/auth_spec
 
       - name: LeanJs spec runner (parser + check + codegen + eval cross-check)
         run: ./.lake/build/bin/leanjs_spec

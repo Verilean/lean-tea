@@ -26,6 +26,8 @@ lean_lib Examples where
     `Tools.GenSite,
     `Tools.LeanJsCompile, `Tools.LeanJsInterp, `Tools.LeanJsRun,
     `Tests.PureSpec,
+    `Tests.AuthSpec,
+    `AuthIdp.Serve,
     `StateMachine.Order
   ]
   /- Private examples (English Learning + game shells under
@@ -290,6 +292,24 @@ lean_exe security_spec where
 lean_exe persist_spec where
   srcDir := "examples"
   root := `Tests.PersistSpec
+
+/-- Standalone OAuth 2.0 IdP server used by AuthSpec as a subprocess.
+    Same-process `IO.asTask` deadlocks because the IdP and the SP
+    share one libuv loop; running the IdP in its own process gets
+    them their own schedulers. -/
+lean_exe auth_idp_serve where
+  srcDir := "examples"
+  root := `AuthIdp.Serve
+
+/-- Auth integration tests. Spawns `auth_idp_serve` on
+    `AUTH_TEST_PORT` (default 18765), polls until /authorize answers,
+    runs the full SP-side round-trip (beginAuth → /authorize →
+    exchangeCode → fetchUserInfo), plus SAML fixture parses, and
+    teardown-kills the IdP child on exit. Needs `curl(1)` for the
+    SP-side OAuth2 token exchange. -/
+lean_exe auth_spec where
+  srcDir := "examples"
+  root := `Tests.AuthSpec
 
 /-- Aggregated LSpec runner for the pure-Lean subsystems
     (Template engine + Crypto known-answer + JWT + SAML + native
