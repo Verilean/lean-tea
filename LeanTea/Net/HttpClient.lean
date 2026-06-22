@@ -1,4 +1,4 @@
-import Std.Internal.Async.TCP
+import Std.Async.TCP
 import Std.Net
 
 /-! # LeanTea.Net.HttpClient — minimal pure-Lean HTTP/1.1 client
@@ -25,9 +25,9 @@ on the target URL's scheme. -/
 
 namespace LeanTea.Net.HttpClient
 
-open Std.Internal.IO Async
+open Std.Async
 open Std.Net
-open Std.Internal.IO.Async.TCP
+open Std.Async.TCP
 
 /-! ## Types -/
 

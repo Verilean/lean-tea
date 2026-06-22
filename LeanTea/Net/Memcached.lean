@@ -1,4 +1,4 @@
-import Std.Internal.Async.TCP
+import Std.Async.TCP
 import Std.Net
 import LeanTea.Persist.Backend
 
@@ -24,9 +24,9 @@ incoming key (FNV-1a 64) to a 16-char hex string before sending. -/
 
 namespace LeanTea.Net.Memcached
 
-open Std.Internal.IO Async
+open Std.Async
 open Std.Net
-open Std.Internal.IO.Async.TCP
+open Std.Async.TCP
 
 structure Client where
   socket : Socket.Client

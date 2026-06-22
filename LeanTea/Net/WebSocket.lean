@@ -1,4 +1,4 @@
-import Std.Internal.Async.TCP
+import Std.Async.TCP
 import Std.Net
 import LeanTea.Crypto.Sha1
 import LeanTea.Crypto.Base64
@@ -33,9 +33,9 @@ LeanTea.Net.WebSocket.close ws
 
 namespace LeanTea.Net.WebSocket
 
-open Std.Internal.IO Async
+open Std.Async
 open Std.Net
-open Std.Internal.IO.Async.TCP
+open Std.Async.TCP
 
 /-! ## Connection handle -/
 

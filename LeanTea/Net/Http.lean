@@ -1,4 +1,4 @@
-import Std.Internal.Async.TCP
+import Std.Async.TCP
 import Std.Net
 
 /-! # Minimal HTTP/1.1 server using `Std.Internal.Async.TCP`
@@ -16,7 +16,7 @@ Limitations:
 
 namespace LeanTea.Net.Http
 
-open Std.Internal.IO Std.Net
+open Std.Async Std.Net
 
 /-! ## Types -/
 

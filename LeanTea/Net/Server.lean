@@ -1,5 +1,5 @@
 import LeanTea.Net.Http
-import Std.Internal.Async.TCP
+import Std.Async.TCP
 import Std.Net
 
 /-! # TCP server loop driving the HTTP handler
@@ -9,9 +9,9 @@ Sequential accept loop — one connection at a time. -/
 namespace LeanTea.Net.Server
 
 open LeanTea.Net.Http
-open Std.Internal.IO Async
+open Std.Async
 open Std.Net
-open Std.Internal.IO.Async.TCP
+open Std.Async.TCP
 
 private partial def recvAll (client : Socket.Client) (acc : ByteArray) : IO ByteArray := do
   match splitHeaders acc with
