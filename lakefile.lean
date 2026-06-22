@@ -1,6 +1,29 @@
 import Lake
 open Lake DSL System
 
+/-- Per-platform libpq link argument for `postgres_smoke`. Listed
+    as an exact `.so` / `.dylib` path so we don't have to add a
+    broad `-L<dir>` (which on Ubuntu 24+ would shadow Lean's
+    bundled `libc` with system glibc 2.39, breaking resolution of
+    `__libc_csu_init` / `_fini` against Lean's `Scrt1.o`).
+
+    The path is selected at lakefile-load time via
+    `System.Platform.isOSX`. On a platform whose canonical libpq
+    location isn't installed the postgres_smoke link fails clearly
+    at link time (`PQstatus undefined`) — and only fails for
+    callers that explicitly `lake build postgres_smoke`, because
+    it isn't a default target. -/
+def libpqLinkArgs : Array String :=
+  if System.Platform.isOSX then
+    /- Homebrew arm64 is the default on modern Macs; Intel
+       Homebrew lives at /usr/local. Both ship as a keg-only
+       formula (libpq.dylib). -/
+    #["/opt/homebrew/opt/libpq/lib/libpq.dylib"]
+  else
+    /- Ubuntu / Debian. After `apt install libpq-dev` the SONAME
+       link is at the canonical Debian multiarch path. -/
+    #["/usr/lib/x86_64-linux-gnu/libpq.so.5"]
+
 package «lean-tea» where
   -- Pre-compile module C output so `lean_exe` targets can link the
   -- SQLite FFI without a separate `lean -c` pass at link time.
@@ -301,11 +324,7 @@ lean_exe mysql_smoke where
 lean_exe postgres_smoke where
   srcDir := "examples"
   root := `Smoke.Postgres
-  weakLinkArgs := #[
-    "-L/usr/lib/x86_64-linux-gnu",
-    "-L/opt/homebrew/opt/libpq/lib",
-    "-L/usr/local/opt/libpq/lib",
-    "-lpq"]
+  weakLinkArgs := libpqLinkArgs
 
 /-! ## Executable documentation
 
