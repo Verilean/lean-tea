@@ -30,6 +30,22 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
+    # Valkey rides GitHub's `services:` block (its container image's
+    # default CMD `valkey-server` does the right thing). MinIO needs
+    # `minio server /data` as the command and `services:` can't set
+    # commands, so we spin it up via `docker run` in a step below.
+    services:
+      valkey:
+        image: valkey/valkey:latest
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping || redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,8 +71,24 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-lake-
 
+      - name: Start MinIO (S3-compatible) sidecar
+        run: |
+          docker run -d --rm --name leantea-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=test \
+            -e MINIO_ROOT_PASSWORD=testtest1234 \
+            minio/minio:latest server /data
+          # Wait for /minio/health/live
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live > /dev/null; then
+              echo "MinIO up after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
       - name: Build CI test binaries
-        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve leanjs_spec
+        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve valkey_smoke s3_smoke leanjs_spec
 
       # ──────────────────────────────────────────────────────────────
       # Self-contained smoke binaries. Each one is an LSpec-shaped
@@ -75,5 +107,15 @@ jobs:
       - name: Auth integration (OAuth2 round-trip via in-process IdP subprocess + SAML fixtures, ~17 LSpec assertions)
         run: ./.lake/build/bin/auth_spec
 
+      - name: Valkey driver (RESP round-trip against the `services:` valkey container, 8 LSpec assertions)
+        run: ./.lake/build/bin/valkey_smoke
+
+      - name: S3 / object storage (SigV4 round-trip against MinIO sidecar, 6 LSpec assertions)
+        run: ./.lake/build/bin/s3_smoke
+
       - name: LeanJs spec runner (parser + check + codegen + eval cross-check)
         run: ./.lake/build/bin/leanjs_spec
+
+      - name: Tear down MinIO
+        if: always()
+        run: docker rm -f leantea-minio || true

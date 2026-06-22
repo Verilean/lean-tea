@@ -227,6 +227,14 @@ lean_exe http_smoke where
   srcDir := "examples"
   root := `Smoke.Http
 
+/-- S3 / object-storage round-trip. Opt-in: needs an S3-compatible
+    endpoint at `S3_ENDPOINT` (or `http://127.0.0.1:9000` by default
+    — MinIO). The CI workflow spins up MinIO as a service and runs
+    this binary. -/
+lean_exe s3_smoke where
+  srcDir := "examples"
+  root := `Smoke.S3
+
 lean_exe http_client_smoke where
   srcDir := "examples"
   root := `Smoke.HttpClient
@@ -238,6 +246,12 @@ lean_exe backend_smoke where
 lean_exe memcached_smoke where
   srcDir := "examples"
   root := `Smoke.Memcached
+
+/-- Valkey / Redis round-trip. CI services block spins up
+    `valkey/valkey:latest` at `127.0.0.1:6379` and runs this. -/
+lean_exe valkey_smoke where
+  srcDir := "examples"
+  root := `Smoke.Valkey
 
 lean_exe mysql_smoke where
   srcDir := "examples"
