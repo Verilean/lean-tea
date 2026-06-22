@@ -259,6 +259,22 @@ lean_exe quiz where
   srcDir := "examples"
   root := `Quiz.Main
 
+/-- Tetris — TUI demo with raw-mode stdin + concurrent tick
+    gravity. ~400 LOC, all in `examples/Tetris/Main.lean`.
+    Standard 10×20 board, 7 tetrominoes, line-clear scoring,
+    level-based gravity speed.
+
+    ```
+    lake build tetris
+    ./.lake/build/bin/tetris
+    ```
+
+    Unix only — uses `stty(1)` for the raw-mode handshake. If you
+    Ctrl-C out and the terminal stays raw, `reset` restores it. -/
+lean_exe tetris where
+  srcDir := "examples"
+  root := `Tetris.Main
+
 lean_exe counter_web where
   srcDir := "examples"
   root := `CounterWeb.Main
