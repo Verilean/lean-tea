@@ -407,6 +407,15 @@ lean_exe chrome_cdp_mcp_serve where
   srcDir := "examples"
   root := `ChromeCdpMcp.Serve
 
+/-- MCP server driving `tmux(1)` for AI-orchestrated terminal multiplexing.
+    Tools: list/new/kill sessions+windows+panes, send-keys, capture-pane,
+    plus a `tmux_run` convenience for one-shot commands. Same stdio +
+    HTTP shape as `desktop_mcp_serve`. Optional `--workspace DIR` /
+    `TMUX_MCP_WORKSPACE` for diagnostic cwd hints. -/
+lean_exe tmux_mcp_serve where
+  srcDir := "examples"
+  root := `TmuxMcp.Serve
+
 /-- MCP server backed by OS-level mouse / screenshot (Quartz on
     macOS today). Same JSON-RPC shape as `browser_mcp_serve` but
     the tools move the real mouse and capture the whole display —
