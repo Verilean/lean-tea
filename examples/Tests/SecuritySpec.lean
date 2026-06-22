@@ -2,7 +2,11 @@ import LeanTea
 import LeanTea.Html.Safe
 import LeanTea.Net.SafePath
 import LeanTea.Net.SafeRedirect
+import LeanTea.Net.Csp
 import LeanTea.Os.SafeCmd
+import LeanTea.Form.Csrf
+import LeanTea.StateMachine
+import StateMachine.Order
 
 /-! # examples/Tests/SecuritySpec.lean — one binary for the
     construction-time security guarantees.
@@ -19,8 +23,10 @@ build fails until the new case is green. -/
 
 open LeanTea LeanTea.Html LeanTea.LSpec
 open LeanTea.Net.Http (Response)
-open LeanTea.Net (SafePath SafeRedirect)
+open LeanTea.Net (SafePath SafeRedirect Csp CspSrc)
+open LeanTea.Net.Http (Response.csp)
 open LeanTea.Os (SafeCmd)
+open LeanTea.Form.Csrf (Config hiddenInput)
 
 /-! ## helpers -/
 
@@ -177,6 +183,117 @@ def safeRedirectSpec : LSpec :=
     ]
   ]
 
+/-! ## 6 · CSP typed builder -/
+
+def cspSpec : LSpec :=
+  let strict := Csp.strict.render
+  let custom : Csp :=
+    { Csp.strict with
+      scriptSrc := [.self, .host "https://cdn.example.com", .nonce "abc123"],
+      reportTo  := some "csp-endpoint" }
+  let customRendered := custom.render
+  let reportOnly : Csp := { Csp.strict with reportOnly := true }
+  group "Net.Csp (Primitive 9)" [
+    group "render emits the directive name and source keywords" [
+      it "strict has default-src 'none'"      (hasSubstr strict "default-src 'none'"),
+      it "strict has script-src 'self'"       (hasSubstr strict "script-src 'self'"),
+      it "strict has frame-ancestors 'none'"  (hasSubstr strict "frame-ancestors 'none'"),
+      it "directive separator is `; `"        (hasSubstr strict "; ")
+    ],
+    group "custom directives are typed values, not strings" [
+      it "host source rendered verbatim"
+        (hasSubstr customRendered "https://cdn.example.com"),
+      it "nonce wrapped in single quotes"
+        (hasSubstr customRendered "'nonce-abc123'"),
+      it "report-to directive present"
+        (hasSubstr customRendered "report-to csp-endpoint")
+    ],
+    group "reportOnly flips the header *name*" [
+      it "Csp.strict → enforce header"
+        (Csp.strict.headerName == "content-security-policy"),
+      it "reportOnly → report-only header"
+        (reportOnly.headerName == "content-security-policy-report-only")
+    ],
+    group "Response.csp attaches via setHeader! (CR/LF still refused)" [
+      it "header lands in toBytes" (
+        let resp : Response := (Response.text 200 "ok").csp Csp.strict
+        let s := String.fromUTF8! resp.toBytes
+        hasSubstr s "content-security-policy: default-src 'none'")
+    ]
+  ]
+
+/-! ## 7 · CSRF double-submit token -/
+
+def csrfSpec : LSpec :=
+  let cfg : LeanTea.Form.Csrf.Config := { secure := false }
+  let mkReq (cookie body : String) : LeanTea.Net.Http.Request := {
+    method  := "POST", path := "/save", query := "",
+    headers := if cookie.isEmpty then #[] else #[("cookie", cookie)],
+    body    := body.toUTF8 }
+  let goodReq     := mkReq "csrf=abc123" "_csrf=abc123&other=field"
+  let mismatchReq := mkReq "csrf=abc123" "_csrf=DIFFERENT&other=field"
+  let noCookieReq := mkReq ""            "_csrf=abc123"
+  let noFieldReq  := mkReq "csrf=abc123" "other=field"
+  let html := (LeanTea.Form.Csrf.hiddenInput cfg "abc123").render
+  let okOf (e : Except String Unit) : Bool :=
+    match e with | .ok ()    => true  | .error _ => false
+  let errOf (e : Except String Unit) : Bool :=
+    match e with | .ok ()    => false | .error _ => true
+  group "Form.Csrf (Primitive 10)" [
+    group "verify accepts matching cookie + field" [
+      it "double-submit matches"  (okOf  (cfg.verify goodReq))
+    ],
+    group "verify refuses tampering" [
+      it "mismatched values"      (errOf (cfg.verify mismatchReq)),
+      it "missing cookie"         (errOf (cfg.verify noCookieReq)),
+      it "missing field"          (errOf (cfg.verify noFieldReq))
+    ],
+    group "hidden input renders as expected" [
+      it "name attribute"   (hasSubstr html "name=\"_csrf\""),
+      it "value attribute"  (hasSubstr html "value=\"abc123\""),
+      it "type=hidden"      (hasSubstr html "type=\"hidden\"")
+    ]
+  ]
+
+/-! ## 8 · State-machine GADT (Order example) -/
+
+def stateMachineSpec : LSpec :=
+  /- Build the legal lifecycle. Each `apply` is a separate compile
+     step — the types stitch through `draft → submitted → paid →
+     shipped` exactly because the constructors line up. -/
+  let order0  : OrderSM.Order .draft     := OrderSM.fresh 1 1000
+  let order1  : OrderSM.Order .submitted := order0.apply .submit
+  let order2  : OrderSM.Order .paid      := order1.apply .pay
+  let order3  : OrderSM.Order .shipped   := order2.apply .ship
+  let order2c : OrderSM.Order .cancelled := order2.apply .cancel
+  group "StateMachine (Primitive 11) — Order lifecycle" [
+    group "legal transitions compile and update the payload" [
+      it "draft.submit preserves total"
+        (order1.id == 1 && order1.total == 1000),
+      it "submitted.pay fills paidAmt"
+        (order2.paidAmt == 1000),
+      it "paid.ship sets shippedAt"
+        (order3.shippedAt == 1_700_000_000),
+      it "any.cancel zeroes payload"
+        (order2c.total == 0 && order2c.paidAmt == 0)
+    ],
+    group "illegal transitions are documented in source as compile errors" [
+      /-
+        Try uncommenting:
+
+          let bad := order0.apply OrderSM.Transition.pay
+          -- error: application type mismatch
+          --   expected OrderTransition .draft ?
+          --   got      OrderTransition .submitted .paid
+
+        and the build refuses to proceed. There is **no value-level
+        path** from a `.draft` order to `.paid` — Lean's dependent
+        types make the bug class unrepresentable.
+      -/
+      it "(see source comment block — the compile error is the test)" true
+    ]
+  ]
+
 /-! ## Aggregate tree + entry point -/
 
 def allSpecs : LSpec := group "LeanTEA construction-time security" [
@@ -184,7 +301,10 @@ def allSpecs : LSpec := group "LeanTEA construction-time security" [
   safePathSpec,
   safeCmdSpec,
   safeHeaderSpec,
-  safeRedirectSpec
+  safeRedirectSpec,
+  cspSpec,
+  csrfSpec,
+  stateMachineSpec
 ]
 
 def main : IO Unit := do

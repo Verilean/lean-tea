@@ -25,7 +25,8 @@ lean_lib Examples where
     `Reversi.Game,
     `Tools.GenSite,
     `Tools.LeanJsCompile, `Tools.LeanJsInterp, `Tools.LeanJsRun,
-    `Tests.PureSpec
+    `Tests.PureSpec,
+    `StateMachine.Order
   ]
   /- Private examples (English Learning + game shells under
      `examples/_private/`) ship third-party content (arXiv quotes,
