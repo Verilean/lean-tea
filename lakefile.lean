@@ -289,23 +289,23 @@ lean_exe mysql_smoke where
   srcDir := "examples"
   root := `Smoke.Mysql
 
-/-- PostgreSQL round-trip smoke. Stub-mode by default — the C
-    wrapper compiles to a stub without `LEANTEA_HAVE_POSTGRES`, so
-    no libpq symbols hit the link line and the binary builds on
-    machines without libpq.
+/-- PostgreSQL round-trip smoke. `weakLinkArgs` always tries to
+    link `-lpq` with a few well-known search paths (Ubuntu libpq-dev,
+    Homebrew libpq, Nix). On machines without libpq the **link**
+    fails, but only when this exe is explicitly requested (it's not
+    a default target — bare `lake build` doesn't build it).
 
-    Real builds need `-lpq` on the link line. Pass it via the env:
-
-      Linux  (apt libpq-dev):
-        LEANTEA_POSTGRES=1 NIX_LDFLAGS="-L/usr/lib/x86_64-linux-gnu -lpq" lake build
-      macOS  (brew libpq):
-        LEANTEA_POSTGRES=1 NIX_LDFLAGS="-L$(brew --prefix libpq)/lib -lpq" lake build
-
-    CI does the Linux variant against the `postgres:16` service
-    container. -/
+    Stub mode: drop `LEANTEA_POSTGRES=1` from the env. The C wrapper
+    compiles to a stub that returns `"PostgreSQL support not
+    compiled in"` from every call. -/
 lean_exe postgres_smoke where
   srcDir := "examples"
   root := `Smoke.Postgres
+  weakLinkArgs := #[
+    "-L/usr/lib/x86_64-linux-gnu",
+    "-L/opt/homebrew/opt/libpq/lib",
+    "-L/usr/local/opt/libpq/lib",
+    "-lpq"]
 
 /-! ## Executable documentation
 

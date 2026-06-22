@@ -104,9 +104,6 @@ jobs:
       - name: Build CI test binaries
         env:
           LEANTEA_POSTGRES: "1"
-          # Lean's bundled clang doesn't search the system lib path by default —
-          # libpq lives at /usr/lib/x86_64-linux-gnu on Ubuntu after libpq-dev.
-          NIX_LDFLAGS: "-L/usr/lib/x86_64-linux-gnu -lpq"
         run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve valkey_smoke s3_smoke postgres_smoke leanjs_spec
 
       # ──────────────────────────────────────────────────────────────
