@@ -6,35 +6,18 @@ ends of the wire, with one mental model: the Elm-style triple
 
 ## Read in order
 
-0. **[Quickstart](00-quickstart.md)** — `lake new` to a running
-   web app in ten minutes. Start here.
-1. **[Overview](01-overview.md)** — what LeanTEA is, what each piece
-   covers, what ships, how to build.
-2. **[Frontend (Elm-style)](02-frontend.md)** — `Model / Msg / update /
-   view`, the typed `Html` and `Css` layers, where browser JS lives.
-   Worked example: Reversi.
-3. **[Backend (Elm-style)](03-backend.md)** — the stateless API loop,
-   `Handler`, sessions, the typed HTML shell. Worked example: Sheet.
-4. **[Persist](04-persist.md)** — typed SQLite tables via `Entity` and
-   `Repo`, manual migrations, the `Store` aggregate.
-5. **[RPC](05-rpc.md)** — one `Endpoint` record drives router + JS
-   client + discovery doc.
-6. **[LeanJs](06-leanjs.md)** — the `.leanjs` subset and when to reach
-   for it. Language reference:
-   [`LeanJs/README.md`](../LeanJs/README.md); LeanJs vs JS vs Lean:
-   [`LeanJs/COMPARISON.md`](../LeanJs/COMPARISON.md).
-7. **[Template](07-template.md)** — `.html` files with `{{var}}`,
-   `{{#each}}`, `{{#if}}`, `{{#include}}` and hot-reload via `Provider`.
-8. **[MCP servers](08-mcp.md)** — the `LeanTea.Mcp` library, stdio + HTTP
-   transports, and how the bundled Chrome-CDP / ComfyUI / Browser /
-   Desktop / Image servers are built.
-9. **[Architecture overview](09-architecture.md)** — the system map.
-   Once you've seen the parts, here's how they fit and where state
-   lives across a restart.
-10. **[Testing](10-testing.md)** — three strategies (compiler-as-test
-    + LSpec + LLM-driven `UiScript`; deterministic `WebSpec` in v0.2)
-    and what you *don't* test because the type system already did.
-11. **[Secure by Construction](11-secure-by-construction.md)** — `Auth.Proof` and `SafeQuery`, the two shipped security primitives, walked through with exact compile errors and the audit-grep story. **Read this if you came for the headline.**
+- **0 · [Quickstart](00-quickstart.md)** — `lake new` to a running web app in ten minutes. Start here.
+- **1 · [Overview](01-overview.md)** — what LeanTEA is, what each piece covers, what ships, how to build.
+- **2 · [Frontend (Elm-style)](02-frontend.md)** — `Model / Msg / update / view`, the typed `Html` and `Css` layers, where browser JS lives. Worked example: Reversi.
+- **3 · [Backend (Elm-style)](03-backend.md)** — the stateless API loop, `Handler`, sessions, the typed HTML shell. Worked example: Sheet.
+- **4 · [Persist](04-persist.md)** — typed SQLite tables via `Entity` and `Repo`, manual migrations, the `Store` aggregate.
+- **5 · [RPC](05-rpc.md)** — one `Endpoint` record drives router + JS client + discovery doc.
+- **6 · [LeanJs](06-leanjs.md)** — the `.leanjs` subset and when to reach for it. Language reference: [`LeanJs/README.md`](../LeanJs/README.md); LeanJs vs JS vs Lean: [`LeanJs/COMPARISON.md`](../LeanJs/COMPARISON.md).
+- **7 · [Template](07-template.md)** — `.html` files with `{{var}}`, `{{#each}}`, `{{#if}}`, `{{#include}}` and hot-reload via `Provider`.
+- **8 · [MCP servers](08-mcp.md)** — the `LeanTea.Mcp` library, stdio + HTTP transports, and how the bundled Chrome-CDP / ComfyUI / Browser / Desktop / Image servers are built.
+- **9 · [Architecture overview](09-architecture.md)** — the system map. Once you've seen the parts, here's how they fit and where state lives across a restart.
+- **10 · [Testing](10-testing.md)** — three strategies (compiler-as-test + LSpec + LLM-driven `UiScript`; deterministic `WebSpec` in v0.2) and what you *don't* test because the type system already did.
+- **11 · [Secure by Construction](11-secure-by-construction.md)** — `Auth.Proof`, `SafeQuery`, `SafeHtml`, `SafePath`, `SafeCmd`, `SafeRedirect`, `Response.setHeader` + `defaultSecurityHeaders` — eight shipped construction-time security primitives, walked through with the exact compile errors and IPA/OWASP mapping. **Read this if you came for the headline.**
 
 ## Skim by question
 
