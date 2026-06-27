@@ -476,6 +476,14 @@ lean_exe openai_smoke where
   srcDir := "examples"
   root := `Smoke.Openai
 
+/-- Gemini API wire-up smoke. Skips quietly when `GEMINI_API_KEY` is
+    unset (CI default). Otherwise runs one `ask` against
+    `gemini-2.5-flash-lite` (cheapest) and one `reviewMany` over two
+    repo files. Override the model via `GEMINI_SMOKE_MODEL`. -/
+lean_exe gemini_smoke where
+  srcDir := "examples"
+  root := `Smoke.Gemini
+
 /-- End-to-end demo: drive Chromium via Playwright, screenshot a page,
     feed it to a vision model. Requires the Node bridge under
     `tools/browser-bridge/` (`npm install` + `npx playwright install
@@ -527,6 +535,18 @@ lean_exe chrome_cdp_mcp_serve where
 lean_exe tmux_mcp_serve where
   srcDir := "examples"
   root := `TmuxMcp.Serve
+
+/-- MCP server fronting the Google Gemini API. Five tools:
+    `gemini_ask`, `gemini_chat`, `gemini_review_files` (long-context
+    multi-file holistic review — exploits Pro's 2M-token window),
+    `gemini_review_diff` (git-diff focused review), `gemini_list_models`.
+    Default model `gemini-2.5-pro`, override per-call. The API key
+    is read from `GEMINI_API_KEY` (see ai.google.dev for issuance).
+    `--workspace DIR` scopes the file-reading tools through
+    `LeanTea.Net.SafePath` so a buggy client can't read outside it. -/
+lean_exe gemini_mcp_serve where
+  srcDir := "examples"
+  root := `GeminiMcp.Serve
 
 /-- MCP server backed by OS-level mouse / screenshot (Quartz on
     macOS today). Same JSON-RPC shape as `browser_mcp_serve` but

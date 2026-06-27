@@ -28,6 +28,7 @@ import LeanTea.Net.Desktop
 import LeanTea.Net.Memcached
 import LeanTea.Net.Valkey
 import LeanTea.Cloud.S3
+import LeanTea.Cloud.Gemini
 import LeanTea.Auth
 import LeanTea.Js
 import LeanTea.Css
