@@ -369,6 +369,31 @@
     padding: 0 22px; font: inherit; font-weight: 600; cursor: pointer; letter-spacing: 4px;
   }
   .chat-send:disabled { background: #555; color: #aaa; cursor: progress; }
+  /* Ending screen */
+  .end-bg {
+    position: absolute; inset: 0;
+    background: #000; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .end-image {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%; object-fit: cover;
+    filter: brightness(0.55);
+  }
+  .end-overlay {
+    position: relative; z-index: 1;
+    text-align: center; padding: 80px 20px 40px;
+    display: flex; flex-direction: column; align-items: center; gap: 22px;
+  }
+  .end-title {
+    color: #c8a96a; letter-spacing: 6px; font-size: 32px; font-weight: 400;
+    text-shadow: 0 4px 16px rgba(0,0,0,0.95);
+    max-width: 90vw;
+  }
+  .end-sub {
+    color: #ddd; max-width: 600px; line-height: 2.0; font-size: 15px;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.95);
+  }
   /* Gallery */
   .gallery-list {
     width: min(680px, 90vw); max-height: 60vh; overflow-y: auto;

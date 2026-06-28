@@ -3559,18 +3559,37 @@ def endingTitle(id) :=
   | "xiaohe_purity_death" => "END: 潔白の死"
   | _ => "END"
 
+-- Map an ending id to a dramatic image asset, or "" for no image.
+def endingImageFor(id) :=
+  if id == "xiangyu_wujiang" then "/assets/end_wujiang.png"
+  else if id == "xiangyu_crossed_recluse" then "/assets/end_yuji_dance.png"
+  else if id == "hanxin_death_changle" then "/assets/end_changle.png"
+  else if id == "hanxin_xizheng_legend" then "/assets/end_xizheng.png"
+  else if id == "liubang_died_emperor" then "/assets/end_dafeng.png"
+  else if id == "zhangliang_immortal_path" then "/assets/end_immortal.png"
+  else if id == "xiaohe_died_chancellor" then "/assets/end_xiaohe.png"
+  else if id == "fanzeng_died_in_grief" then "/assets/end_fanzeng.png"
+  else if id == "fanzeng_jade_diverged" then "/assets/end_yuji_death.png"
+  else ""
+
 def viewEnding(state) :=
+  let img := endingImageFor(state.endingId);
+  let imgHtml := if img == "" then ""
+    else sjoin(["<img class='end-image' src='", img, "' alt=''>"]);
   sjoin([
-    "<div class='title-bg'>",
+    "<div class='end-bg'>",
+    imgHtml,
+    "<div class='end-overlay'>",
     renderHud(state),
-    "<h1 style='font-size:36px;letter-spacing:6px;color:#c8a96a'>",
+    "<h1 class='end-title'>",
     hesc(endingTitle(state.endingId)),
     "</h1>",
-    "<div class='sub' style='color:#aaa;max-width:600px;text-align:center;line-height:1.8;font-size:14px'>",
-    "MVP 第一幕の終わり。続きは Phase 2 で。<br>このまま遊び続けることもできます――他のルートを試してみてください。",
-    "<br><br>End of Act I (MVP). Continue in Phase 2.<br>Try the other routes.",
+    "<div class='end-sub'>",
+    "BCE 209 ─ 195, 「楚漢恋歌」より。<br>",
+    "他のルートを試すこともできます。",
     "</div>",
-    "<button class='btn' data-msg='{“tag“:“backToSelect“}'>主人公選択へ戻る</button></div>"
+    "<button class='btn' data-msg='{“tag“:“backToSelect“}'>主人公選択へ戻る</button>",
+    "</div></div>"
   ])
 
 -- Battle stub (no live entities yet — Phase 2 will populate)
