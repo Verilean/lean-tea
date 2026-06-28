@@ -536,6 +536,18 @@ lean_exe tmux_mcp_serve where
   srcDir := "examples"
   root := `TmuxMcp.Serve
 
+/-- MCP server giving code-editing agents the standard file-system +
+    shell toolkit, every operation workspace-bound via
+    `LeanTea.Net.SafePath`. Seven tools: `coder_read_file`,
+    `coder_list_dir`, `coder_glob`, `coder_grep` (read-only — safe
+    to allow globally) and `coder_write_file`, `coder_edit_file`,
+    `coder_run` (mutating — best left to the policy `ask` gate).
+    Pair with `llm_chat_web` + `LeanTea.Llm.Policy` for a
+    Claude-Code-style approve-before-write flow. -/
+lean_exe coder_mcp_serve where
+  srcDir := "examples"
+  root := `CoderMcp.Serve
+
 /-- MCP server fronting the Google Gemini API. Five tools:
     `gemini_ask`, `gemini_chat`, `gemini_review_files` (long-context
     multi-file holistic review — exploits Pro's 2M-token window),
