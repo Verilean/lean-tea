@@ -856,7 +856,32 @@ def xiangyuMeetYu := [
     "笑っている。なぜか、こいつに「普通」と言われると、嬉しい。",
     "She's laughing. For some reason, being called “ordinary“ by her — feels good."),
   narr("bg-camp", "二人の縁は、こうして始まった。垓下で終わるまで、八年の縁である。", "Their bond began thus. It would end at Gaixia, eight years later."),
-  goScene("xiangyu_act2")
+  -- ★ LLM: 范増 と語る (戦略相談)
+  chooseStep("bg-camp", [
+    Choice {
+      labelJa: "范増と戦略を語る ★LLM自由会話★",
+      labelEn: "Discuss strategy with Fan Zeng ★LLM free chat★",
+      hintJa: "亜父と語り合う。彼は七十の老人として、紀元前 208 年の世界観で応える",
+      hintEn: "Talk with the “second father.“ He answers in-character as a 70-year-old in BCE 208",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 3, dMinXin: 0,
+      dBu: 0, dZhi: 2, dMei: 0, dZheng: 1,
+      setFlag: "chatted_fanzeng", gotoScene: "xiangyu_chat_fanzeng"
+    },
+    Choice {
+      labelJa: "話さずに次へ",
+      labelEn: "Skip",
+      hintJa: "", hintEn: "",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: 0,
+      dBu: 0, dZhi: 0, dMei: 0, dZheng: 0,
+      setFlag: "", gotoScene: "xiangyu_act2"
+    }
+  ])
+]
+
+def xiangyuChatFanzeng := [
+  npcChatStep("bg-camp", "fanzeng", "xiangyu_act2")
 ]
 
 def xiangyuAct1StubEnd := [
@@ -997,6 +1022,35 @@ def zhanglangAct1End := [
   say("bg-river", "黄石公", colorHuangshi,
     "「孺子可教也」",
     "“The boy can be taught.“"),
+  -- ★ LLM: 黄石公 と問答する
+  chooseStep("bg-river", [
+    Choice {
+      labelJa: "黄石公に問いを投げる ★LLM自由会話★",
+      labelEn: "Ask Huang Shi Gong a question ★LLM free chat★",
+      hintJa: "謎めいた老人に何を聞く? 兵法、運命、世の理――",
+      hintEn: "Ask the enigmatic old man anything. Strategy, fate, the way of things —",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: 0,
+      dBu: 0, dZhi: 3, dMei: 0, dZheng: 1,
+      setFlag: "chatted_huangshi", gotoScene: "zhangliang_chat_huangshi"
+    },
+    Choice {
+      labelJa: "礼をして去る",
+      labelEn: "Bow and leave",
+      hintJa: "", hintEn: "",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: 0,
+      dBu: 0, dZhi: 0, dMei: 0, dZheng: 0,
+      setFlag: "", gotoScene: "zhangliang_act1_after_chat"
+    }
+  ])
+]
+
+def zhanglangChatHuangshi := [
+  npcChatStep("bg-river", "huangshi", "zhangliang_act1_after_chat")
+]
+
+def zhanglangAct1AfterChat := [
   narr("bg-river", "張良は『太公兵法』を授かった。十年後、彼は劉邦と出会い、漢の軍師となる。引退して山に消える日まで、彼の戦は無敗である。", "Zhang Liang received the Tai Gong's Art of War. Ten years later he meets Liu Bang and becomes Han's strategist. Until the day he withdraws to the mountains, he never loses a campaign."),
   goScene("zhangliang_act2")
 ]
@@ -1047,6 +1101,35 @@ def xiaoheAct1 := [
 ]
 
 def xiaoheAct1End := [
+  -- ★ LLM: 妙容 と語る
+  chooseStep("bg-house", [
+    Choice {
+      labelJa: "妙容と二人で語る ★LLM自由会話★",
+      labelEn: "Speak with Miao Rong alone ★LLM free chat★",
+      hintJa: "妻に何を話す? 仕事、劉邦、未来――",
+      hintEn: "What do you say to your wife? Work, Liu Bang, the future —",
+      dKarma: 0, dWife: 5, dWifeFear: 0,
+      dTrust: 0, dMinXin: 0,
+      dBu: 0, dZhi: 0, dMei: 0, dZheng: 0,
+      setFlag: "chatted_miaorong", gotoScene: "xiaohe_chat_miaorong"
+    },
+    Choice {
+      labelJa: "黙って書類に戻る",
+      labelEn: "Silently return to the documents",
+      hintJa: "", hintEn: "",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: 0,
+      dBu: 0, dZhi: 0, dMei: 0, dZheng: 0,
+      setFlag: "", gotoScene: "xiaohe_act1_after_chat"
+    }
+  ])
+]
+
+def xiaoheChatMiaorong := [
+  npcChatStep("bg-house", "miaorong", "xiaohe_act1_after_chat")
+]
+
+def xiaoheAct1AfterChat := [
   narr("bg-pei", "数年後、秦が傾き、沛の役人衆は劉邦を担いで蜂起する。蕭何はその参謀となった。彼の名は、ここから歴史に刻まれていく――そして、彼が韓信を見出し、そして殺す日まで、二十年は無い。", "Years later, as Qin tilts toward collapse, the clerks of Pei raise Liu Bang as their leader. Xiao He becomes the lead strategist. From here his name enters history — and the day he will discover Han Xin, then kill him, is less than twenty years away."),
   goScene("xiaohe_act2")
 ]
@@ -1097,8 +1180,33 @@ def fanzengAct1 := [
 ]
 
 def fanzengAct1End := [
-  narr("bg-camp", "范増の進言は、聞かれることもあり、聞かれぬこともあった。彼はやがて項羽の唯一の参謀となり――そして、最後に項羽に「お主はもう私の言を聞かぬか」と告げて、陣を去る。陣から故郷へ帰る途上、背に疽を発して死ぬ。八十歳前後である。", "Fan Zeng's counsel was sometimes heard, often not. He would become Xiang Yu's sole strategist — and one day tell Xiang Yu: “You no longer listen to me, do you?“ — and depart the camp. He dies on the road home of a back boil. Eighty, more or less."),
-  goScene("fanzeng_act2")
+  narr("bg-camp", "范増の進言は、聞かれることもあり、聞かれぬこともあった。彼はやがて項羽の唯一の参謀となる。", "Fan Zeng's counsel was sometimes heard, often not. He would become Xiang Yu's sole strategist."),
+  -- ★ LLM: 項伯と立ち話
+  chooseStep("bg-camp", [
+    Choice {
+      labelJa: "項伯と立ち話する ★LLM自由会話★",
+      labelEn: "Aside with Xiang Bo ★LLM free chat★",
+      hintJa: "項羽の叔父・項伯と項羽の話をする。彼の見方は信頼できるか?",
+      hintEn: "Talk with Xiang Yu's uncle. Can his view be trusted?",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 2, dMinXin: 0,
+      dBu: 0, dZhi: 2, dMei: 0, dZheng: 1,
+      setFlag: "chatted_xiangbo", gotoScene: "fanzeng_chat_xiangbo"
+    },
+    Choice {
+      labelJa: "黙して陣中に戻る",
+      labelEn: "Silently return to camp",
+      hintJa: "", hintEn: "",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: 0,
+      dBu: 0, dZhi: 0, dMei: 0, dZheng: 0,
+      setFlag: "", gotoScene: "fanzeng_act2"
+    }
+  ])
+]
+
+def fanzengChatXiangbo := [
+  npcChatStep("bg-camp", "xiangbo", "fanzeng_act2")
 ]
 
 -- ── ACT 2 — 楚漢戦争 (BCE 206-202) ──────────────────────────────────
@@ -1605,37 +1713,15 @@ def hanxinAct2 := [
     "“The art of war says high ground behind. But my men are not picked troops. Without dead ground, they will not fight.“",
     "兵を活かすため、わざと死地に置く。普通の将は『陥之死地而后生』の意味を、頭ではわかっていても、現場では実行できぬ。",
     "Place them in death-ground that they may live. Most generals understand the words; few have the nerve to execute."),
-  chooseStep("bg-river", [
-    Choice {
-      labelJa: "部下に布陣の意図を説明する",
-      labelEn: "Explain the formation to your officers",
-      hintJa: "部下は安心するが、敵に意図が漏れる可能性あり",
-      hintEn: "Officers reassured. Risk: the design may leak",
-      dKarma: 0, dWife: 0, dWifeFear: 0,
-      dTrust: 3, dMinXin: 0,
-      dBu: 0, dZhi: 1, dMei: 2, dZheng: 1,
-      setFlag: "explained_beishui", gotoScene: ""
-    },
-    Choice {
-      labelJa: "黙して陣を敷き、勝った後で説明する",
-      labelEn: "Stay silent. Encamp. Explain after winning",
-      hintJa: "史実。部下は震えるが、勝てば信頼は絶対に",
-      hintEn: "As history. The men tremble — but victory wins absolute trust",
-      dKarma: 1, dWife: 0, dWifeFear: 0,
-      dTrust: 8, dMinXin: 0,
-      dBu: 0, dZhi: 5, dMei: 5, dZheng: 3,
-      setFlag: "silent_beishui", gotoScene: ""
-    }
-  ]),
-  narr("bg-river",
-    "暁。趙の二十万が雪崩のように攻め寄せる。韓信の本陣は退路無し、必死に防戦。同時に、別動隊二千が無人となった趙の本陣を奇襲、漢の赤旗を掲げた。趙軍崩壊。陳余は斬られた。",
-    "Dawn. Two hundred thousand Zhao troops avalanche down. The Han center, no retreat, fights to the death. Meanwhile a flying column of two thousand storms the empty Zhao camp and raises Han's red banners. Zhao breaks. Chen Yu falls."),
-  duo("bg-river", "部下", "#5a5a5a", "韓信", colorHan, 2,
-    "「将軍! 兵法では『丘陵を右背にし水沢を前左にせよ』とあるはず。なぜ背水の陣で勝てたのですか?」",
-    "“General! The art of war says hill to the right rear, marsh to the front left. How did the back-to-water formation win?“"),
-  duo("bg-river", "韓信", colorHan, "部下", "#5a5a5a", 1,
-    "「これも兵法だ。『陥之死地而後生、置之亡地而後存』。退路を断ったから、皆死力を尽くしたのだ」",
-    "“That too is the art of war. Cast them into dead-ground and they live. Cut the retreat, and every one fought to the last breath.“"),
+  -- ★ MINI: beishui card-sequence (3 turns) — replaces the binary choice
+  miniStep("bg-river", "beishui",
+    "hanxin_beishui_perfect",  -- 7-9 pts: total victory + bonus
+    "hanxin_beishui_won",      -- 4-6 pts: historical victory
+    "hanxin_beishui_failed")   -- 0-3 pts: defeat → END
+]
+
+-- Continuation scene reached after the mini via outcome scenes.
+def hanxinAct2Continue := [
   narr("bg-river",
     "斉征伐。劉邦の使者・酈食其は外交で斉を降伏させていたが、韓信はこれを蹴って攻撃。酈食其は斉王に煮殺された。項羽は龍且の二十万を派遣。韓信は濰水を堰き止め、龍且軍が渡河する瞬間、堰を切る。半分が溺れ、半分が分断された。龍且は斬られた。斉、平定。",
     "The Qi campaign. Liu Bang's envoy Li Yiji had already negotiated Qi's surrender — but Han Xin attacked anyway. Li was boiled alive. Xiang Yu dispatched Long Ju. Han Xin dammed the Wei River. As Long Ju crossed, he broke the dam. Long Ju fell. Qi pacified."),
@@ -1653,6 +1739,36 @@ def hanxinAct2 := [
     "“Kuai Tong. What you say is sound. And yet —“",
     "蕭何は俺を発見してくれた人だ。劉邦は俺を大将軍に拝してくれた人だ。これらの恩を踏みにじって俺だけが天下を取る、それを俺はできない。",
     "Xiao He found me. Liu Bang made me Supreme General. To trample these debts — I cannot."),
+  -- ★ LLM: 蒯通と更に問答してから決断する
+  chooseStep("bg-tent", [
+    Choice {
+      labelJa: "蒯通に更に問う ★LLM自由会話★ (決断を先送り)",
+      labelEn: "Press Kuai Tong further ★LLM free chat★ (defer decision)",
+      hintJa: "三国鼎立の利害を彼に詳しく問える。話してから決めても遅くない",
+      hintEn: "Question him on the three-way standoff in depth. The decision can wait",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: 0,
+      dBu: 0, dZhi: 2, dMei: 0, dZheng: 2,
+      setFlag: "chatted_kuaitong", gotoScene: "hanxin_chat_kuaitong"
+    },
+    Choice {
+      labelJa: "問答せずに即決する",
+      labelEn: "Skip the chat — decide now",
+      hintJa: "",
+      hintEn: "",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: 0,
+      dBu: 0, dZhi: 0, dMei: 0, dZheng: 0,
+      setFlag: "", gotoScene: "hanxin_kuaitong_decide"
+    }
+  ])
+]
+
+def hanxinChatKuaitong := [
+  npcChatStep("bg-tent", "kuaitong", "hanxin_kuaitong_decide")
+]
+
+def hanxinKuaitongDecide := [
   chooseStep("bg-tent", [
     Choice {
       labelJa: "蒯通の進言を退け、劉邦に忠誠を尽くす",
@@ -1682,6 +1798,50 @@ def hanxinAct2 := [
 ]
 
 -- 韓信西征 (隠しEND)
+-- Han Xin 背水之陣 outcome scenes ─────────────────────────────
+def hanxinBeishuiPerfect := [
+  narr("bg-river",
+    "完璧な布陣であった。三万の死兵が二十万を撃砕、陳余は斬られ、趙の地は一夜にして漢の領地となった。「将軍の用兵、神の如し」――この日から、韓信を疑う者は漢軍に一人も居なくなった。",
+    "A perfect formation. Thirty thousand death-soldiers shattered two hundred thousand. Chen Yu fell. Zhao became Han in a single night. “The general's use of troops is divine.“ From that day, no one in the Han army doubted Han Xin again."),
+  -- Bonus stat for perfect score
+  chooseStep("bg-river", [
+    Choice {
+      labelJa: "(無言で部下たちの賞賛を受ける)",
+      labelEn: "(Accept the men's praise in silence)",
+      hintJa: "完勝ボーナス。+智 +信頼",
+      hintEn: "Perfect victory bonus. +int +trust",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 15, dMinXin: 10,
+      dBu: 0, dZhi: 10, dMei: 8, dZheng: 0,
+      setFlag: "beishui_perfect", gotoScene: "hanxin_beishui_continues"
+    }
+  ])
+]
+
+def hanxinBeishuiWon := [
+  narr("bg-river",
+    "辛勝。兵の半ばを失ったが、なんとか趙を破った。陣中で韓信は静かに兵法書を巻いた。「兵法は読むより、置く方が深い」",
+    "A narrow victory. Half the army lost, but Zhao was broken. In the tent, Han Xin quietly rolled up his manual. “The art of war is deeper in the placing than in the reading.“"),
+  goScene("hanxin_beishui_continues")
+]
+
+def hanxinBeishuiFailed := [
+  narr("bg-river",
+    "陣形が崩れた。趙の二十万に正面から押し負け、漢軍は壊乱。韓信は数十騎を伴って井陘口を抜け、北方へ落ちた。あの「胯下の辱」と同じ無力感が、馬上の彼の胸を満たした。",
+    "The formation broke. Two hundred thousand Zhao crushed the Han line. Han Xin escaped Jingxing Pass with a few dozen riders and fled north. The same helplessness as the crotch crawl filled his chest on horseback."),
+  endingStep("hanxin_beishui_lost")
+]
+
+def hanxinBeishuiContinues := [
+  duo("bg-river", "部下", "#5a5a5a", "韓信", colorHan, 2,
+    "「将軍! 兵法では『丘陵を右背にし水沢を前左にせよ』とあるはず。なぜ背水の陣で勝てたのですか?」",
+    "“General! The art of war says hill to the right rear, marsh to the front left. How did the back-to-water formation win?“"),
+  duo("bg-river", "韓信", colorHan, "部下", "#5a5a5a", 1,
+    "「これも兵法だ。『陥之死地而後生、置之亡地而後存』。退路を断ったから、皆死力を尽くしたのだ」",
+    "“That too is the art of war. Cast them into dead-ground and they live. Cut the retreat, and every one fought to the last breath.“"),
+  goScene("hanxin_act2_continue")
+]
+
 def hanxinXizheng := [
   narr("bg-mountain",
     "韓信、楚漢両軍と離れ、三十万の精兵を率いて北西に向かった。漂雲も同行した。『あなたが行くなら、私も』。",
@@ -1916,16 +2076,52 @@ def fanzengAct2 := [
     "項羽は范増の進言を容れ、二十万を一夜にして生き埋めにした。范増、それから関中の民心が永遠に項羽から離れたことを、誰よりもよく見ていた。",
     "Xiang Yu accepted. Twenty myriad buried in a single night. From that moment, the people of Guanzhong turned forever from Xiang Yu — and Fan Zeng saw it more clearly than anyone."),
   narr("bg-tent",
-    "鴻門の宴。范増は東向に座し、項羽の対面。劉邦が来た。范増、項羽に目で『斬れ』と告げる。次に、玉玦を上げる。一度。二度。三度。項羽、応じず。",
-    "Hongmen. Fan Zeng sits facing east, opposite the King. Liu Bang arrives. Fan Zeng's eyes to Xiang Yu: strike. Then the jade ring is raised. Once. Twice. Three times. The King does not respond."),
-  think("bg-tent", "范増", colorFanZeng,
-    "「(玉玦を握りしめて) この子、私の合図が見えぬのか。否、見えていて、応えぬのか」",
-    "“(Gripping the ring) Does the boy not see my signal? Or does he see — and refuse?“",
-    "もはや私一人で打つ。",
-    "Then I act alone."),
+    "鴻門の宴。范増は東向に座し、項羽の対面。劉邦が来た。今、玉玦を上げる時――項羽が応えるか否か、それは合図のタイミングに掛かっている。",
+    "Hongmen. Fan Zeng sits facing east, opposite the King. Liu Bang arrives. The moment to raise the jade ring — whether the King will respond depends on the timing of the signal."),
+  -- ★ MINI: jade_ring rhythm — 3 timed clicks
+  miniStep("bg-tent", "jade_ring",
+    "fanzeng_jade_perfect",  -- 3 hits: 項羽が剣を抜く → 歴史改変
+    "fanzeng_jade_normal",   -- 1-2 hits: 史実通り
+    "fanzeng_jade_failed")   -- 0 hits: 項羽完全無視
+]
+
+-- Fan Zeng jade_ring outcome scenes ─────────────────────────────
+def fanzengJadePerfect := [
   narr("bg-tent",
-    "范増は項荘を呼び、剣舞を以て劉邦を斬らしめんとした。項伯立ち上がりて舞いを以て覆い、樊噲乱入し、劉邦は便所に立つ振りで逃走。",
-    "Fan Zeng called Xiang Zhuang and bade him dance the sword to kill the Duke. Xiang Bo rose and danced cover. Fan Kuai burst in. The Duke escaped."),
+    "三度の合図、全てが項羽の心に届いた。項羽、剣を抜いて立ち上がる。「沛公、許せ」と一閃。劉邦は座のまま伏した。樊噲は遅れて駆け込んだが、もはや遅し。范増は、座を立たぬまま、目を閉じた――『間に合った』。",
+    "All three signals struck home. Xiang Yu rose, drew his blade. “Forgive me, Duke of Pei,“ and a single stroke. Liu Bang fell at the table. Fan Kuai burst in too late. Fan Zeng, without rising, closed his eyes — “In time.“"),
+  think("bg-tent", "范増", colorFanZeng,
+    "「項王、ありがとうござる」",
+    "“King Xiang, thank you.“",
+    "亡き妻よ、私の生涯の進言が、今日ここに、初めて、聞かれた。私の役目は、これで、終わってもよい。",
+    "My departed wife — for the first time in my life, my counsel was heeded. My part may end here, content."),
+  narr("bg-tent",
+    "項羽はそのまま咸陽に入り、子嬰を斬って『西楚帝国』を建てた。范増は数年を生き、項羽の治世が安定するのを見届けて静かに死んだ――それは、史実とは異なるもう一つの世界の物語。",
+    "Xiang Yu entered Xianyang, executed Ziying, founded the Empire of Western Chu. Fan Zeng lived a few more years, saw the reign stabilize, and died quietly — a story from another world."),
+  endingStep("fanzeng_jade_diverged")
+]
+
+def fanzengJadeFailed := [
+  narr("bg-tent",
+    "三度。三度とも、項羽は微動だにしなかった。范増は項荘を呼んで剣舞を命じたが、項伯が立ち上がり、樊噲が乱入し、劉邦は逃げた。",
+    "Three times. Three times the King did not stir. Fan Zeng called Xiang Zhuang to dance the sword; Xiang Bo intervened; Fan Kuai burst in; Liu Bang escaped."),
+  think("bg-tent", "范増", colorFanZeng,
+    "「(玉玦を握りしめたまま) ……」",
+    "“(Still gripping the ring) ...“",
+    "あの子の前で、私の合図は、もはや、ただの飾りに過ぎぬ。",
+    "Before this boy, my signals are now no more than ornament."),
+  goScene("fanzeng_act2_continue")
+]
+
+def fanzengJadeNormal := [
+  narr("bg-tent",
+    "范増の合図は項羽に届かなかった。范増は項荘を呼んで剣舞を命じたが、項伯立ち上がり、樊噲乱入、劉邦逃走。",
+    "Fan Zeng's signals did not reach the King. He called Xiang Zhuang for the sword dance; Xiang Bo intervened; Fan Kuai burst in; Liu Bang escaped."),
+  goScene("fanzeng_act2_continue")
+]
+
+-- Continuation after the jade_ring mini (the original post-鴻門 beats).
+def fanzengAct2Continue := [
   narr("bg-tent",
     "宴後、張良が白璧と玉斗を捧げて謝罪を伝えた。項羽は白璧を取った。范増は玉斗を地に投げ、剣で斬り砕き、罵った――",
     "After the banquet, Zhang Liang offered jade discs and jade ladles in apology. Xiang Yu took the discs. Fan Zeng flung the ladles down, chopped them in two, and cursed —"),
@@ -1998,6 +2194,7 @@ def sceneOf(id) :=
   | "liubang_honggou_keeper_end" => liubangHonggouKeeperEnd
   | "xiangyu_act1" => xiangyuAct1
   | "xiangyu_meet_yu" => xiangyuMeetYu
+  | "xiangyu_chat_fanzeng" => xiangyuChatFanzeng
   | "xiangyu_act1_stub_end" => xiangyuAct1StubEnd
   | "xiangyu_act2" => xiangyuAct2
   | "xiangyu_julu_failed_end" => xiangyuJuluFailedEnd
@@ -2006,19 +2203,35 @@ def sceneOf(id) :=
   | "hanxin_piao_mu" => hanxinPiaoMu
   | "hanxin_dead_end" => hanxinDeadEnd
   | "hanxin_act2" => hanxinAct2
+  | "hanxin_act2_continue" => hanxinAct2Continue
+  | "hanxin_chat_kuaitong" => hanxinChatKuaitong
+  | "hanxin_kuaitong_decide" => hanxinKuaitongDecide
+  | "hanxin_beishui_perfect" => hanxinBeishuiPerfect
+  | "hanxin_beishui_won" => hanxinBeishuiWon
+  | "hanxin_beishui_failed" => hanxinBeishuiFailed
+  | "hanxin_beishui_continues" => hanxinBeishuiContinues
   | "hanxin_xizheng" => hanxinXizheng
   | "zhangliang_act1" => zhanglangAct1
   | "zhangliang_act1_end" => zhanglangAct1End
+  | "zhangliang_chat_huangshi" => zhanglangChatHuangshi
+  | "zhangliang_act1_after_chat" => zhanglangAct1AfterChat
   | "zhangliang_no_bingfa_end" => zhanglangNoBingfaEnd
   | "zhangliang_act2" => zhanglangAct2
   | "xiaohe_act1" => xiaoheAct1
   | "xiaohe_act1_end" => xiaoheAct1End
+  | "xiaohe_chat_miaorong" => xiaoheChatMiaorong
+  | "xiaohe_act1_after_chat" => xiaoheAct1AfterChat
   | "xiaohe_act2" => xiaoheAct2
   | "xiaohe_looter_end" => xiaoheLooterEnd
   | "xiaohe_purity_death_end" => xiaohePurityDeathEnd
   | "fanzeng_act1" => fanzengAct1
   | "fanzeng_act1_end" => fanzengAct1End
+  | "fanzeng_chat_xiangbo" => fanzengChatXiangbo
   | "fanzeng_act2" => fanzengAct2
+  | "fanzeng_act2_continue" => fanzengAct2Continue
+  | "fanzeng_jade_perfect" => fanzengJadePerfect
+  | "fanzeng_jade_normal" => fanzengJadeNormal
+  | "fanzeng_jade_failed" => fanzengJadeFailed
   | _ => []
 
 def startSceneFor(charId) :=
@@ -2137,6 +2350,9 @@ def npcMetaName(id) :=
   else if id == "fankuai" then "樊噲"
   else if id == "fanzeng" then "范増"
   else if id == "xiangbo" then "項伯"
+  else if id == "kuaitong" then "蒯通"
+  else if id == "huangshi" then "黄石公"
+  else if id == "miaorong" then "妙容"
   else "?"
 
 def npcMetaColor(id) :=
@@ -2146,6 +2362,9 @@ def npcMetaColor(id) :=
   else if id == "fankuai" then "#6a4a2a"
   else if id == "fanzeng" then "#3a5a3a"
   else if id == "xiangbo" then "#5a3a3a"
+  else if id == "kuaitong" then "#4a6a4a"
+  else if id == "huangshi" then "#a08070"
+  else if id == "miaorong" then "#7a5a8a"
   else "#5a5a5a"
 
 def initLlmFor(npcId, sceneAfter) := Llm {
@@ -2716,6 +2935,8 @@ def endingTitle(id) :=
   | "xiaohe_act1_clear" => "第一幕 完 ― 蕭何"
   | "fanzeng_act1_clear" => "第一幕 完 ― 范増"
   | "face_read_failed" => "END: 顔相を読み損ねる"
+  | "hanxin_beishui_lost" => "END: 背水に敗る"
+  | "fanzeng_jade_diverged" => "★ 隠し END: 鴻門に劉邦死す (歴史改変)"
   -- Act 2 main endings
   | "liubang_act2_clear" => "第二幕 完 ― 劉邦 (垓下前夜)"
   | "xiangyu_act2_clear" => "第二幕 完 ― 項羽 (鴻溝の和約)"
