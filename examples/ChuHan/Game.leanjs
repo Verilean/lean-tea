@@ -30,6 +30,14 @@ extern js "() => Math.floor(Math.random() * 1000000)" rngInt
 extern js "(a, b) => a < b ? a : b" minI
 extern js "(a, b) => a > b ? a : b" maxI
 
+-- ── Save-slot extern bridge ────────────────────────────────────────
+-- Browser APIs we need extern access to for save/load logic that
+-- otherwise had to live in page.html. Keeping the shape thin —
+-- JS-side wrappers stay tiny.
+extern js "(key) => { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { return null; } }" lsLoad
+extern js "(key, v) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch (_) {} }" lsSave
+extern js "(key) => { try { localStorage.removeItem(key); } catch (_) {} }" lsRemove
+
 -- ── i18n helper ─────────────────────────────────────────────────────
 -- A localised string is `{ja: "…", en: "…"}`. `tr` picks the requested
 -- language and falls back to `ja` when the target is empty.
@@ -2764,6 +2772,25 @@ def initLlm := Llm {
   history: [], pending: false, sceneAfter: "", lastError: ""
 }
 
+-- LocalStorage keys for save system.
+def lsKeyMain := "chuhan-save-v2"
+def lsKeyCheckpoint := "chuhan-checkpoint"
+def lsKeySlot(n) := sjoin(["chuhan-slot-", jstr(n)])
+
+-- Render a one-line state preview for save-slot UI labels.
+def describeState(s) :=
+  if s == null then "(空)"
+  else if s.phase == "title" then "タイトル"
+  else
+    let charName := if s.char == "liubang" then "劉邦"
+                    else if s.char == "xiangyu" then "項羽"
+                    else if s.char == "hanxin" then "韓信"
+                    else if s.char == "zhangliang" then "張良"
+                    else if s.char == "xiaohe" then "蕭何"
+                    else if s.char == "fanzeng" then "范増"
+                    else "?";
+    sjoin([charName, " · ", s.sceneId, " · beat ", jstr(s.beat)])
+
 def npcMetaName(id) :=
   if id == "xiaohe" then "蕭何"
   else if id == "luwen" then "呂公"
@@ -3178,7 +3205,37 @@ def update(msg, state) :=
       char: state.char, sceneId: after, beat: 0,
       stats: state.stats, flags: state.flags, battle: state.battle,
       endingId: "", toast: "llm:end", mini: state.mini, llm: initLlm })
-  -- Save / load are JS-side (page.html replaces state directly).
+  -- Save / load handlers — direct localStorage via externs.
+  -- (LeanJs functions are pure in spirit; the externs do the IO.)
+  | "toggleSaveMenu" => (
+    let cur := state.flags._saveMenuOpen == true;
+    let newFlags := { _saveMenuOpen: (! cur) };
+    { phase: state.phase, lang: state.lang,
+      char: state.char, sceneId: state.sceneId, beat: state.beat,
+      stats: state.stats, flags: newFlags, battle: state.battle,
+      endingId: state.endingId, toast: state.toast, mini: state.mini, llm: state.llm })
+  | "saveSlot1" => (
+    let _ := lsSave(lsKeySlot(1), state);
+    state )
+  | "saveSlot2" => (
+    let _ := lsSave(lsKeySlot(2), state);
+    state )
+  | "saveSlot3" => (
+    let _ := lsSave(lsKeySlot(3), state);
+    state )
+  | "loadSlot1" => (
+    let s := lsLoad(lsKeySlot(1));
+    if s == null then state else s )
+  | "loadSlot2" => (
+    let s := lsLoad(lsKeySlot(2));
+    if s == null then state else s )
+  | "loadSlot3" => (
+    let s := lsLoad(lsKeySlot(3));
+    if s == null then state else s )
+  | "loadCheckpoint" => (
+    let s := lsLoad(lsKeyCheckpoint);
+    if s == null then state else s )
+  | "restart" => initState
   | "reset" => initState
   | "backToSelect" => { phase: "select", lang: state.lang,
                         char: "", sceneId: "", beat: 0,
@@ -3196,6 +3253,38 @@ def renderLang(state) :=
     "<div class='lang'><button class='", ja,
     "' data-msg='{“tag“:“setLang“,“lang“:“ja“}'>JA</button><button class='", en,
     "' data-msg='{“tag“:“setLang“,“lang“:“en“}'>EN</button></div>"
+  ])
+
+-- Render the save/load drop-down. The slot labels read live from
+-- localStorage on each render so they always reflect the latest
+-- saves (no manual "refresh" needed).
+def renderSaveMenuItem(action, label) :=
+  sjoin([
+    "<button data-msg='{“tag“:“", action, "“}'>", hesc(label), "</button>"
+  ])
+
+def renderSaveMenu(state) :=
+  let open := state.flags._saveMenuOpen == true;
+  let openClass := if open then "save-menu open" else "save-menu";
+  let s1 := describeState(lsLoad(lsKeySlot(1)));
+  let s2 := describeState(lsLoad(lsKeySlot(2)));
+  let s3 := describeState(lsLoad(lsKeySlot(3)));
+  let cp := describeState(lsLoad(lsKeyCheckpoint));
+  sjoin([
+    "<div class='", openClass, "'>",
+    "<button class='save-btn' data-msg='{“tag“:“toggleSaveMenu“}'>💾</button>",
+    "<div class='save-pop'>",
+    renderSaveMenuItem("saveSlot1", "Slot 1 へ保存"),
+    renderSaveMenuItem("saveSlot2", "Slot 2 へ保存"),
+    renderSaveMenuItem("saveSlot3", "Slot 3 へ保存"),
+    "<hr>",
+    renderSaveMenuItem("loadSlot1", sjoin(["Slot 1 — ", s1])),
+    renderSaveMenuItem("loadSlot2", sjoin(["Slot 2 — ", s2])),
+    renderSaveMenuItem("loadSlot3", sjoin(["Slot 3 — ", s3])),
+    "<hr>",
+    renderSaveMenuItem("loadCheckpoint", sjoin(["↩ チェックポイント: ", cp])),
+    renderSaveMenuItem("restart", "⟲ 最初からやり直す"),
+    "</div></div>"
   ])
 
 def renderHud(state) :=
@@ -3217,6 +3306,7 @@ def renderHud(state) :=
     "</b></span><span class='stat'>嫁<b>", jstr(s.wife),
     "</b></span><span class='yr'>BCE ", jstr(0 - s.year),
     "</span>", renderLang(state),
+    renderSaveMenu(state),
     "<button class='menu-btn' data-msg='{“tag“:“backToSelect“}'>選択へ</button></div>"
   ])
 

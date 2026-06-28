@@ -411,37 +411,13 @@ function maybeCheckpoint(state) {
   }
 }
 
-function describeState(state) {
-  if (!state) return '(empty)';
-  if (state.phase === 'title') return 'タイトル';
-  const charName = ({liubang:'劉邦', xiangyu:'項羽', hanxin:'韓信',
-                     zhangliang:'張良', xiaohe:'蕭何', fanzeng:'范増'})[state.char] || '?';
-  return `${charName} · ${state.sceneId || '-'} · beat ${state.beat}`;
-}
-
-function refreshSaveSlots() {
-  // Update slot labels in the menu after any save change.
-  for (let i = 1; i <= 3; i++) {
-    const btn = document.querySelector(`button[data-slot-info='${i}']`);
-    if (btn) {
-      const s = loadFrom(slotKey(i));
-      btn.textContent = `Slot ${i} — ` + describeState(s);
-    }
-  }
-  const cpBtn = document.querySelector('button[data-cp-info]');
-  if (cpBtn) {
-    const s = loadFrom(lsCheckpointKey);
-    cpBtn.textContent = '↩ 直前のチェックポイント: ' + describeState(s);
-  }
-}
-
 let state = loadSave() || initState();
 
 function render() {
   stage.innerHTML = view(state);
-  // After main render, inject the save menu into the HUD if present.
-  injectSaveMenu();
-  refreshSaveSlots();
+  // The save menu is now rendered directly by LeanJs renderHud;
+  // clicks fire via the existing data-msg delegation. We still
+  // checkpoint here on transition.
   maybeCheckpoint(state);
   maybeStartRingLoop();
   wireChatHandlers();
@@ -495,71 +471,6 @@ function wireChatHandlers() {
   });
   input.focus();
 }
-
-function injectSaveMenu() {
-  const hud = stage.querySelector('.hud');
-  if (!hud || hud.querySelector('.save-menu')) return;
-  const menu = document.createElement('div');
-  menu.className = 'save-menu';
-  menu.innerHTML = `
-    <button class='save-btn'>💾</button>
-    <div class='save-pop'>
-      <button data-save-action='save-1'>Slot 1 へ保存</button>
-      <button data-save-action='save-2'>Slot 2 へ保存</button>
-      <button data-save-action='save-3'>Slot 3 へ保存</button>
-      <hr>
-      <button data-save-action='load-1' data-slot-info='1'>Slot 1 — ...</button>
-      <button data-save-action='load-2' data-slot-info='2'>Slot 2 — ...</button>
-      <button data-save-action='load-3' data-slot-info='3'>Slot 3 — ...</button>
-      <hr>
-      <button data-save-action='load-cp' data-cp-info>↩ 直前のチェックポイント: ...</button>
-      <button data-save-action='restart'>⟲ 最初からやり直す</button>
-    </div>`;
-  // Insert before language toggle.
-  const lang = hud.querySelector('.lang');
-  if (lang) hud.insertBefore(menu, lang);
-  else hud.appendChild(menu);
-  const btn = menu.querySelector('.save-btn');
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    menu.classList.toggle('open');
-  });
-  menu.querySelectorAll('button[data-save-action]').forEach(b => {
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      handleSaveAction(b.dataset.saveAction);
-      menu.classList.remove('open');
-    });
-  });
-}
-
-function handleSaveAction(action) {
-  if (action.startsWith('save-')) {
-    const n = parseInt(action.slice(5), 10);
-    saveTo(slotKey(n), state);
-  } else if (action.startsWith('load-')) {
-    const tag = action.slice(5);
-    const s = tag === 'cp' ? loadFrom(lsCheckpointKey) : loadFrom(slotKey(parseInt(tag, 10)));
-    if (s) {
-      state = s;
-      persist(state);
-      render();
-    } else {
-      alert('そのスロットは空です');
-    }
-  } else if (action === 'restart') {
-    if (!confirm('本当に最初からやり直しますか?')) return;
-    state = initState();
-    persist(state);
-    render();
-  }
-}
-
-// close save menu on outside click
-document.addEventListener('click', (e) => {
-  const open = stage.querySelector('.save-menu.open');
-  if (open && !open.contains(e.target)) open.classList.remove('open');
-});
 
 // Event delegation — every interactive element has a data-msg attr
 // whose value is a JSON-encoded message we pass to update().
