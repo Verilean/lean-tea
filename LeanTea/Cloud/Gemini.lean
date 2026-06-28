@@ -42,15 +42,7 @@ let resp ← Gemini.reviewMany cfg
   (paths := #["LeanTea/Net/Http.lean", "LeanTea/Net/Server.lean"])
   (prompt := "Architecture review: call out design weaknesses")
   {}
-```
-
-## A note on prompt strings
-
-`defaultReviewSystem` and the default prompt in `reviewDiff` are
-written in Japanese on purpose — they're what we send to Gemini,
-and we want the model's review output to come back in Japanese for
-this codebase. Callers can override either via `CallOpts.system`
-and the `prompt` argument respectively. -/
+``` -/
 
 namespace LeanTea.Cloud.Gemini
 
@@ -306,23 +298,25 @@ private def renderFile (relPath : String) (body : String) : String :=
   s!"\n\n## File: {relPath}\n\n```{lang}\n{body}\n```\n"
 
 /-- Default system prompt — asks the model to look across all files
-    first, then drill into specifics. Intentionally written in
-    Japanese so the response comes back in Japanese; override via
-    `CallOpts.system` for English output. -/
+    first, then drill into specifics. Override via `CallOpts.system`
+    if you want a different style or language. -/
 def defaultReviewSystem : String :=
-"あなたはシニアソフトウェアエンジニアです。これから複数のソースファ
-イルが Markdown の `## File: <path>` ブロック群として与えられます。
-全ファイルに目を通してから、以下の順で日本語でレビューしてください。
+"You are a senior software engineer. You will be given multiple
+source files as a sequence of Markdown `## File: <path>` blocks.
+Read every file before answering, then review in the following order:
 
-1. **コードベースの俯瞰**: 全体構造・責務分割・主要な依存関係
-2. **整合性チェック**: 異なるファイル間で矛盾している規約・パターン
-3. **設計上の弱点**: アーキ的に脆い場所 (神クラス / 循環依存 / 過剰
-   抽象化 / 抽象漏れ etc.)
-4. **具体的バグリスク**: 個別ファイル中の defect 候補 (file:line で)
-5. **改善提案**: 優先順を付けて 3〜10 件
+1. **Codebase overview**: overall structure, separation of concerns,
+   key dependencies.
+2. **Consistency check**: conventions or patterns that contradict
+   each other across files.
+3. **Design weaknesses**: architecturally fragile spots (god classes,
+   circular dependencies, over-abstraction, leaky abstractions, …).
+4. **Concrete bug risks**: per-file defect candidates, cited as
+   file:line.
+5. **Improvement proposals**: 3–10 items, prioritised.
 
-ファイル単独のスタイル指摘より、**ファイル間の繋がり / 設計の俯瞰**
-を重視してください。"
+Emphasise **cross-file connections and design overview** over
+single-file style nitpicks."
 
 structure ReviewStats where
   fileCount : Nat
@@ -337,7 +331,7 @@ structure ReviewStats where
     - `workspace` is the read root (`..` can't escape it).
     - `paths` are workspace-relative.
     - `prompt` is the user instruction; empty falls back to the
-      default Japanese review prompt.
+      default review prompt.
     - When `opts.system` is unset, `defaultReviewSystem` is used.
 
     Returns the `Response` plus stats (how many files / bytes
@@ -375,9 +369,8 @@ def reviewMany (cfg : Config)
 /-! ## Diff review — lightweight git-diff focused review -/
 
 /-- Run `git diff <base> <head>` inside `workspace` and pipe the
-    output to Gemini for a focused review. The default system
-    prompt and fallback user prompt are in Japanese on purpose;
-    callers can override via `opts.system` and `prompt`. -/
+    output to Gemini for a focused review. Override the prompt /
+    system message via `prompt` and `opts.system`. -/
 def reviewDiff (cfg : Config) (workspace base head : String)
     (prompt : String := "") (opts : CallOpts := {})
     : IO Response := do
@@ -389,15 +382,16 @@ def reviewDiff (cfg : Config) (workspace base head : String)
     throw <| IO.userError s!"git diff failed: {out.stderr}"
   let diff := out.stdout
   let sysDefault :=
-"あなたはシニアソフトウェアエンジニアです。これから unified diff
-が渡されます。以下の順で日本語でレビューしてください。
+"You are a senior software engineer. You will be given a unified
+diff. Review it in the following order:
 
-1. **意図**: この変更は何を達成しようとしているか
-2. **欠陥候補**: バグ・regression リスク・抜け
-3. **改善提案**: スタイル / 性能 / 保守性 で気になる点
-4. **承認可否の総評**: approve / request changes / nit のどれか + 理由"
+1. **Intent**: what is this change trying to achieve?
+2. **Defect candidates**: bugs, regression risks, missing cases.
+3. **Improvement proposals**: style / performance / maintainability
+   nits worth flagging.
+4. **Verdict**: approve / request changes / nit, with a reason."
   let userText :=
-    (if prompt.isEmpty then "上記のレビュー観点でお願いします。" else prompt)
+    (if prompt.isEmpty then "Please review per the criteria above." else prompt)
     ++ "\n\n```diff\n" ++ diff ++ "\n```"
   let optsWithSys :=
     if opts.system.isSome then opts
