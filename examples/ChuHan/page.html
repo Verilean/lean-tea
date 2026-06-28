@@ -54,10 +54,23 @@
     .char-card.selected { border-color: #c8a96a; background: #2a1a14; }
     .char-card.disabled { opacity: 0.45; cursor: not-allowed; }
     .char-portrait {
-      width: 100%; height: 120px; border-radius: 4px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 48px; color: white;
+      position: relative; width: 100%; height: 200px; border-radius: 4px;
+      overflow: hidden; background: #0a0805;
       box-shadow: inset 0 -20px 40px rgba(0,0,0,0.4);
+    }
+    .char-portrait img {
+      width: 100%; height: 100%; object-fit: cover; object-position: center top;
+      display: block; transition: transform 400ms ease;
+      filter: saturate(0.92) contrast(1.04);
+    }
+    .char-card:hover .char-portrait img { transform: scale(1.04); filter: none; }
+    .char-portrait-name {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      padding: 6px 10px;
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.85) 80%);
+      color: #f0e8d0; font-size: 18px; letter-spacing: 4px; text-align: right;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.9);
+      pointer-events: none;
     }
     .char-card h3 { margin: 0; font-size: 20px; color: #e7e2d1; letter-spacing: 4px; }
     .char-card .epithet { color: #c8a96a; font-size: 13px; letter-spacing: 2px; }

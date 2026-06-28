@@ -3385,8 +3385,10 @@ def renderCharCard(state, c) :=
   sjoin([
     "<div class='char-card ", selected,
     "' data-msg='{“tag“:“pickChar“,“id“:“", c.id,
-    "“}'><div class='char-portrait' style='background:", c.color,
-    "'>", hesc(nm),
+    "“}'><div class='char-portrait'>",
+    "<img src='/assets/char_", c.id, ".png' alt='", hesc(nm),
+    "' loading='lazy'>",
+    "<div class='char-portrait-name'>", hesc(nm), "</div>",
     "</div><h3>", hesc(nm),
     "</h3><div class='epithet'>", hesc(ep),
     "</div><div class='desc'>", hesc(desc),
