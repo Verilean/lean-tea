@@ -38,6 +38,12 @@ extern js "(key) => { try { return JSON.parse(localStorage.getItem(key) || 'null
 extern js "(key, v) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch (_) {} }" lsSave
 extern js "(key) => { try { localStorage.removeItem(key); } catch (_) {} }" lsRemove
 
+-- Ending tracker (for the gallery / trophies). Stores a flat object
+-- of {endingId: timestamp} in localStorage 'chuhan-endings'.
+extern js "(id) => { try { const cur = JSON.parse(localStorage.getItem('chuhan-endings') || '{}'); cur[id] = Date.now(); localStorage.setItem('chuhan-endings', JSON.stringify(cur)); } catch (_) {} }" lsRecordEnding
+extern js "() => { try { return JSON.parse(localStorage.getItem('chuhan-endings') || '{}'); } catch (_) { return {}; } }" lsAllEndings
+extern js "(obj, k) => Object.prototype.hasOwnProperty.call(obj, k) ? 1 : 0" hasKey
+
 -- ── i18n helper ─────────────────────────────────────────────────────
 -- A localised string is `{ja: "…", en: "…"}`. `tr` picks the requested
 -- language and falls back to `ja` when the target is empty.
@@ -2966,11 +2972,12 @@ def update(msg, state) :=
       else
         let nb := state.beat + 1;
         let nxt := stepAt(scene, nb);
-        if nxt.ending != "" then
+        if nxt.ending != "" then (
+          let _ := lsRecordEnding(nxt.ending);
           { phase: "ending", lang: state.lang,
             char: state.char, sceneId: state.sceneId, beat: nb,
             stats: state.stats, flags: state.flags,
-            battle: state.battle, endingId: nxt.ending, toast: state.toast , mini: state.mini, llm: state.llm}
+            battle: state.battle, endingId: nxt.ending, toast: state.toast , mini: state.mini, llm: state.llm})
         else if nxt.gotoScene != "" then
           { phase: "scene", lang: state.lang,
             char: state.char, sceneId: nxt.gotoScene, beat: 0,
@@ -3237,6 +3244,19 @@ def update(msg, state) :=
     if s == null then state else s )
   | "restart" => initState
   | "reset" => initState
+  | "openGallery" => (
+    { phase: "gallery", lang: state.lang,
+      char: state.char, sceneId: "", beat: 0,
+      stats: state.stats, flags: state.flags, battle: state.battle,
+      endingId: "", toast: "", mini: state.mini, llm: state.llm })
+  | "closeGallery" => initState
+  -- Test mode: jump to any scene from the title (URL ?scene=…)
+  | "jumpToScene" => (
+    let cid := msg.char;
+    { phase: "scene", lang: state.lang,
+      char: cid, sceneId: msg.sceneId, beat: 0,
+      stats: initStats, flags: {}, battle: initBattle,
+      endingId: "", toast: "", mini: initMini, llm: initLlm })
   | "backToSelect" => { phase: "select", lang: state.lang,
                         char: "", sceneId: "", beat: 0,
                         stats: initStats, flags: {},
@@ -3310,13 +3330,50 @@ def renderHud(state) :=
     "<button class='menu-btn' data-msg='{“tag“:“backToSelect“}'>選択へ</button></div>"
   ])
 
+-- All recorded endings with their human titles. The gallery and
+-- the title-screen progress counter both read from this list.
+def allEndingIds := [
+  "act1_clear", "honest_anonymous", "cold_alone",
+  "xiangyu_act1_clear", "phase2_placeholder",
+  "hanxin_act1_clear", "hanxin_pride_dead",
+  "zhangliang_act1_clear", "zhangliang_obscure",
+  "xiaohe_act1_clear", "fanzeng_act1_clear",
+  "face_read_failed",
+  "liubang_act2_clear", "xiangyu_act2_clear", "hanxin_act2_clear",
+  "zhangliang_act2_clear", "xiaohe_act2_clear", "fanzeng_died_in_grief",
+  "liubang_died_hongmen", "liubang_withered", "liubang_threeway", "liubang_honggou_kept",
+  "xiangyu_julu_failed", "xiangyu_killed_liu",
+  "hanxin_xizheng_legend", "hanxin_beishui_lost",
+  "xiaohe_looter", "xiaohe_purity_death",
+  "fanzeng_jade_diverged",
+  "xiangyu_wujiang", "xiangyu_crossed_recluse",
+  "liubang_died_emperor",
+  "hanxin_death_changle", "zhangliang_immortal_path", "xiaohe_died_chancellor"
+]
+
 -- Title screen
+def countAchievedLoop(allObj, ids, i, acc) :=
+  if i < arrLen(ids) then
+    let next := if hasKey(allObj, arrGet(ids, i)) == 1 then acc + 1 else acc;
+    countAchievedLoop(allObj, ids, i + 1, next)
+  else acc
+
+def galleryProgress :=
+  let allRaw := lsLoad("chuhan-endings");
+  let allObj := if allRaw == null then {} else allRaw;
+  let total := arrLen(allEndingIds);
+  let achieved := countAchievedLoop(allObj, allEndingIds, 0, 0);
+  sjoin(["達成 END: ", jstr(achieved), " / ", jstr(total)])
+
 def viewTitle(state) :=
   sjoin([
     "<div class='title-bg'><h1>楚漢恋歌</h1><div class='sub'>CHU·HAN LOVE SONG</div>",
     "<button class='btn' data-msg='{“tag“:“startSelect“}'>START</button>",
+    "<button class='btn' data-msg='{“tag“:“openGallery“}' style='margin-top:8px'>END ギャラリー</button>",
     "<div class='sub' style='font-size:11px;color:#666;margin-top:60px'>",
-    "六つの生、六つの死、六つの恋。<br>BCE 209 ─ 195. Six lives. Six loves. Six deaths.</div></div>"
+    "六つの生、六つの死、六つの恋。<br>BCE 209 ─ 195. Six lives. Six loves. Six deaths.<br><br>",
+    galleryProgress,
+    "</div></div>"
   ])
 
 -- Character select grid
@@ -3699,6 +3756,38 @@ def viewLlmChat(state) :=
     "</div></div>"
   ])
 
+-- ── Gallery view ─────────────────────────────────────────────────
+def renderEndingRow(allObj, id) :=
+  let achieved := hasKey(allObj, id) == 1;
+  let mark := if achieved then "✓" else "□";
+  let title := endingTitle(id);
+  let cls := if achieved then "ending-row done" else "ending-row";
+  sjoin([
+    "<div class='", cls, "'><span class='mark'>", mark, "</span>",
+    "<span class='title'>", hesc(title), "</span></div>"
+  ])
+
+def galleryLoop(allObj, ids, i, acc) :=
+  if i < arrLen(ids) then
+    galleryLoop(allObj, ids, i + 1, sconcat(acc, renderEndingRow(allObj, arrGet(ids, i))))
+  else acc
+
+def viewGallery(state) :=
+  let allRaw := lsLoad("chuhan-endings");
+  let allObj := if allRaw == null then {} else allRaw;
+  let total := arrLen(allEndingIds);
+  let achieved := countAchievedLoop(allObj, allEndingIds, 0, 0);
+  sjoin([
+    "<div class='title-bg'>",
+    "<h1 style='font-size:36px;letter-spacing:6px;color:#c8a96a'>END ギャラリー</h1>",
+    "<div class='sub'>達成: ", jstr(achieved), " / ", jstr(total), "</div>",
+    "<div class='gallery-list'>",
+    galleryLoop(allObj, allEndingIds, 0, ""),
+    "</div>",
+    "<button class='btn' data-msg='{“tag“:“closeGallery“}'>タイトルへ戻る</button>",
+    "</div>"
+  ])
+
 -- Top-level view
 def view(state) :=
   match state.phase with
@@ -3709,6 +3798,7 @@ def view(state) :=
   | "ending"   => viewEnding(state)
   | "minigame" => viewMinigame(state)
   | "llm_chat" => viewLlmChat(state)
+  | "gallery"  => viewGallery(state)
   | _ => viewTitle(state)
 
 -- Smoke entry point so the LeanJs runner can verify the program

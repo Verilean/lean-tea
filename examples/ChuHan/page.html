@@ -354,6 +354,21 @@
     padding: 0 22px; font: inherit; font-weight: 600; cursor: pointer; letter-spacing: 4px;
   }
   .chat-send:disabled { background: #555; color: #aaa; cursor: progress; }
+  /* Gallery */
+  .gallery-list {
+    width: min(680px, 90vw); max-height: 60vh; overflow-y: auto;
+    background: rgba(10,10,10,0.6); border: 1px solid #3a2a1a;
+    border-radius: 6px; padding: 14px; margin: 16px 0;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .ending-row {
+    display: flex; gap: 12px; align-items: center;
+    padding: 6px 10px; border-radius: 4px;
+    color: #6a5a4a; font-size: 13px;
+  }
+  .ending-row.done { color: #c8a96a; background: rgba(200,169,106,0.08); }
+  .ending-row .mark { width: 22px; text-align: center; font-weight: 700; }
+  .ending-row .title { flex: 1; }
 
     /* ── Toast (status updates) ── */
     .toast-stack {
@@ -412,6 +427,24 @@ function maybeCheckpoint(state) {
 }
 
 let state = loadSave() || initState();
+
+// ─── Test mode: ?scene=xxx (&char=xxx) jumps directly. ────────────
+(function applyUrlOverride() {
+  const params = new URLSearchParams(window.location.search);
+  const scene = params.get('scene');
+  if (!scene) return;
+  // Infer character from scene-id prefix when not given.
+  let char = params.get('char') || '';
+  if (!char) {
+    if (scene.startsWith('liubang_'))    char = 'liubang';
+    else if (scene.startsWith('xiangyu_')) char = 'xiangyu';
+    else if (scene.startsWith('hanxin_'))  char = 'hanxin';
+    else if (scene.startsWith('zhangliang_')) char = 'zhangliang';
+    else if (scene.startsWith('xiaohe_'))  char = 'xiaohe';
+    else if (scene.startsWith('fanzeng_')) char = 'fanzeng';
+  }
+  state = update({tag: 'jumpToScene', char: char, sceneId: scene}, state);
+})();
 
 function render() {
   stage.innerHTML = view(state);
