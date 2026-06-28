@@ -137,7 +137,13 @@ record Step where
   -- transitions
   battle : String,         -- battle id to enter, "" = no battle
   gotoScene : String,      -- "" = continue same scene
-  ending : String          -- "" = no ending; otherwise ending id
+  ending : String,         -- "" = no ending; otherwise ending id
+  -- mini-game hook (a step can launch one of three mini-games on advance,
+  -- and branch to one of three scenes based on the outcome bucket)
+  miniKind : String,       -- "" | "face_read" | "jade_ring" | "beishui"
+  miniGood : String,       -- scene id on high score
+  miniOk   : String,       -- scene id on medium score
+  miniBad  : String        -- scene id on low score
 
 record Choice where
   labelJa : String, labelEn : String,
@@ -169,7 +175,8 @@ def blankStep :=
     spriteId2: "", spriteName2: "", spriteColor2: "",
     spriteFocus: 0,
     choices: [],
-    battle: "", gotoScene: "", ending: ""
+    battle: "", gotoScene: "", ending: "",
+    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
   }
 
 -- A dialogue beat ----------------------------------------------------
@@ -183,7 +190,8 @@ def say(bg, who, color, sayJa, sayEn) :=
     spriteId2: "", spriteName2: "", spriteColor2: "",
     spriteFocus: 1,
     choices: [],
-    battle: "", gotoScene: "", ending: ""
+    battle: "", gotoScene: "", ending: "",
+    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
   }
 
 -- A dialogue beat with inner monologue --------------------------------
@@ -197,7 +205,8 @@ def think(bg, who, color, sayJa, sayEn, thinkJa, thinkEn) :=
     spriteId2: "", spriteName2: "", spriteColor2: "",
     spriteFocus: 1,
     choices: [],
-    battle: "", gotoScene: "", ending: ""
+    battle: "", gotoScene: "", ending: "",
+    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
   }
 
 -- A two-sprite beat ---------------------------------------------------
@@ -211,7 +220,8 @@ def duo(bg, who, color, who2, color2, focus, sayJa, sayEn) :=
     spriteId2: who2, spriteName2: who2, spriteColor2: color2,
     spriteFocus: focus,
     choices: [],
-    battle: "", gotoScene: "", ending: ""
+    battle: "", gotoScene: "", ending: "",
+    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
   }
 
 -- A narration line (no speaker, no sprite) ---------------------------
@@ -225,7 +235,8 @@ def narr(bg, sayJa, sayEn) :=
     spriteId2: "", spriteName2: "", spriteColor2: "",
     spriteFocus: 0,
     choices: [],
-    battle: "", gotoScene: "", ending: ""
+    battle: "", gotoScene: "", ending: "",
+    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
   }
 
 -- A choice menu -------------------------------------------------------
@@ -239,7 +250,8 @@ def chooseStep(bg, cs) :=
     spriteId2: "", spriteName2: "", spriteColor2: "",
     spriteFocus: 0,
     choices: cs,
-    battle: "", gotoScene: "", ending: ""
+    battle: "", gotoScene: "", ending: "",
+    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
   }
 
 -- Transitions ---------------------------------------------------------
@@ -253,7 +265,8 @@ def goScene(id) :=
     spriteId2: "", spriteName2: "", spriteColor2: "",
     spriteFocus: 0,
     choices: [],
-    battle: "", gotoScene: id, ending: ""
+    battle: "", gotoScene: id, ending: "",
+    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
   }
 
 def doBattle(id) :=
@@ -266,7 +279,8 @@ def doBattle(id) :=
     spriteId2: "", spriteName2: "", spriteColor2: "",
     spriteFocus: 0,
     choices: [],
-    battle: id, gotoScene: "", ending: ""
+    battle: id, gotoScene: "", ending: "",
+    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
   }
 
 def endingStep(id) :=
@@ -279,7 +293,25 @@ def endingStep(id) :=
     spriteId2: "", spriteName2: "", spriteColor2: "",
     spriteFocus: 0,
     choices: [],
-    battle: "", gotoScene: "", ending: id
+    battle: "", gotoScene: "", ending: id,
+    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
+  }
+
+-- A mini-game step. Advancing INTO this step switches the phase to
+-- 'minigame'; when the mini ends it dispatches to one of three
+-- scenes by score bucket.
+def miniStep(bg, kind, good, ok, bad) :=
+  Step {
+    bg: bg,
+    speakerJa: "", speakerEn: "",
+    sayJa: "", sayEn: "",
+    thinkJa: "", thinkEn: "",
+    spriteId: "", spriteName: "", spriteColor: "",
+    spriteId2: "", spriteName2: "", spriteColor2: "",
+    spriteFocus: 0,
+    choices: [],
+    battle: "", gotoScene: "", ending: "",
+    miniKind: kind, miniGood: good, miniOk: ok, miniBad: bad
   }
 
 -- ── Story content ───────────────────────────────────────────────────
@@ -402,14 +434,14 @@ def liubangAct1 := [
       setFlag: "banquet_honest", gotoScene: "liubang_honest_dead_end"
     },
     Choice {
-      labelJa: "受付の札に「賀銭一万」と堂々と書く",
-      labelEn: "Write “Ten thousand in gift money“ on the receipt, bold-faced",
-      hintJa: "嘘。だが上座へ通される。呂公はお前の人相を見るだろう",
-      hintEn: "A lie. But it gets you upstairs. And Lord Lü will read your face",
+      labelJa: "受付の札に「賀銭一万」と堂々と書く ―― そして呂公の顔相鑑定へ",
+      labelEn: "Write “Ten thousand“ — and submit to Lord Lü's face-reading",
+      hintJa: "嘘。だが上座へ通される。次は『顔相ミニゲーム』で表情を組み立てる",
+      hintEn: "A lie. Upstairs. Then a face-reading mini-game decides how Lord Lü reads you",
       dKarma: 4, dWife: 0, dWifeFear: 0,
       dTrust: 0, dMinXin: 0,
       dBu: 0, dZhi: 1, dMei: 2, dZheng: 2,
-      setFlag: "banquet_lie", gotoScene: ""
+      setFlag: "banquet_lie", gotoScene: "liubang_face_intro"
     }
   ]),
 
@@ -606,6 +638,104 @@ def liubangHonestDeadEnd := [
 ]
 
 -- Bad branch (killed the convicts)
+-- Liu Bang face-reading mini & outcome scenes ──────────────────────
+def liubangFaceIntro := [
+  narr("bg-banquet",
+    "受付の役人は「賀銭一万」の札に目を丸くする。慌てて呂公本人が出てきて、劉邦の前に立った。",
+    "The receptionist gapes at the ten-thousand card. Lord Lü himself comes out — and stands before Liu Bang."),
+  duo("bg-banquet", "呂公", colorLuFather, "劉邦", colorLiu, 1,
+    "「ふむ……君、面白い顔をしておる。少しその面を、ゆっくり見せてくれぬか」",
+    "“Hmm... you have an interesting face. Let me read it slowly.“"),
+  think("bg-banquet", "劉邦", colorLiu,
+    "「(え、ええ、どうぞじっくりと)」",
+    "“(Y-yes, take your time)“",
+    "顔相見の好きな爺さんと聞いていた。これは『見せ方』で評価が分かれる。表情を組み立てろ。",
+    "I heard he reads faces. The verdict depends on how I present myself. Compose the look."),
+  miniStep("bg-banquet", "face_read",
+    "liubang_face_dragon",   -- score 5-6
+    "liubang_face_ok",        -- score 3-4
+    "liubang_face_failed")    -- score 0-2
+]
+
+def liubangFaceDragon := [
+  say("bg-banquet", "呂公", colorLuFather,
+    "「龍の相じゃ! 君は天下を取る器じゃ。さあ、我が娘・雉(ち) を娶ってもらいたい!」",
+    "“The face of a dragon! You have the bones of one who takes the realm. My daughter, Lü Zhi — take her as your wife!“"),
+  think("bg-banquet", "劉邦", colorLiu,
+    "「(まじか、こんなに手応えがあるとは)」",
+    "“(I didn't expect it to land this hard.)“",
+    "顔相だけで天下人と見抜くか。この爺さん、ただ者ではねえ。",
+    "He read a king from my face. This old man — no ordinary fortune-teller."),
+  -- Bonus stat — pretend choice for stat boost
+  chooseStep("bg-banquet", [
+    Choice {
+      labelJa: "「光栄でござる」と深く頭を下げる",
+      labelEn: "“I am honored“ — bow deeply",
+      hintJa: "+魅力 +嫁愛 (龍の相ボーナス)。物語は呂雉初対面へ",
+      hintEn: "+charisma +wife-love (dragon-face bonus). Continues to meeting Lü Zhi",
+      dKarma: 0, dWife: 10, dWifeFear: 0,
+      dTrust: 0, dMinXin: 3,
+      dBu: 0, dZhi: 1, dMei: 5, dZheng: 3,
+      setFlag: "dragon_face", gotoScene: "liubang_face_ok_continues"
+    }
+  ])
+]
+
+-- Standard outcome → continues the historical path
+def liubangFaceOk := [
+  say("bg-banquet", "呂公", colorLuFather,
+    "「……君。上座へ。否、私の隣へ」",
+    "“...You. Upstairs. No — beside me.“"),
+  think("bg-banquet", "劉邦", colorLiu,
+    "「いやぁ、こりゃ恐縮ですなぁ呂公!」",
+    "“Hah, this is too much honor, Lord Lü!“",
+    "悪くねえ。鋭く笑い堂々と座った――それで爺さんが俺を上座に呼んだ。",
+    "Not bad. A sharp look, a slight smile, dignified posture — and he called me upstairs."),
+  goScene("liubang_face_ok_continues")
+]
+
+def liubangFaceFailed := [
+  say("bg-banquet", "呂公", colorLuFather,
+    "「ふん……つまらん顔じゃ。下座でゆるりとな」",
+    "“Hmph... a boring face. Take a seat downstairs.“"),
+  think("bg-banquet", "劉邦", colorLiu,
+    "「く、くそっ、ヤッちまった……」",
+    "“T-Tsk... blew it.“",
+    "顔相を読み損ねた。呂雉とは出会えぬ。沛に戻って亭長のまま朽ちるか――。",
+    "Misread the face. I'll never meet Lü Zhi. Back to Pei. Rotting as a headman."),
+  endingStep("face_read_failed")
+]
+
+-- Continuation that picks up after the face mini — repeats the 蕭何
+-- sub-text scene and the 呂雉 introduction. (Demo-scope: duplicates a
+-- few beats from liubangAct1; production would extract via include.)
+def liubangFaceOkContinues := [
+  duo("bg-banquet", "蕭何", colorXiao, "劉邦", colorLiu, 1,
+    "「劉殿……」",
+    "“Master Liu...“"),
+  think("bg-banquet", "劉邦", colorLiu,
+    "「な、なんだよ蕭何」",
+    "“W-what is it, Xiao He?“",
+    "こいつ、俺の嘘を見抜いてやがる。だが場で告発する勇気もねえ。",
+    "He's seen through the lie. But he won't denounce me here."),
+  say("bg-banquet", "蕭何", colorXiao,
+    "「……いえ。ご自愛を」",
+    "“...Nothing. Take care of yourself.“"),
+  narr("bg-house",
+    "翌日、呂家の客間。劉邦は初めて呂雉と対面した。",
+    "Next morning, the guest hall. Liu Bang meets Lü Zhi for the first time."),
+  duo("bg-house", "呂雉", colorLu, "劉邦", colorLiu, 1,
+    "「あなたが劉季と。年は」",
+    "“...So you are Liu Ji. How old.“"),
+  duo("bg-house", "呂雉", colorLu, "劉邦", colorLiu, 1,
+    "「あなたが私を妻と呼ぶならば、生涯、私を捨てないこと。捨てるならば、私はあなたを地獄まで追いますよ」",
+    "“If you call me your wife — never abandon me. If you do, I will chase you to hell.“"),
+  narr("bg-mountain",
+    "三年が過ぎ、劉邦は子を成し、亭長として日々を過ごした。やがて秦の徭役、白蛇切り、芒碭山潜伏――『沛公』の物語は、ここから本格的に始まる。",
+    "Three years pass. Children. The labor convoy. The white serpent. The marshes. The story of the Duke of Pei truly begins here."),
+  goScene("liubang_act2")
+]
+
 def liubangAct1EndBad := [
   narr("bg-mountain",
     "斬られた囚人の遺族は、劉邦の冷酷を沛中に喧伝した。樊噲は黙ったまま、酒場で劉邦に酒を出さなくなった。蕭何は二度と「劉殿」と呼ばなくなった。呂雉は何も言わなかったが、夜、子を抱きながら泣いていた。秦が倒れる頃、劉邦は誰一人従える者を持っていなかった――。",
@@ -1801,6 +1931,11 @@ def sceneOf(id) :=
   | "liubang_white_serpent" => liubangWhiteSerpent
   | "liubang_honest_dead_end" => liubangHonestDeadEnd
   | "liubang_act1_end_bad" => liubangAct1EndBad
+  | "liubang_face_intro" => liubangFaceIntro
+  | "liubang_face_dragon" => liubangFaceDragon
+  | "liubang_face_ok" => liubangFaceOk
+  | "liubang_face_failed" => liubangFaceFailed
+  | "liubang_face_ok_continues" => liubangFaceOkContinues
   | "liubang_act2" => liubangAct2
   | "liubang_hongmen_died" => liubangHongmenDied
   | "liubang_withered_in_hanzhong" => liubangWitheredInHanzhong
@@ -1880,6 +2015,50 @@ def initBattle := Battle {
   log: ""
 }
 
+-- ── Mini-game state ────────────────────────────────────────────────
+record Mini where
+  kind : String,            -- "" | "face_read" | "jade_ring" | "beishui"
+  -- face_read
+  faceEyes : Int,           -- 0..2 (穏 / 普 / 鋭)
+  faceMouth : Int,          -- 0..2 (真剣 / 普 / 笑)
+  facePose : Int,           -- 0..2 (卑屈 / 普 / 堂々)
+  faceShown : Bool,         -- has player submitted?
+  faceScore : Int,          -- after submit (0..6)
+  -- jade_ring
+  ringNowMs : Int,          -- elapsed since start of mini
+  ringRound : Int,          -- 0..2 (current round)
+  ringHits : Int,           -- count of correctly timed clicks
+  ringRoundStartMs : Int,   -- when this round began
+  ringClickedThisRound : Bool,
+  ringFinished : Bool,
+  -- beishui — sequential card mini, visualized as 3-turn battle
+  bsTurn : Int,             -- 0..3
+  bsHanHp : Int,            -- 0..100
+  bsZhaoHp : Int,           -- 0..200
+  bsScore : Int,            -- accumulated points
+  bsLog1 : String, bsLog2 : String, bsLog3 : String,
+  bsFinished : Bool
+
+def initMini := Mini {
+  kind: "",
+  faceEyes: 1, faceMouth: 1, facePose: 1,
+  faceShown: false, faceScore: 0,
+  ringNowMs: 0, ringRound: 0, ringHits: 0,
+  ringRoundStartMs: 0, ringClickedThisRound: false, ringFinished: false,
+  bsTurn: 0, bsHanHp: 100, bsZhaoHp: 200,
+  bsScore: 0, bsLog1: "", bsLog2: "", bsLog3: "", bsFinished: false
+}
+
+def initMiniFor(kind) := Mini {
+  kind: kind,
+  faceEyes: 1, faceMouth: 1, facePose: 1,
+  faceShown: false, faceScore: 0,
+  ringNowMs: 0, ringRound: 0, ringHits: 0,
+  ringRoundStartMs: 0, ringClickedThisRound: false, ringFinished: false,
+  bsTurn: 0, bsHanHp: 100, bsZhaoHp: 200,
+  bsScore: 0, bsLog1: "", bsLog2: "", bsLog3: "", bsFinished: false
+}
+
 -- State
 def initState := {
   phase: "title",
@@ -1890,8 +2069,9 @@ def initState := {
   stats: initStats,
   flags: {},
   battle: initBattle,
+  mini: initMini,
   endingId: "",
-  toast: ""
+  toast: "", mini: state.mini
 }
 
 -- ── Helpers for state manipulation ──────────────────────────────────
@@ -1909,25 +2089,104 @@ def applyChoiceToStats(s, c) := Stats {
 def stepAt(scene, n) :=
   if n < arrLen(scene) then arrGet(scene, n) else blankStep
 
+-- ── Mini-game helpers ──────────────────────────────────────────────
+-- Score 0..6 for face_read. 呂公 looks for "dragon face":
+-- sharp eyes (2) + slight smile (1) + dignified (2). Exact = 6.
+def faceReadScore(eyes, mouth, pose) :=
+  let e := if eyes == 2 then 2 else if eyes == 1 then 1 else 0;
+  let m := if mouth == 1 then 2 else if mouth == 2 then 1 else 0;
+  let p := if pose == 2 then 2 else if pose == 1 then 1 else 0;
+  e + m + p
+
+-- jade_ring tunings: each round 2400ms, hit window 900..1500ms.
+def ringRoundMs := 2400
+def ringWindowStart := 900
+def ringWindowEnd := 1500
+def ringTotalRounds := 3
+
+-- beishui scoring. Right pattern: card 1 → card 0 → card 2 = 9 pts.
+-- (LeanJs match patterns don't support numeric literals — use if-chain.)
+def bsCardScore(turn, card) :=
+  if turn == 0 then (if card == 1 then 3 else if card == 0 then 1 else 0)
+  else if turn == 1 then (if card == 0 then 3 else if card == 1 then 2 else 1)
+  else if turn == 2 then (if card == 2 then 3 else if card == 0 then 1 else 0)
+  else 0
+
+def bsCardImpactHan(turn, card) :=
+  if turn == 0 then (if card == 1 then 0 else if card == 0 then 20 else 50)
+  else if turn == 1 then (if card == 0 then 5 else if card == 1 then 15 else 10)
+  else if turn == 2 then (if card == 2 then 5 else if card == 0 then 25 else 60)
+  else 20
+
+def bsCardImpactZhao(turn, card) :=
+  if turn == 0 then (if card == 1 then 40 else if card == 0 then 20 else 0)
+  else if turn == 1 then (if card == 0 then 60 else if card == 1 then 40 else 45)
+  else if turn == 2 then (if card == 2 then 100 else if card == 0 then 50 else 0)
+  else 30
+
+def bsLogForTurn(turn, card) :=
+  if turn == 0 then
+    (if card == 0 then "布陣: 高地に陣を敷く  (常識的)"
+     else if card == 1 then "布陣: 背水に陣を敷く  (兵に退路無し、士気は極限へ)"
+     else "布陣: 退却の構え  (戦わずして敗北濃厚)")
+  else if turn == 1 then
+    (if card == 0 then "戦法: 黙して陣を敷く (兵は震えるが死力を尽くす)"
+     else if card == 1 then "戦法: 兵に布陣の意を説く (理解されるが意図が漏れる)"
+     else "戦法: 奇兵を先に出す (本陣手薄)")
+  else if turn == 2 then
+    (if card == 0 then "決戦: 正面で死守 (五分五分)"
+     else if card == 1 then "決戦: 後退して再編成 (時を稼ぐ)"
+     else "決戦: 別動隊で趙本陣を奇襲 (赤旗を立てる)")
+  else ""
+
+def bsResolveTurn(m, card) := (
+  let han := m.bsHanHp - bsCardImpactHan(m.bsTurn, card);
+  let zhao := m.bsZhaoHp - bsCardImpactZhao(m.bsTurn, card);
+  let pts := m.bsScore + bsCardScore(m.bsTurn, card);
+  let logLine := bsLogForTurn(m.bsTurn, card);
+  let nt := m.bsTurn + 1;
+  let log1 := if m.bsTurn == 0 then logLine else m.bsLog1;
+  let log2 := if m.bsTurn == 1 then logLine else m.bsLog2;
+  let log3 := if m.bsTurn == 2 then logLine else m.bsLog3;
+  Mini {
+    kind: m.kind,
+    faceEyes: m.faceEyes, faceMouth: m.faceMouth, facePose: m.facePose,
+    faceShown: m.faceShown, faceScore: m.faceScore,
+    ringNowMs: m.ringNowMs, ringRound: m.ringRound, ringHits: m.ringHits,
+    ringRoundStartMs: m.ringRoundStartMs,
+    ringClickedThisRound: m.ringClickedThisRound,
+    ringFinished: m.ringFinished,
+    bsTurn: nt, bsHanHp: maxI(0, han), bsZhaoHp: maxI(0, zhao),
+    bsScore: pts, bsLog1: log1, bsLog2: log2, bsLog3: log3,
+    bsFinished: nt >= 3
+  })
+
+-- Bucket mini score (0..max) to good/ok/bad scene id from cur step.
+def miniBucket(score, maxScore, cur) := (
+  let third := maxScore / 3;
+  if score > maxScore - third then cur.miniGood
+  else if score > third then cur.miniOk
+  else cur.miniBad)
+
 -- ── Update ──────────────────────────────────────────────────────────
 def update(msg, state) :=
   match msg.tag with
   | "startSelect" => { phase: "select", lang: state.lang,
                        char: "", sceneId: "", beat: 0,
                        stats: state.stats, flags: state.flags,
-                       battle: state.battle, endingId: "", toast: "" }
+                       battle: state.battle, endingId: "", toast: "" , mini: state.mini}
   | "pickChar" => (
     let cid := msg.id;
     let sid := startSceneFor(cid);
     { phase: "scene", lang: state.lang,
       char: cid, sceneId: sid, beat: 0,
       stats: initStats, flags: {},
-      battle: initBattle, endingId: "", toast: "" })
+      battle: initBattle, endingId: "", toast: "" , mini: initMini})
   | "setLang" =>
     { phase: state.phase, lang: msg.lang,
       char: state.char, sceneId: state.sceneId, beat: state.beat,
       stats: state.stats, flags: state.flags,
-      battle: state.battle, endingId: state.endingId, toast: state.toast }
+      battle: state.battle, endingId: state.endingId, toast: state.toast , mini: state.mini}
   | "advance" => (
     if state.phase != "scene" then state
     else
@@ -1939,7 +2198,7 @@ def update(msg, state) :=
         { phase: "scene", lang: state.lang,
           char: state.char, sceneId: cur.gotoScene, beat: 0,
           stats: state.stats, flags: state.flags,
-          battle: state.battle, endingId: "", toast: state.toast }
+          battle: state.battle, endingId: "", toast: state.toast , mini: state.mini}
       else
         let nb := state.beat + 1;
         let nxt := stepAt(scene, nb);
@@ -1947,17 +2206,23 @@ def update(msg, state) :=
           { phase: "ending", lang: state.lang,
             char: state.char, sceneId: state.sceneId, beat: nb,
             stats: state.stats, flags: state.flags,
-            battle: state.battle, endingId: nxt.ending, toast: state.toast }
+            battle: state.battle, endingId: nxt.ending, toast: state.toast , mini: state.mini}
         else if nxt.gotoScene != "" then
           { phase: "scene", lang: state.lang,
             char: state.char, sceneId: nxt.gotoScene, beat: 0,
             stats: state.stats, flags: state.flags,
-            battle: state.battle, endingId: "", toast: state.toast }
+            battle: state.battle, endingId: "", toast: state.toast , mini: state.mini}
+        else if nxt.miniKind != "" then
+          { phase: "minigame", lang: state.lang,
+            char: state.char, sceneId: state.sceneId, beat: nb,
+            stats: state.stats, flags: state.flags,
+            battle: state.battle, endingId: state.endingId, toast: state.toast,
+            mini: initMiniFor(nxt.miniKind) }
         else
           { phase: state.phase, lang: state.lang,
             char: state.char, sceneId: state.sceneId, beat: nb,
             stats: state.stats, flags: state.flags,
-            battle: state.battle, endingId: state.endingId, toast: state.toast })
+            battle: state.battle, endingId: state.endingId, toast: state.toast , mini: state.mini})
   | "choose" => (
     let scene := sceneOf(state.sceneId);
     let cur := stepAt(scene, state.beat);
@@ -1970,18 +2235,162 @@ def update(msg, state) :=
         { phase: "scene", lang: state.lang,
           char: state.char, sceneId: c.gotoScene, beat: 0,
           stats: newStats, flags: state.flags,
-          battle: state.battle, endingId: "", toast: c.setFlag }
+          battle: state.battle, endingId: "", toast: c.setFlag , mini: state.mini}
       else
         { phase: state.phase, lang: state.lang,
           char: state.char, sceneId: state.sceneId, beat: state.beat + 1,
           stats: newStats, flags: state.flags,
-          battle: state.battle, endingId: state.endingId, toast: c.setFlag }
+          battle: state.battle, endingId: state.endingId, toast: c.setFlag , mini: state.mini}
     else state)
+  -- Mini: face_read ─────────────────────────
+  | "miniFace" => (
+    let m := state.mini;
+    let part := msg.part;
+    let v := msg.value;
+    let newM := Mini {
+      kind: m.kind,
+      faceEyes: if part == "eyes" then v else m.faceEyes,
+      faceMouth: if part == "mouth" then v else m.faceMouth,
+      facePose: if part == "pose" then v else m.facePose,
+      faceShown: m.faceShown, faceScore: m.faceScore,
+      ringNowMs: m.ringNowMs, ringRound: m.ringRound, ringHits: m.ringHits,
+      ringRoundStartMs: m.ringRoundStartMs,
+      ringClickedThisRound: m.ringClickedThisRound,
+      ringFinished: m.ringFinished,
+      bsTurn: m.bsTurn, bsHanHp: m.bsHanHp, bsZhaoHp: m.bsZhaoHp,
+      bsScore: m.bsScore, bsLog1: m.bsLog1, bsLog2: m.bsLog2, bsLog3: m.bsLog3,
+      bsFinished: m.bsFinished
+    };
+    { phase: state.phase, lang: state.lang,
+      char: state.char, sceneId: state.sceneId, beat: state.beat,
+      stats: state.stats, flags: state.flags, battle: state.battle,
+      endingId: state.endingId, toast: state.toast, mini: newM })
+  | "miniFaceShow" => (
+    let m := state.mini;
+    let sc := faceReadScore(m.faceEyes, m.faceMouth, m.facePose);
+    let newM := Mini {
+      kind: m.kind,
+      faceEyes: m.faceEyes, faceMouth: m.faceMouth, facePose: m.facePose,
+      faceShown: true, faceScore: sc,
+      ringNowMs: m.ringNowMs, ringRound: m.ringRound, ringHits: m.ringHits,
+      ringRoundStartMs: m.ringRoundStartMs,
+      ringClickedThisRound: m.ringClickedThisRound,
+      ringFinished: m.ringFinished,
+      bsTurn: m.bsTurn, bsHanHp: m.bsHanHp, bsZhaoHp: m.bsZhaoHp,
+      bsScore: m.bsScore, bsLog1: m.bsLog1, bsLog2: m.bsLog2, bsLog3: m.bsLog3,
+      bsFinished: m.bsFinished
+    };
+    { phase: state.phase, lang: state.lang,
+      char: state.char, sceneId: state.sceneId, beat: state.beat,
+      stats: state.stats, flags: state.flags, battle: state.battle,
+      endingId: state.endingId, toast: state.toast, mini: newM })
+  | "miniFaceDone" => (
+    let scene := sceneOf(state.sceneId);
+    let cur := stepAt(scene, state.beat);
+    let nextSceneId := miniBucket(state.mini.faceScore, 6, cur);
+    { phase: "scene", lang: state.lang,
+      char: state.char, sceneId: nextSceneId, beat: 0,
+      stats: state.stats, flags: state.flags, battle: state.battle,
+      endingId: "", toast: "mini:face", mini: initMini })
+  -- Mini: jade_ring ─────────────────────────
+  | "miniRingTick" => (
+    let m := state.mini;
+    if m.ringFinished then state
+    else
+      let now := msg.now;
+      let elapsed := now - m.ringRoundStartMs;
+      if elapsed >= ringRoundMs then
+        let nextRound := m.ringRound + 1;
+        let fin := nextRound >= ringTotalRounds;
+        let newM := Mini {
+          kind: m.kind,
+          faceEyes: m.faceEyes, faceMouth: m.faceMouth, facePose: m.facePose,
+          faceShown: m.faceShown, faceScore: m.faceScore,
+          ringNowMs: now, ringRound: nextRound, ringHits: m.ringHits,
+          ringRoundStartMs: now,
+          ringClickedThisRound: false,
+          ringFinished: fin,
+          bsTurn: m.bsTurn, bsHanHp: m.bsHanHp, bsZhaoHp: m.bsZhaoHp,
+          bsScore: m.bsScore, bsLog1: m.bsLog1, bsLog2: m.bsLog2, bsLog3: m.bsLog3,
+          bsFinished: m.bsFinished
+        };
+        { phase: state.phase, lang: state.lang,
+          char: state.char, sceneId: state.sceneId, beat: state.beat,
+          stats: state.stats, flags: state.flags, battle: state.battle,
+          endingId: state.endingId, toast: state.toast, mini: newM }
+      else
+        let newM := Mini {
+          kind: m.kind,
+          faceEyes: m.faceEyes, faceMouth: m.faceMouth, facePose: m.facePose,
+          faceShown: m.faceShown, faceScore: m.faceScore,
+          ringNowMs: now, ringRound: m.ringRound, ringHits: m.ringHits,
+          ringRoundStartMs: m.ringRoundStartMs,
+          ringClickedThisRound: m.ringClickedThisRound,
+          ringFinished: m.ringFinished,
+          bsTurn: m.bsTurn, bsHanHp: m.bsHanHp, bsZhaoHp: m.bsZhaoHp,
+          bsScore: m.bsScore, bsLog1: m.bsLog1, bsLog2: m.bsLog2, bsLog3: m.bsLog3,
+          bsFinished: m.bsFinished
+        };
+        { phase: state.phase, lang: state.lang,
+          char: state.char, sceneId: state.sceneId, beat: state.beat,
+          stats: state.stats, flags: state.flags, battle: state.battle,
+          endingId: state.endingId, toast: state.toast, mini: newM })
+  | "miniRingClick" => (
+    let m := state.mini;
+    if m.ringFinished then state
+    else if m.ringClickedThisRound then state
+    else
+      let elapsed := m.ringNowMs - m.ringRoundStartMs;
+      let hit := elapsed >= ringWindowStart && elapsed < ringWindowEnd;
+      let newHits := if hit then m.ringHits + 1 else m.ringHits;
+      let newM := Mini {
+        kind: m.kind,
+        faceEyes: m.faceEyes, faceMouth: m.faceMouth, facePose: m.facePose,
+        faceShown: m.faceShown, faceScore: m.faceScore,
+        ringNowMs: m.ringNowMs, ringRound: m.ringRound, ringHits: newHits,
+        ringRoundStartMs: m.ringRoundStartMs,
+        ringClickedThisRound: true,
+        ringFinished: m.ringFinished,
+        bsTurn: m.bsTurn, bsHanHp: m.bsHanHp, bsZhaoHp: m.bsZhaoHp,
+        bsScore: m.bsScore, bsLog1: m.bsLog1, bsLog2: m.bsLog2, bsLog3: m.bsLog3,
+        bsFinished: m.bsFinished
+      };
+      { phase: state.phase, lang: state.lang,
+        char: state.char, sceneId: state.sceneId, beat: state.beat,
+        stats: state.stats, flags: state.flags, battle: state.battle,
+        endingId: state.endingId, toast: state.toast, mini: newM })
+  | "miniRingDone" => (
+    let scene := sceneOf(state.sceneId);
+    let cur := stepAt(scene, state.beat);
+    let nextSceneId := miniBucket(state.mini.ringHits, 3, cur);
+    { phase: "scene", lang: state.lang,
+      char: state.char, sceneId: nextSceneId, beat: 0,
+      stats: state.stats, flags: state.flags, battle: state.battle,
+      endingId: "", toast: "mini:ring", mini: initMini })
+  -- Mini: beishui ─────────────────────────
+  | "miniBsCard" => (
+    let m := state.mini;
+    if m.bsFinished then state
+    else
+      let newM := bsResolveTurn(m, msg.card);
+      { phase: state.phase, lang: state.lang,
+        char: state.char, sceneId: state.sceneId, beat: state.beat,
+        stats: state.stats, flags: state.flags, battle: state.battle,
+        endingId: state.endingId, toast: state.toast, mini: newM })
+  | "miniBsDone" => (
+    let scene := sceneOf(state.sceneId);
+    let cur := stepAt(scene, state.beat);
+    let nextSceneId := miniBucket(state.mini.bsScore, 9, cur);
+    { phase: "scene", lang: state.lang,
+      char: state.char, sceneId: nextSceneId, beat: 0,
+      stats: state.stats, flags: state.flags, battle: state.battle,
+      endingId: "", toast: "mini:bs", mini: initMini })
+  -- Save / load are JS-side (page.html replaces state directly).
   | "reset" => initState
   | "backToSelect" => { phase: "select", lang: state.lang,
                         char: "", sceneId: "", beat: 0,
                         stats: initStats, flags: {},
-                        battle: initBattle, endingId: "", toast: "" }
+                        battle: initBattle, endingId: "", toast: "" , mini: state.mini}
   | _ => state
 
 -- ── View ────────────────────────────────────────────────────────────
@@ -2153,6 +2562,7 @@ def endingTitle(id) :=
   | "zhangliang_obscure" => "END: 無名の遺民"
   | "xiaohe_act1_clear" => "第一幕 完 ― 蕭何"
   | "fanzeng_act1_clear" => "第一幕 完 ― 范増"
+  | "face_read_failed" => "END: 顔相を読み損ねる"
   -- Act 2 main endings
   | "liubang_act2_clear" => "第二幕 完 ― 劉邦 (垓下前夜)"
   | "xiangyu_act2_clear" => "第二幕 完 ― 項羽 (鴻溝の和約)"
@@ -2197,14 +2607,177 @@ def viewBattle(state) :=
     "<button data-msg='{“tag“:“backToSelect“}'>戻る</button></div></div>"
   ])
 
+-- ── Mini-game views ───────────────────────────────────────────────
+-- 顔相鑑定 — Liu Bang composes his face before 呂公
+def faceLabel(part, v) :=
+  if part == "eyes" then (if v == 0 then "穏やか" else if v == 1 then "普通" else "鋭い")
+  else if part == "mouth" then (if v == 0 then "真剣" else if v == 1 then "微笑" else "笑い")
+  else (if v == 0 then "卑屈" else if v == 1 then "普通" else "堂々")
+
+def faceButton(part, v, cur) :=
+  let active := if v == cur then " active" else "";
+  sjoin([
+    "<button class='facebtn", active,
+    "' data-msg='{“tag“:“miniFace“,“part“:“", part, "“,“value“:", jstr(v),
+    "}'>", faceLabel(part, v), "</button>"
+  ])
+
+def faceRow(part, cur) :=
+  sjoin([
+    "<div class='facerow'><span class='label'>", faceLabel(part, 99), "</span>",
+    faceButton(part, 0, cur), faceButton(part, 1, cur), faceButton(part, 2, cur),
+    "</div>"
+  ])
+
+def faceResultText(score) :=
+  if score >= 5 then "「龍の相じゃ! 君は天下を取る器じゃ。我が娘・雉を娶ってもらいたい!」"
+  else if score >= 3 then "「ふむ、上座へ。一杯やろう」"
+  else "「ふん、田舎者の顔ぢゃ。下座でゆるりとな」"
+
+def viewMiniFaceRead(state) :=
+  let m := state.mini;
+  let header := if m.faceShown then "呂公、お主の顔を読み取った――" else "呂公の前に進む。表情を組み立てよ。";
+  let eyesRow := sjoin(["<div class='facerow'><span class='facelabel'>目つき:</span>",
+    faceButton("eyes", 0, m.faceEyes), faceButton("eyes", 1, m.faceEyes), faceButton("eyes", 2, m.faceEyes),
+    "</div>"]);
+  let mouthRow := sjoin(["<div class='facerow'><span class='facelabel'>口元:</span>",
+    faceButton("mouth", 0, m.faceMouth), faceButton("mouth", 1, m.faceMouth), faceButton("mouth", 2, m.faceMouth),
+    "</div>"]);
+  let poseRow := sjoin(["<div class='facerow'><span class='facelabel'>姿勢:</span>",
+    faceButton("pose", 0, m.facePose), faceButton("pose", 1, m.facePose), faceButton("pose", 2, m.facePose),
+    "</div>"]);
+  let actionBtn := if m.faceShown
+    then sjoin(["<div class='mini-result'>",
+                "<div class='mini-score'>呂公の評価: ", jstr(m.faceScore), " / 6</div>",
+                "<div class='mini-line'>", hesc(faceResultText(m.faceScore)), "</div>",
+                "<button class='mini-continue' data-msg='{“tag“:“miniFaceDone“}'>続ける ▶</button></div>"])
+    else "<button class='mini-submit' data-msg='{“tag“:“miniFaceShow“}'>呂公の前に進む</button>";
+  sjoin([
+    "<div class='scene-bg bg-banquet'>", renderHud(state),
+    "<div class='mini-card'><h2>顔相鑑定</h2>",
+    "<p class='mini-hint'>", header, "</p>",
+    eyesRow, mouthRow, poseRow, actionBtn,
+    "</div></div>"
+  ])
+
+-- 玉玦三度 — Fan Zeng raises the jade ring at Hongmen
+def viewMiniJadeRing(state) :=
+  let m := state.mini;
+  let elapsed := m.ringNowMs - m.ringRoundStartMs;
+  let inWindow := elapsed >= ringWindowStart && elapsed < ringWindowEnd;
+  let progress := if elapsed > ringRoundMs then 100 else elapsed * 100 / ringRoundMs;
+  let wStartPct := ringWindowStart * 100 / ringRoundMs;
+  let wWidthPct := (ringWindowEnd - ringWindowStart) * 100 / ringRoundMs;
+  let progressBar := sjoin([
+    "<div class='ring-bar'>",
+    "<div class='ring-window' style='left:", jstr(wStartPct), "%; width:", jstr(wWidthPct), "%'></div>",
+    "<div class='ring-cursor' style='left:", jstr(progress), "%'></div>",
+    "</div>"
+  ]);
+  let status := if m.ringFinished then ""
+                else if m.ringClickedThisRound then (if inWindow then "命中!" else "外れ……")
+                else if inWindow then "今だ! クリックせよ" else "間 (ま) を見よ";
+  let roundText := sjoin(["第 ", jstr(m.ringRound + 1), " 度の合図"]);
+  let body := if m.ringFinished
+    then sjoin(["<div class='mini-result'>",
+                "<div class='mini-score'>項羽が応えた回数: ", jstr(m.ringHits), " / 3</div>",
+                "<div class='mini-line'>",
+                hesc(if m.ringHits >= 3 then "「斬る!」 項羽は劉邦を斬った。歴史は別の道へ。"
+                     else if m.ringHits >= 1 then "項荘の剣舞に項羽はやや傾く。が、項伯が間に入る。"
+                     else "「子犬の輩よ、共に謀るに足らず!」"),
+                "</div>",
+                "<button class='mini-continue' data-msg='{“tag“:“miniRingDone“}'>続ける ▶</button></div>"])
+    else sjoin(["<p class='mini-hint'>", roundText, "</p>",
+                progressBar,
+                "<button class='mini-jade' data-msg='{“tag“:“miniRingClick“}'>玉玦を上げる</button>",
+                "<div class='mini-status'>", status, "</div>"]);
+  sjoin([
+    "<div class='scene-bg bg-tent'>", renderHud(state),
+    "<div class='mini-card'><h2>玉玦三度</h2>",
+    body,
+    "</div></div>"
+  ])
+
+-- 背水之陣 — Han Xin commands a 3-turn battle
+def bsCard(turn, idx, label, hint) :=
+  sjoin([
+    "<button class='bs-card' data-msg='{“tag“:“miniBsCard“,“card“:", jstr(idx), "}'>",
+    "<div class='bs-card-title'>", hesc(label), "</div>",
+    "<div class='bs-card-hint'>", hesc(hint), "</div>",
+    "</button>"
+  ])
+
+def bsCardsForTurn(turn) :=
+  if turn == 0 then sjoin([
+    bsCard(0, 0, "高地に陣を敷く", "(常識的)"),
+    bsCard(0, 1, "背水に陣を敷く", "(退路を断つ)"),
+    bsCard(0, 2, "退却の構え", "(時を稼ぐ)")
+  ])
+  else if turn == 1 then sjoin([
+    bsCard(1, 0, "黙して陣を敷く", "(兵に説明せず)"),
+    bsCard(1, 1, "兵に布陣の意を説く", "(理解させる)"),
+    bsCard(1, 2, "奇兵を先に出す", "(本陣手薄)")
+  ])
+  else sjoin([
+    bsCard(2, 0, "正面で死守", "(五分五分)"),
+    bsCard(2, 1, "後退して再編成", "(時を稼ぐ)"),
+    bsCard(2, 2, "別動隊で趙本陣を奇襲", "(赤旗を立てる)")
+  ])
+
+def bsHpBar(label, hp, maxHp) :=
+  let pct := hp * 100 / maxHp;
+  sjoin([
+    "<div class='bs-hp'><span class='bs-hp-label'>", hesc(label), "</span>",
+    "<div class='bs-hp-bar'><div style='width:", jstr(pct), "%'></div></div>",
+    "<span class='bs-hp-num'>", jstr(hp), "/", jstr(maxHp), "</span></div>"
+  ])
+
+def viewMiniBeishui(state) :=
+  let m := state.mini;
+  let logHtml := sjoin([
+    if m.bsLog1 == "" then "" else sjoin(["<div class='bs-log'>布陣: ", hesc(m.bsLog1), "</div>"]),
+    if m.bsLog2 == "" then "" else sjoin(["<div class='bs-log'>戦法: ", hesc(m.bsLog2), "</div>"]),
+    if m.bsLog3 == "" then "" else sjoin(["<div class='bs-log'>決戦: ", hesc(m.bsLog3), "</div>"])
+  ]);
+  let body := if m.bsFinished
+    then sjoin(["<div class='mini-result'>",
+                "<div class='mini-score'>戦果: ", jstr(m.bsScore), " / 9 点</div>",
+                "<div class='mini-line'>",
+                hesc(if m.bsScore >= 7 then "完勝。趙軍崩壊。陳余、斬られた。「将軍の用兵、神の如し」"
+                     else if m.bsScore >= 4 then "辛勝。兵は半ばを失ったが、なんとか趙を破った。"
+                     else "敗北。漢軍は退却。韓信、面目を失う。"),
+                "</div>",
+                "<button class='mini-continue' data-msg='{“tag“:“miniBsDone“}'>続ける ▶</button></div>"])
+    else sjoin([
+      "<div class='bs-board'>",
+      bsHpBar("漢 (韓信)", m.bsHanHp, 100), bsHpBar("趙 (陳余)", m.bsZhaoHp, 200),
+      "</div>",
+      "<div class='bs-turn'>第 ", jstr(m.bsTurn + 1), " ターン / 3</div>",
+      "<div class='bs-cards'>", bsCardsForTurn(m.bsTurn), "</div>",
+      logHtml
+    ]);
+  sjoin([
+    "<div class='scene-bg bg-river'>", renderHud(state),
+    "<div class='mini-card mini-card-wide'><h2>背水之陣</h2>",
+    body,
+    "</div></div>"
+  ])
+
+def viewMinigame(state) :=
+  if state.mini.kind == "face_read" then viewMiniFaceRead(state)
+  else if state.mini.kind == "jade_ring" then viewMiniJadeRing(state)
+  else if state.mini.kind == "beishui" then viewMiniBeishui(state)
+  else viewTitle(state)
+
 -- Top-level view
 def view(state) :=
   match state.phase with
-  | "title"   => viewTitle(state)
-  | "select"  => viewSelect(state)
-  | "scene"   => viewScene(state)
-  | "battle"  => viewBattle(state)
-  | "ending"  => viewEnding(state)
+  | "title"    => viewTitle(state)
+  | "select"   => viewSelect(state)
+  | "scene"    => viewScene(state)
+  | "battle"   => viewBattle(state)
+  | "ending"   => viewEnding(state)
+  | "minigame" => viewMinigame(state)
   | _ => viewTitle(state)
 
 -- Smoke entry point so the LeanJs runner can verify the program

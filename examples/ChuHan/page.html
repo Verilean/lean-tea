@@ -208,6 +208,103 @@
     .bg-pengcheng { background: linear-gradient(180deg, #8a4a2a 0%, #4a1a0a 70%, #0a0505 100%); }
     .bg-gorge    { background: linear-gradient(180deg, #4a4a4a 0%, #2a2a2a 70%, #0a0a0a 100%); }
     .bg-night    { background: linear-gradient(180deg, #1a1a3a 0%, #0a0a1a 80%, #050508 100%); }
+  /* ── Mini-game widgets ── */
+  .mini-card {
+    position: absolute; left: 50%; top: 56px; transform: translateX(-50%);
+    width: min(720px, 90vw); padding: 22px 28px;
+    background: rgba(10,10,10,0.92); border: 1px solid #4a3a2a;
+    border-radius: 8px; color: #e7e2d1;
+  }
+  .mini-card-wide { width: min(920px, 95vw); }
+  .mini-card h2 {
+    margin: 0 0 12px; color: #c8a96a; letter-spacing: 6px; font-weight: 400;
+    border-bottom: 1px solid #3a2a1a; padding-bottom: 8px;
+  }
+  .mini-hint { color: #aaa; font-size: 14px; margin: 6px 0 16px; }
+  /* face read */
+  .facerow { display: flex; align-items: center; gap: 6px; margin: 10px 0; }
+  .facelabel { width: 80px; color: #c8a96a; font-size: 13px; letter-spacing: 3px; }
+  .facebtn {
+    flex: 1; background: #1a1410; color: #aaa;
+    border: 1px solid #3a2a1a; border-radius: 4px;
+    padding: 10px 14px; cursor: pointer; font: inherit; font-size: 14px;
+  }
+  .facebtn:hover { border-color: #c8a96a; color: #e7e2d1; }
+  .facebtn.active { background: #2a1810; border-color: #c8a96a; color: #c8a96a; }
+  .mini-submit, .mini-continue {
+    display: block; margin: 18px auto 0; padding: 10px 28px;
+    background: #c8a96a; color: #0a0a0a; border: 0; border-radius: 6px;
+    font: inherit; font-weight: 600; cursor: pointer; letter-spacing: 4px;
+  }
+  .mini-submit:hover, .mini-continue:hover { background: #d9bb7e; }
+  /* jade ring */
+  .ring-bar {
+    position: relative; height: 18px; background: #1a1410;
+    border: 1px solid #3a2a1a; border-radius: 4px; margin: 22px 0 14px;
+  }
+  .ring-window {
+    position: absolute; top: 0; bottom: 0;
+    background: rgba(76, 175, 80, 0.35);
+    border-left: 2px solid #4ade80; border-right: 2px solid #4ade80;
+  }
+  .ring-cursor {
+    position: absolute; top: -4px; bottom: -4px; width: 3px;
+    background: #c8a96a; transform: translateX(-1.5px);
+  }
+  .mini-jade {
+    display: block; margin: 16px auto; padding: 16px 40px;
+    background: #2a1810; color: #c8a96a; border: 2px solid #c8a96a;
+    border-radius: 8px; font: inherit; font-size: 18px; font-weight: 700;
+    letter-spacing: 4px; cursor: pointer;
+  }
+  .mini-jade:hover { background: #3a2018; }
+  .mini-status { text-align: center; color: #4ade80; font-size: 14px; min-height: 20px; }
+  /* beishui */
+  .bs-board { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+  .bs-hp { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .bs-hp-label { width: 100px; color: #c8a96a; letter-spacing: 2px; }
+  .bs-hp-bar { flex: 1; height: 14px; background: #1a1410; border-radius: 4px; overflow: hidden; }
+  .bs-hp-bar > div { height: 100%; background: linear-gradient(90deg, #dc2626, #f59e0b); }
+  .bs-hp-num { width: 80px; color: #aaa; font-family: ui-monospace, Menlo, monospace; text-align: right; }
+  .bs-turn { color: #c8a96a; text-align: center; letter-spacing: 4px; margin: 14px 0 8px; }
+  .bs-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 8px 0; }
+  .bs-card {
+    background: #1a1410; color: #e7e2d1; border: 1px solid #3a2a1a;
+    border-radius: 6px; padding: 16px 12px; cursor: pointer; font: inherit;
+    text-align: left;
+  }
+  .bs-card:hover { border-color: #c8a96a; background: #221a14; }
+  .bs-card-title { font-weight: 600; letter-spacing: 2px; margin-bottom: 6px; }
+  .bs-card-hint { color: #888; font-size: 12px; }
+  .bs-log { color: #aaa; font-size: 13px; margin: 4px 0; }
+  /* mini result */
+  .mini-result { text-align: center; padding: 14px 0; }
+  .mini-score { color: #c8a96a; letter-spacing: 4px; font-size: 18px; margin-bottom: 10px; }
+  .mini-line { color: #e7e2d1; line-height: 1.7; margin-bottom: 12px; }
+  /* save / load HUD additions */
+  .save-menu {
+    position: relative; display: inline-block;
+  }
+  .save-menu .save-btn {
+    background: transparent; color: #888; border: 1px solid #4a3a2a;
+    padding: 2px 8px; font: inherit; font-size: 11px; cursor: pointer;
+  }
+  .save-menu .save-btn:hover { color: #c8a96a; border-color: #c8a96a; }
+  .save-menu .save-pop {
+    display: none; position: absolute; right: 0; top: 22px;
+    background: #1a1410; border: 1px solid #3a2a1a; border-radius: 4px;
+    padding: 6px; gap: 4px; flex-direction: column; z-index: 100; min-width: 200px;
+  }
+  .save-menu.open .save-pop { display: flex; }
+  .save-menu .save-pop button {
+    background: transparent; color: #e7e2d1; border: 0; padding: 6px 10px;
+    text-align: left; font: inherit; font-size: 12px; cursor: pointer;
+    border-radius: 3px;
+  }
+  .save-menu .save-pop button:hover { background: #2a1a14; color: #c8a96a; }
+  .save-menu .save-pop hr {
+    border: 0; border-top: 1px solid #3a2a1a; margin: 4px 0;
+  }
 
     /* ── Toast (status updates) ── */
     .toast-stack {
@@ -235,22 +332,135 @@
 // thin layer wires DOM events + render loop). All mutable state
 // lives in `state`; we re-render on every transition. ───────────
 const stage = document.getElementById('stage');
-const lsKey = 'chuhan-save-v1';
+const lsKey = 'chuhan-save-v2';          // autosave (every action)
+const lsCheckpointKey = 'chuhan-checkpoint';  // ↩ checkpoint
+function slotKey(n) { return 'chuhan-slot-' + n; }
 
-function loadSave() {
-  try { return JSON.parse(localStorage.getItem(lsKey) || 'null'); }
+function loadFrom(key) {
+  try { return JSON.parse(localStorage.getItem(key) || 'null'); }
   catch (_) { return null; }
 }
-function persist(state) {
-  try { localStorage.setItem(lsKey, JSON.stringify(state)); } catch (_) {}
+function saveTo(key, state) {
+  try { localStorage.setItem(key, JSON.stringify(state)); } catch (_) {}
+}
+function loadSave() { return loadFrom(lsKey); }
+function persist(state) { saveTo(lsKey, state); }
+
+// Checkpoint heuristic: snapshot just before a mini-game OR when a
+// new scene starts (chapter boundaries). The phase/sceneId pair acts
+// as the "interesting moment" marker.
+let lastCheckpointKey = '';
+function maybeCheckpoint(state) {
+  // Take a checkpoint when entering minigame or after a scene change.
+  const key = state.phase + ':' + state.sceneId;
+  if (state.phase === 'minigame' && lastCheckpointKey !== 'mini:' + key) {
+    lastCheckpointKey = 'mini:' + key;
+    // Save the state BEFORE the mini-game began (mini.kind unset).
+    // Approximation: save current state minus the mini sub-state.
+    const before = {...state, mini: state.mini && state.mini.kind ? {...state.mini, kind: ''} : state.mini};
+    saveTo(lsCheckpointKey, before);
+  }
+}
+
+function describeState(state) {
+  if (!state) return '(empty)';
+  if (state.phase === 'title') return 'タイトル';
+  const charName = ({liubang:'劉邦', xiangyu:'項羽', hanxin:'韓信',
+                     zhangliang:'張良', xiaohe:'蕭何', fanzeng:'范増'})[state.char] || '?';
+  return `${charName} · ${state.sceneId || '-'} · beat ${state.beat}`;
+}
+
+function refreshSaveSlots() {
+  // Update slot labels in the menu after any save change.
+  for (let i = 1; i <= 3; i++) {
+    const btn = document.querySelector(`button[data-slot-info='${i}']`);
+    if (btn) {
+      const s = loadFrom(slotKey(i));
+      btn.textContent = `Slot ${i} — ` + describeState(s);
+    }
+  }
+  const cpBtn = document.querySelector('button[data-cp-info]');
+  if (cpBtn) {
+    const s = loadFrom(lsCheckpointKey);
+    cpBtn.textContent = '↩ 直前のチェックポイント: ' + describeState(s);
+  }
 }
 
 let state = loadSave() || initState();
 
 function render() {
   stage.innerHTML = view(state);
-  // After render, wire up event handlers via delegation on root.
+  // After main render, inject the save menu into the HUD if present.
+  injectSaveMenu();
+  refreshSaveSlots();
+  maybeCheckpoint(state);
+  maybeStartRingLoop();
 }
+
+function injectSaveMenu() {
+  const hud = stage.querySelector('.hud');
+  if (!hud || hud.querySelector('.save-menu')) return;
+  const menu = document.createElement('div');
+  menu.className = 'save-menu';
+  menu.innerHTML = `
+    <button class='save-btn'>💾</button>
+    <div class='save-pop'>
+      <button data-save-action='save-1'>Slot 1 へ保存</button>
+      <button data-save-action='save-2'>Slot 2 へ保存</button>
+      <button data-save-action='save-3'>Slot 3 へ保存</button>
+      <hr>
+      <button data-save-action='load-1' data-slot-info='1'>Slot 1 — ...</button>
+      <button data-save-action='load-2' data-slot-info='2'>Slot 2 — ...</button>
+      <button data-save-action='load-3' data-slot-info='3'>Slot 3 — ...</button>
+      <hr>
+      <button data-save-action='load-cp' data-cp-info>↩ 直前のチェックポイント: ...</button>
+      <button data-save-action='restart'>⟲ 最初からやり直す</button>
+    </div>`;
+  // Insert before language toggle.
+  const lang = hud.querySelector('.lang');
+  if (lang) hud.insertBefore(menu, lang);
+  else hud.appendChild(menu);
+  const btn = menu.querySelector('.save-btn');
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.classList.toggle('open');
+  });
+  menu.querySelectorAll('button[data-save-action]').forEach(b => {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleSaveAction(b.dataset.saveAction);
+      menu.classList.remove('open');
+    });
+  });
+}
+
+function handleSaveAction(action) {
+  if (action.startsWith('save-')) {
+    const n = parseInt(action.slice(5), 10);
+    saveTo(slotKey(n), state);
+  } else if (action.startsWith('load-')) {
+    const tag = action.slice(5);
+    const s = tag === 'cp' ? loadFrom(lsCheckpointKey) : loadFrom(slotKey(parseInt(tag, 10)));
+    if (s) {
+      state = s;
+      persist(state);
+      render();
+    } else {
+      alert('そのスロットは空です');
+    }
+  } else if (action === 'restart') {
+    if (!confirm('本当に最初からやり直しますか?')) return;
+    state = initState();
+    persist(state);
+    render();
+  }
+}
+
+// close save menu on outside click
+document.addEventListener('click', (e) => {
+  const open = stage.querySelector('.save-menu.open');
+  if (open && !open.contains(e.target)) open.classList.remove('open');
+});
 
 // Event delegation — every interactive element has a data-msg attr
 // whose value is a JSON-encoded message we pass to update().
@@ -289,6 +499,41 @@ document.addEventListener('keydown', (e) => {
     }
   }
 });
+
+// ─── Mini-game: jade_ring real-time tick loop ─────────────────────
+let ringRafHandle = null;
+let ringStartWallMs = 0;
+function maybeStartRingLoop() {
+  if (state.phase === 'minigame' && state.mini && state.mini.kind === 'jade_ring') {
+    if (ringRafHandle !== null) return;
+    ringStartWallMs = performance.now();
+    function frame() {
+      if (state.phase !== 'minigame' || !state.mini || state.mini.kind !== 'jade_ring' || state.mini.ringFinished) {
+        ringRafHandle = null;
+        // re-render once finished to show the result
+        if (state.phase === 'minigame') render();
+        return;
+      }
+      const now = performance.now() - ringStartWallMs;
+      state = update({tag: 'miniRingTick', now: now}, state);
+      // Re-render the jade-ring view inline (cheap — small DOM).
+      const card = stage.querySelector('.mini-card');
+      if (card) card.outerHTML = (function() {
+        // Cheap re-render: build the wrapper HTML then slice the .mini-card out.
+        const fragHtml = view(state);
+        const tmp = document.createElement('div');
+        tmp.innerHTML = fragHtml;
+        const c = tmp.querySelector('.mini-card');
+        return c ? c.outerHTML : fragHtml;
+      })();
+      ringRafHandle = requestAnimationFrame(frame);
+    }
+    ringRafHandle = requestAnimationFrame(frame);
+  } else if (ringRafHandle !== null && (!state.mini || state.mini.kind !== 'jade_ring')) {
+    cancelAnimationFrame(ringRafHandle);
+    ringRafHandle = null;
+  }
+}
 
 // ─── Battle render — separate from main DOM render so we can use
 // requestAnimationFrame for smooth motion + tick the AI. ────────
