@@ -51,7 +51,8 @@ lean_lib Examples where
     `Tests.PureSpec,
     `Tests.AuthSpec,
     `AuthIdp.Serve,
-    `StateMachine.Order
+    `StateMachine.Order,
+    `ChuHan.Game
   ]
   /- Private examples (English Learning + game shells under
      `examples/_private/`) ship third-party content (arXiv quotes,
@@ -662,6 +663,17 @@ lean_exe gpu_serve where
 lean_exe reversi_serve where
   srcDir := "examples"
   root := `Reversi.Serve
+
+/-- 楚漢恋歌 (Chu-Han Love Song) — 2D action / RPG / strategy VN set in
+    BCE 209-195 China. Six playable protagonists (Liu Bang, Xiang Yu,
+    Han Xin, Zhang Liang, Xiao He, Fan Zeng), each with their wife
+    arc + historical fate. Two-layer dialogue (outer speech + inner
+    monologue) drives the "charmer / egoist" double face of Liu Bang
+    and the corresponding interior voices of the others. LeanJs +
+    DOM + Canvas 2D. -/
+lean_exe chuhan_serve where
+  srcDir := "examples"
+  root := `ChuHan.Serve
 
 /-! ## Construction-time security primitives
 

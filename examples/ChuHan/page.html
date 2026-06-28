@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>楚漢恋歌 — Chu-Han Love Song</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden;
+                 background: #0a0a0a; color: #e7e2d1;
+                 font-family: 'YuMincho', 'Hiragino Mincho ProN', serif; }
+    #stage { position: relative; width: 100vw; height: 100vh; }
+
+    /* ── Title screen ── */
+    .title-bg {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at center, #2a1810 0%, #0a0505 70%);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 24px;
+    }
+    .title-bg h1 {
+      font-size: 72px; margin: 0; letter-spacing: 16px; color: #c8a96a;
+      text-shadow: 0 0 24px rgba(200,169,106,0.4);
+      transform: translateY(-30px);
+    }
+    .title-bg .sub { color: #888; letter-spacing: 8px; font-size: 14px; }
+    .title-bg .btn {
+      background: transparent; color: #c8a96a; border: 1px solid #c8a96a;
+      padding: 10px 36px; font: inherit; font-size: 16px; letter-spacing: 6px;
+      cursor: pointer; transition: all 200ms;
+    }
+    .title-bg .btn:hover { background: #c8a96a; color: #0a0a0a; }
+
+    /* ── Character select ── */
+    .select-bg {
+      position: absolute; inset: 0; padding: 40px;
+      background: linear-gradient(180deg, #1a0a05 0%, #0a0505 100%);
+      display: flex; flex-direction: column; gap: 16px;
+    }
+    .select-bg h2 {
+      margin: 0; color: #c8a96a; letter-spacing: 8px; font-weight: 400;
+      border-bottom: 1px solid #4a3a2a; padding-bottom: 8px;
+    }
+    .roster {
+      flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+      overflow: auto;
+    }
+    .char-card {
+      background: #1a1410; border: 1px solid #3a2a1a; border-radius: 6px;
+      padding: 14px; cursor: pointer; display: flex; flex-direction: column;
+      gap: 8px; transition: all 200ms;
+    }
+    .char-card:hover { border-color: #c8a96a; background: #221a14; }
+    .char-card.selected { border-color: #c8a96a; background: #2a1a14; }
+    .char-card.disabled { opacity: 0.45; cursor: not-allowed; }
+    .char-portrait {
+      width: 100%; height: 120px; border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 48px; color: white;
+      box-shadow: inset 0 -20px 40px rgba(0,0,0,0.4);
+    }
+    .char-card h3 { margin: 0; font-size: 20px; color: #e7e2d1; letter-spacing: 4px; }
+    .char-card .epithet { color: #c8a96a; font-size: 13px; letter-spacing: 2px; }
+    .char-card .desc { color: #aaa; font-size: 12px; line-height: 1.5; flex: 1; }
+    .char-card .stats { display: flex; gap: 12px; font-size: 11px; color: #888; }
+    .char-card .difficulty { color: #ca8a04; font-size: 11px; }
+
+    /* ── VN scene ── */
+    .scene-bg {
+      position: absolute; inset: 0;
+      background-size: cover; background-position: center;
+      transition: background 800ms;
+    }
+    .scene-bg::after {
+      content: ""; position: absolute; inset: 0;
+      background: linear-gradient(180deg, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.6) 70%, rgba(0,0,0,0.85) 100%);
+    }
+    .sprite-row {
+      position: absolute; bottom: 220px; left: 0; right: 0;
+      display: flex; justify-content: center; gap: 80px;
+      pointer-events: none;
+    }
+    .sprite {
+      width: 200px; height: 360px; border-radius: 10px 10px 0 0;
+      display: flex; align-items: flex-end; justify-content: center;
+      padding-bottom: 16px;
+      font-size: 14px; color: #e7e2d1; letter-spacing: 4px;
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.7) 100%);
+      box-shadow: 0 0 40px rgba(0,0,0,0.6);
+      transition: all 500ms;
+    }
+    .sprite.dim { opacity: 0.55; transform: translateY(8px); }
+    .dialogue-box {
+      position: absolute; bottom: 20px; left: 20px; right: 20px;
+      background: rgba(10,10,10,0.88); border: 1px solid #3a2a1a;
+      border-radius: 8px; padding: 18px 26px;
+      min-height: 160px;
+    }
+    .dialogue-speaker {
+      color: #c8a96a; font-weight: 600; font-size: 15px; letter-spacing: 4px;
+      margin-bottom: 6px;
+    }
+    .dialogue-line {
+      font-size: 17px; line-height: 1.7; color: #e7e2d1;
+    }
+    .dialogue-inner {
+      margin-top: 10px; padding: 8px 12px; border-left: 2px solid #6a5a4a;
+      color: #999; font-style: italic; font-size: 15px; line-height: 1.6;
+    }
+    .dialogue-inner::before { content: "《"; color: #6a5a4a; }
+    .dialogue-inner::after  { content: "》"; color: #6a5a4a; }
+    .advance-hint {
+      position: absolute; bottom: 8px; right: 14px;
+      color: #888; font-size: 12px; animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
+    .choices {
+      position: absolute; bottom: 200px; left: 50%; transform: translateX(-50%);
+      display: flex; flex-direction: column; gap: 8px; min-width: 480px;
+      pointer-events: none;
+    }
+    .choice {
+      pointer-events: auto;
+      background: rgba(10,10,10,0.92); color: #e7e2d1;
+      border: 1px solid #6a5a4a; border-radius: 4px;
+      padding: 12px 20px; font: inherit; font-size: 15px;
+      cursor: pointer; text-align: left;
+      transition: all 150ms;
+    }
+    .choice:hover { background: rgba(40,28,18,0.95); border-color: #c8a96a; }
+    .choice .hint { color: #888; font-size: 12px; margin-top: 4px; }
+
+    /* ── HUD (top bar, persistent) ── */
+    .hud {
+      position: absolute; top: 0; left: 0; right: 0; height: 40px;
+      background: linear-gradient(180deg, rgba(0,0,0,0.85), transparent);
+      display: flex; align-items: center; gap: 16px; padding: 0 16px;
+      font-size: 12px; z-index: 10;
+    }
+    .hud .who { color: #c8a96a; letter-spacing: 3px; }
+    .hud .stat { color: #aaa; }
+    .hud .stat b { color: #e7e2d1; margin-left: 4px; }
+    .hud .yr { color: #ca8a04; letter-spacing: 2px; margin-left: auto; }
+    .hud .lang { display: flex; gap: 4px; }
+    .hud .lang button {
+      background: transparent; color: #888; border: 1px solid #4a3a2a;
+      padding: 2px 8px; font: inherit; font-size: 11px; cursor: pointer;
+    }
+    .hud .lang button.active { color: #c8a96a; border-color: #c8a96a; }
+    .hud .menu-btn {
+      background: transparent; color: #888; border: 1px solid #4a3a2a;
+      padding: 2px 10px; font: inherit; font-size: 11px; cursor: pointer;
+    }
+    .hud .menu-btn:hover { color: #c8a96a; border-color: #c8a96a; }
+
+    /* ── Battle (canvas) ── */
+    .battle-bg {
+      position: absolute; inset: 0; background: #1a1a1a;
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 12px;
+    }
+    #battleCanvas {
+      background: #2a2418; border: 1px solid #4a3a2a;
+      image-rendering: pixelated;
+    }
+    .battle-hud {
+      display: flex; gap: 18px; align-items: center;
+      color: #e7e2d1; font-size: 13px; letter-spacing: 2px;
+    }
+    .battle-hud .hp { display: flex; flex-direction: column; gap: 2px; min-width: 120px; }
+    .battle-hud .hp .bar {
+      height: 8px; background: #3a2a1a; border-radius: 2px; overflow: hidden;
+    }
+    .battle-hud .hp .bar > div {
+      height: 100%; background: linear-gradient(90deg, #dc2626, #f59e0b);
+      transition: width 200ms;
+    }
+    .battle-hud .help { color: #888; font-size: 11px; }
+    .battle-result {
+      position: absolute; inset: 0; background: rgba(0,0,0,0.85);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 18px; font-size: 28px; color: #c8a96a; letter-spacing: 8px;
+    }
+    .battle-result button { font: inherit; font-size: 14px; letter-spacing: 4px;
+      background: transparent; color: #c8a96a; border: 1px solid #c8a96a;
+      padding: 8px 24px; cursor: pointer; }
+
+    /* ── Background palette (placeholder before real art) ── */
+    .bg-pei      { background: linear-gradient(180deg, #4a3a2a 0%, #1a1410 70%, #0a0805 100%); }
+    .bg-banquet  { background: linear-gradient(180deg, #6a3a2a 0%, #2a1410 70%, #0a0505 100%); }
+    .bg-house    { background: linear-gradient(180deg, #3a2a1a 0%, #1a1208 70%, #0a0505 100%); }
+    .bg-mountain { background: linear-gradient(180deg, #1a3a4a 0%, #0a2030 70%, #050a14 100%); }
+    .bg-camp     { background: linear-gradient(180deg, #3a3a1a 0%, #1a1808 70%, #0a0a05 100%); }
+    .bg-court    { background: linear-gradient(180deg, #4a1a4a 0%, #2a0a2a 70%, #0a0a14 100%); }
+    .bg-battlefield { background: linear-gradient(180deg, #4a1a1a 0%, #2a0a0a 70%, #0a0505 100%); }
+    .bg-river    { background: linear-gradient(180deg, #1a2a4a 0%, #0a1830 70%, #05050a 100%); }
+    .bg-snow     { background: linear-gradient(180deg, #c8c8d8 0%, #6a6a8a 70%, #2a2a3a 100%); }
+
+    /* ── Toast (status updates) ── */
+    .toast-stack {
+      position: absolute; top: 56px; right: 12px; display: flex; flex-direction: column; gap: 4px;
+      pointer-events: none; z-index: 20;
+    }
+    .toast {
+      background: rgba(10,10,10,0.85); border-left: 3px solid #c8a96a;
+      color: #e7e2d1; padding: 6px 12px; font-size: 13px; letter-spacing: 2px;
+      animation: toast-in 250ms ease-out, toast-out 400ms 2.6s forwards;
+    }
+    .toast.bad { border-left-color: #dc2626; }
+    .toast.warn { border-left-color: #ca8a04; }
+    @keyframes toast-in  { from { transform: translateX(20px); opacity: 0; } }
+    @keyframes toast-out { to   { transform: translateX(20px); opacity: 0; } }
+  </style>
+</head>
+<body>
+{{errorBanner}}
+<div id="stage"></div>
+<script>
+{{gameJs}}
+
+// ─── Runtime glue (the LeanJs code exposes pure functions; this
+// thin layer wires DOM events + render loop). All mutable state
+// lives in `state`; we re-render on every transition. ───────────
+const stage = document.getElementById('stage');
+const lsKey = 'chuhan-save-v1';
+
+function loadSave() {
+  try { return JSON.parse(localStorage.getItem(lsKey) || 'null'); }
+  catch (_) { return null; }
+}
+function persist(state) {
+  try { localStorage.setItem(lsKey, JSON.stringify(state)); } catch (_) {}
+}
+
+let state = loadSave() || initState();
+
+function render() {
+  stage.innerHTML = view(state);
+  // After render, wire up event handlers via delegation on root.
+}
+
+// Event delegation — every interactive element has a data-msg attr
+// whose value is a JSON-encoded message we pass to update().
+stage.addEventListener('click', (e) => {
+  let t = e.target;
+  while (t && t !== stage) {
+    if (t.dataset && t.dataset.msg) {
+      const msg = JSON.parse(t.dataset.msg);
+      state = update(msg, state);
+      persist(state);
+      render();
+      return;
+    }
+    t = t.parentNode;
+  }
+});
+
+// Keyboard: space/enter advances dialogue; arrow keys in battle.
+document.addEventListener('keydown', (e) => {
+  if (e.key === ' ' || e.key === 'Enter') {
+    e.preventDefault();
+    state = update({tag: 'advance'}, state);
+    persist(state);
+    render();
+  } else if (state.phase === 'battle') {
+    if (e.key === 'ArrowUp' || e.key === 'w')    state = update({tag: 'move', dx: 0,  dy: -1}, state);
+    if (e.key === 'ArrowDown' || e.key === 's')  state = update({tag: 'move', dx: 0,  dy: 1}, state);
+    if (e.key === 'ArrowLeft' || e.key === 'a')  state = update({tag: 'move', dx: -1, dy: 0}, state);
+    if (e.key === 'ArrowRight' || e.key === 'd') state = update({tag: 'move', dx: 1,  dy: 0}, state);
+    if (e.key === 'z' || e.key === 'j')          state = update({tag: 'attack'}, state);
+    persist(state);
+    if (state.phase === 'battle') {
+      renderBattle();
+    } else {
+      render();
+    }
+  }
+});
+
+// ─── Battle render — separate from main DOM render so we can use
+// requestAnimationFrame for smooth motion + tick the AI. ────────
+let battleRafHandle = null;
+function renderBattle() {
+  render();  // emit canvas element via view()
+  const c = document.getElementById('battleCanvas');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  function frame() {
+    if (state.phase !== 'battle') { battleRafHandle = null; return; }
+    state = update({tag: 'tick', ms: 16}, state);
+    drawBattle(ctx, c.width, c.height, state.battle);
+    battleRafHandle = requestAnimationFrame(frame);
+  }
+  if (battleRafHandle === null) battleRafHandle = requestAnimationFrame(frame);
+}
+
+// Plain JS draw routine — sprites and HP bars. The LeanJs side
+// owns the game state; this is pure rendering.
+function drawBattle(ctx, W, H, b) {
+  ctx.fillStyle = '#2a2418'; ctx.fillRect(0, 0, W, H);
+  // floor grid
+  ctx.strokeStyle = '#3a3018'; ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 32) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let y = 0; y < H; y += 32) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+  // entities
+  for (const e of b.entities) {
+    if (e.hp <= 0) continue;
+    ctx.fillStyle = e.color;
+    ctx.fillRect(e.x - 12, e.y - 12, 24, 24);
+    // facing arrow
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(e.x + e.facing.dx * 14 - 2, e.y + e.facing.dy * 14 - 2, 4, 4);
+    // hp bar
+    const hpW = 24, hpFrac = Math.max(0, e.hp / e.maxHp);
+    ctx.fillStyle = '#3a2a1a';
+    ctx.fillRect(e.x - hpW/2, e.y - 22, hpW, 3);
+    ctx.fillStyle = hpFrac > 0.5 ? '#16a34a' : hpFrac > 0.25 ? '#ca8a04' : '#dc2626';
+    ctx.fillRect(e.x - hpW/2, e.y - 22, hpW * hpFrac, 3);
+  }
+  // attack swings
+  for (const fx of b.fx) {
+    ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(fx.x, fx.y, fx.r, 0, Math.PI * 2); ctx.stroke();
+  }
+}
+
+// Subscribe to phase changes so the battle loop kicks in once we
+// enter `phase === 'battle'` from a dialogue choice.
+function maybeStartBattle() {
+  if (state.phase === 'battle' && battleRafHandle === null) {
+    requestAnimationFrame(() => renderBattle());
+  }
+}
+
+// Wrap render so phase transitions to battle bootstrap the loop.
+const origRender = render;
+window.render = function() {
+  origRender();
+  maybeStartBattle();
+};
+
+render();
+</script>
+</body>
+</html>
