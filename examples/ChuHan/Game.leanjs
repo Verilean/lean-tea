@@ -593,7 +593,7 @@ def liubangWhiteSerpent := [
     "――こうして、無頼の亭長・劉邦は「沛公」となる。同じ頃、江東で叔父・項梁とともに兵を挙げた青年がいた。名を、項羽。そして淮陰では、まだ胯下の辱を受けていない貧しい青年がいた。名を、韓信。物語は、これから始まる。",
     "—And so the hooligan headman became “the Duke of Pei.“ At the same time, in Jiangdong, a young man took up arms with his uncle Xiang Liang. His name was Xiang Yu. And in Huai-yin, a poor young man — not yet the recipient of the bully's humiliation — was named Han Xin. The story begins now."),
 
-  endingStep("act1_clear")
+  goScene("liubang_act2")
 ]
 
 -- Dead-end branch (honest at the banquet)
@@ -673,7 +673,7 @@ def xiangyuMeetYu := [
     "笑っている。なぜか、こいつに「普通」と言われると、嬉しい。",
     "She's laughing. For some reason, being called “ordinary“ by her — feels good."),
   narr("bg-camp", "二人の縁は、こうして始まった。垓下で終わるまで、八年の縁である。", "Their bond began thus. It would end at Gaixia, eight years later."),
-  endingStep("xiangyu_act1_clear")
+  goScene("xiangyu_act2")
 ]
 
 def xiangyuAct1StubEnd := [
@@ -767,7 +767,7 @@ def hanxinPiaoMu := [
   ]),
   narr("bg-river",
     "やがて韓信は項梁の軍に加わるが、項羽には認められず、何度も献策しては無視される日々。後に劉邦の軍に投じ、また小役人扱いされる。逃げようとした夜、月明かりの下、一人の役人が馬で追ってきた。蕭何である――。", "Han Xin joined Xiang Liang's army; under Xiang Yu his counsel went unheard. He defected to Liu Bang's army, where he was again treated as a minor clerk. One moonlit night, fleeing in despair, he was chased down by a single official on horseback — Xiao He."),
-  endingStep("hanxin_act1_clear")
+  goScene("hanxin_act2")
 ]
 
 def hanxinDeadEnd := [
@@ -815,7 +815,7 @@ def zhanglangAct1End := [
     "「孺子可教也」",
     "“The boy can be taught.“"),
   narr("bg-river", "張良は『太公兵法』を授かった。十年後、彼は劉邦と出会い、漢の軍師となる。引退して山に消える日まで、彼の戦は無敗である。", "Zhang Liang received the Tai Gong's Art of War. Ten years later he meets Liu Bang and becomes Han's strategist. Until the day he withdraws to the mountains, he never loses a campaign."),
-  endingStep("zhangliang_act1_clear")
+  goScene("zhangliang_act2")
 ]
 
 def zhanglangNoBingfaEnd := [
@@ -865,7 +865,7 @@ def xiaoheAct1 := [
 
 def xiaoheAct1End := [
   narr("bg-pei", "数年後、秦が傾き、沛の役人衆は劉邦を担いで蜂起する。蕭何はその参謀となった。彼の名は、ここから歴史に刻まれていく――そして、彼が韓信を見出し、そして殺す日まで、二十年は無い。", "Years later, as Qin tilts toward collapse, the clerks of Pei raise Liu Bang as their leader. Xiao He becomes the lead strategist. From here his name enters history — and the day he will discover Han Xin, then kill him, is less than twenty years away."),
-  endingStep("xiaohe_act1_clear")
+  goScene("xiaohe_act2")
 ]
 
 -- 范増 Act 1 stub: 老人として項梁を訪ねる
@@ -915,7 +915,883 @@ def fanzengAct1 := [
 
 def fanzengAct1End := [
   narr("bg-camp", "范増の進言は、聞かれることもあり、聞かれぬこともあった。彼はやがて項羽の唯一の参謀となり――そして、最後に項羽に「お主はもう私の言を聞かぬか」と告げて、陣を去る。陣から故郷へ帰る途上、背に疽を発して死ぬ。八十歳前後である。", "Fan Zeng's counsel was sometimes heard, often not. He would become Xiang Yu's sole strategist — and one day tell Xiang Yu: “You no longer listen to me, do you?“ — and depart the camp. He dies on the road home of a back boil. Eighty, more or less."),
-  endingStep("fanzeng_act1_clear")
+  goScene("fanzeng_act2")
+]
+
+-- ── ACT 2 — 楚漢戦争 (BCE 206-202) ──────────────────────────────────
+-- Six routes. Each ends with `endingStep("xxx_act2_clear")` or a
+-- definitive Act 2 ending. Fan Zeng's life completes here (he dies
+-- of grief before 垓下).
+
+def colorZiYing := "#a08060"
+def colorFanKuai := "#6a4a2a"
+def colorXiaHou := "#3a4a5a"
+def colorJiXin := "#5a5a3a"
+def colorChenPing := "#6a3a4a"
+def colorKuaiTong := "#4a6a4a"
+def colorLongJu := "#7a2a2a"
+def colorTaiGong := "#5a4a3a"
+def colorXiangBoOld := "#5a3a3a"
+
+-- ── Liu Bang Act 2 ─────────────────────────────────────────────────
+def liubangAct2 := [
+  narr("bg-pei",
+    "数年が過ぎた。陳勝・呉広が大沢郷に蜂起。秦の屋台骨は揺らぎ、各地で反秦の旗が立つ。沛の蕭何・曹参・樊噲は劉邦を担いで挙兵し、彼を「沛公」と呼んだ。",
+    "Years pass. Chen Sheng and Wu Guang raise the Daze Township rebellion. The Qin foundation cracks. In Pei, Xiao He, Cao Shen and Fan Kuai raise Liu Bang as their leader and call him “the Duke of Pei.“"),
+  think("bg-pei", "劉邦", colorLiu,
+    "「お、おう、俺が沛公か。へへ、悪くねえな!」",
+    "“Heh, the Duke of Pei? Not bad at all!“",
+    "やっと俺の時代が来た。だが、表情は『仕方なく担がれた田舎者』のままがいい。皆の警戒を解いておけ。",
+    "Finally my time. But keep the face of “the country bumpkin who was reluctantly raised up.“ Lower their guard."),
+  narr("bg-mountain",
+    "楚軍に合流した劉邦は、項梁の下で各地を転戦。やがて懐王から「先に関中に入った者を関中王とする」と約束される。劉邦は西、項羽は北。劉邦は奇しくも、武関を抜けて先に咸陽へ迫った。",
+    "Liu Bang joins the Chu rebellion under Xiang Liang. King Huai of Chu promises that whoever enters the Qin heartland first will be made King of Guanzhong. Liu Bang takes the west road; Xiang Yu, the north. By chance, Liu Bang breaches Wuguan Pass first and approaches Xianyang."),
+  duo("bg-palace", "子嬰", colorZiYing, "劉邦", colorLiu, 1,
+    "「秦三世・子嬰、ここに玉璽と兵符を捧げ申す。沛公、咸陽の民にお情けを」",
+    "“Ziying, third sovereign of Qin, surrenders the seal and the army tally. Duke of Pei — show mercy to the people of Xianyang.“"),
+  think("bg-palace", "劉邦", colorLiu,
+    "「子嬰殿、よくぞ降られた。秦の民は俺が守る」",
+    "“Ziying, you did well to surrender. The people of Qin are now mine to protect.“",
+    "天下の財宝、阿房宮、後宮の女、すべて目の前にある。これは――しばらく、味見をしておきたい。",
+    "All the treasures of the realm. The Epang Palace. The harem. Right in front of me. I'd... like a taste."),
+  chooseStep("bg-palace", [
+    Choice {
+      labelJa: "阿房宮の財宝と後宮に溺れる",
+      labelEn: "Indulge in the treasure and the harem",
+      hintJa: "業が積もる。樊噲と張良が必死で止める。民心も少し下がる",
+      hintEn: "Karma accumulates. Fan Kuai and Zhang Liang plead with you. Public favor dips",
+      dKarma: 6, dWife: 0, dWifeFear: 2,
+      dTrust: -2, dMinXin: -5,
+      dBu: 0, dZhi: 0, dMei: 1, dZheng: -2,
+      setFlag: "indulged_epang", gotoScene: ""
+    },
+    Choice {
+      labelJa: "樊噲・張良の説得を受けて、宮殿を封じ軍を覇上に退く",
+      labelEn: "Heed Fan Kuai and Zhang Liang — seal the palace, withdraw to Bashang",
+      hintJa: "史実通り。約法三章へ繋がる。民心が爆上がりする",
+      hintEn: "As history records. Sets up the Three Articles of Law. Public favor surges",
+      dKarma: -2, dWife: 0, dWifeFear: 0,
+      dTrust: 5, dMinXin: 15,
+      dBu: 0, dZhi: 2, dMei: 3, dZheng: 5,
+      setFlag: "withdrew_to_bashang", gotoScene: ""
+    }
+  ]),
+  duo("bg-palace", "劉邦", colorLiu, "樊噲", colorFanKuai, 1,
+    "「父老諸君よ、聞け。秦の法はあまりに苛烈であった。我ここに『約法三章』を布告する――人を殺す者は死。人を傷つけ盗む者は罰。それ以外の秦の悪法は、一切廃する」",
+    "“Elders, hear me. Qin's law was cruel beyond bearing. I hereby promulgate the Three Articles: he who kills shall die; he who wounds or steals shall be punished. All other Qin laws are abolished.“"),
+  think("bg-palace", "劉邦", colorLiu,
+    "「三章で済むわけがねえ。後で細かい法は山ほど作る。だが、今この瞬間、関中の民を惚れさせる」",
+    "“Three articles isn't going to actually run a country. We'll write the real laws later. But right now — this lets the people of Guanzhong fall in love with me.“",
+    "民心は一夜で動く。一度心を掴めば、項羽が後から来ても、もう関中は俺の土地だ。",
+    "Hearts shift overnight. Once they're mine, even if Xiang Yu comes after — Guanzhong is mine."),
+  narr("bg-camp",
+    "しかし――。項羽の四十万が新安を越え、函谷関に迫っていた。劉邦の軍は十万。曹無傷という男が項羽の陣に密告した:『沛公、関中王たらんとして子嬰を相に立てた』と。項羽、激怒。",
+    "But — Xiang Yu's four hundred thousand pass Xinan and approach Hangu Pass. Liu Bang has only one hundred thousand. A man named Cao Wushang sends a secret report to Xiang Yu: “The Duke of Pei is about to make himself King of Guanzhong and has appointed Ziying as his chancellor.“ Xiang Yu is furious."),
+  narr("bg-tent",
+    "張良の旧縁、項羽の叔父・項伯が夜陰に紛れて訪れる。「項王が明日、お主を撃つ。逃げよ」。劉邦は項伯に懇願する――『私には項王に弓引く意思は無い。明日、自ら詫びに参る』。",
+    "Through Zhang Liang's old connection, Xiang Bo — Xiang Yu's uncle — slips in by night. “King Xiang will strike you tomorrow. Flee.“ Liu Bang implores: “I have no quarrel with King Xiang. I will come to him myself, tomorrow, to apologize.“"),
+  duo("bg-tent", "劉邦", colorLiu, "張良", colorZhang, 1,
+    "「子房、明日、俺は鴻門に行く。死ぬかもしれん」",
+    "“Zifang. Tomorrow I go to Hongmen. I may not return.“"),
+  duo("bg-tent", "張良", colorZhang, "劉邦", colorLiu, 2,
+    "「沛公、樊噲を外に控えさせます。范増が動けば、樊噲が乱入します。便所に立つ振りをして、馬で抜けてくだされ」",
+    "“My lord. Fan Kuai will wait outside. If Fan Zeng moves, Fan Kuai will burst in. Excuse yourself for the toilet — and ride away.“"),
+  narr("bg-tent",
+    "翌日、鴻門。項羽の本陣。劉邦は百騎のみを連れて謝罪に参じた。座は項羽が南面、范増が東向、劉邦は北向、張良は西向。剣を帯びた者多数。",
+    "Next day. Hongmen, Xiang Yu's headquarters. Liu Bang arrives with just a hundred riders to apologize. Xiang Yu sits facing south. Fan Zeng faces east. Liu Bang, north. Zhang Liang, west. Many at the table are armed."),
+  duo("bg-tent", "劉邦", colorLiu, "項羽", colorXiang, 2,
+    "「項王、私と将軍は共に秦を討つことを誓った仲。私はただ、項王のために関を保ち、誰の侵入も拒んだだけです。誰かが我らの仲を裂こうとしているのです」",
+    "“King Xiang, you and I swore together to overthrow Qin. I held the pass only to keep it for you, to refuse all intruders. Someone is trying to drive us apart.“"),
+  think("bg-tent", "劉邦", colorLiu,
+    "「(項羽の顔をじっと見る)」",
+    "“(Watching Xiang Yu's face)“",
+    "こいつ……俺を斬る気がねえ。范増が三度、玉玦を上げているが、項羽は反応しねえ。子供だ。俺なら一秒で斬る。",
+    "He's... not going to kill me. Fan Zeng has raised the jade ring three times — Xiang Yu won't even look. A child. If I were him, I'd kill me in a second."),
+  narr("bg-tent",
+    "范増、業を煮やして外に項荘を呼び、舞剣の許しを請う。「軍中に楽無し、剣舞を以て興と為す」。項荘の剣は徐々に劉邦に迫る。しかし項伯が立ち上がり、自らも剣を抜いて舞い、常に身を以て沛公を覆った。",
+    "Fan Zeng, exasperated, calls Xiang Zhuang from outside to request the honor of a sword dance. Xiang Zhuang's blade edges closer to Liu Bang. But Xiang Bo rises, draws his own blade, dances opposite, and continually places his body between the dance and the Duke."),
+  duo("bg-tent", "樊噲", colorFanKuai, "劉邦", colorLiu, 1,
+    "「我が主に害を為すか――無礼!」",
+    "“Harm my lord? Insolent!“"),
+  narr("bg-tent",
+    "樊噲が盾を撞いて闖入。生の豚肉を盾の上で斬って食らい、項羽が「壮士!」と讃えるほどの威風。座は呑まれた。",
+    "Fan Kuai bursts in shield-first, sword in the other hand. He carves raw pork on the shield and devours it. Even Xiang Yu mutters “a real warrior“ in admiration. The room is dominated."),
+  chooseStep("bg-tent", [
+    Choice {
+      labelJa: "便所に立つ振りで馬で抜け出す",
+      labelEn: "Excuse yourself for the toilet and ride away",
+      hintJa: "歴史通り。命は助かる。だが「卑怯」の評判が伴う",
+      hintEn: "As history records. You live — but at the cost of a coward rumor",
+      dKarma: 3, dWife: 0, dWifeFear: 0,
+      dTrust: -1, dMinXin: 0,
+      dBu: 0, dZhi: 2, dMei: -2, dZheng: 3,
+      setFlag: "fled_hongmen", gotoScene: ""
+    },
+    Choice {
+      labelJa: "堂々と座を続け、項羽を見据える",
+      labelEn: "Stay at the table, hold Xiang Yu's eyes",
+      hintJa: "誇りは保てる。が、范増の指示で項荘が動き、お主は斬られる",
+      hintEn: "Pride preserved. But Fan Zeng moves Xiang Zhuang and you die on the mat",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: 0,
+      dBu: 0, dZhi: 0, dMei: 5, dZheng: 0,
+      setFlag: "stayed_hongmen", gotoScene: "liubang_hongmen_died"
+    }
+  ]),
+  narr("bg-mountain",
+    "劉邦は無事に陣に戻り、密告者・曹無傷を即座に斬った。項羽は劉邦を「漢王」に封じ、巴・蜀・漢中という辺境に追いやった。咸陽から去る日、張良の進言で桟道を焼き、項羽に「もはや東に出る気は無い」と思わせた。",
+    "Liu Bang reaches camp and immediately executes the informant Cao Wushang. Xiang Yu enfeoffs Liu Bang as “King of Han“ and banishes him to the wilds of Ba, Shu, and Hanzhong. On departure, by Zhang Liang's counsel, Liu Bang burns the wooden gallery roads behind him — to make Xiang Yu believe he never intends to come east again."),
+  duo("bg-mountain", "蕭何", colorXiao, "劉邦", colorLiu, 1,
+    "「主公、奇妙な男を見つけました。淮陰の韓信。一介の連敖ですが、兵法を語らせれば誰よりも深い。大将軍に拝してください」",
+    "“My lord. I have found a strange man. Han Xin of Huai-yin. A nobody clerk, but talk to him about war — none deeper. Raise him to Supreme General.“"),
+  think("bg-mountain", "劉邦", colorLiu,
+    "「大将軍? あの飯食らいの剣士をか? 蕭何、お主、頭でも打ったか?」",
+    "“Supreme General? That hungry swordsman? Xiao He — did you hit your head?“",
+    "蕭何が、ここまで言うのは初めてだ。こいつの目は曇らねえ。…賭けるか。",
+    "Xiao He has never pushed this hard before. His judgment doesn't blur. …Worth a wager."),
+  chooseStep("bg-mountain", [
+    Choice {
+      labelJa: "蕭何の眼を信じて、拝将壇を築く",
+      labelEn: "Trust Xiao He's eyes — order the platform built",
+      hintJa: "史実。韓信の指揮の下、漢は関中を奪回する",
+      hintEn: "As history records. Under Han Xin's command, Han retakes Guanzhong",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 5, dMinXin: 0,
+      dBu: 0, dZhi: 3, dMei: 2, dZheng: 5,
+      setFlag: "appointed_hanxin", gotoScene: ""
+    },
+    Choice {
+      labelJa: "「飯食らいに大将軍? 駄目だ」と却下する",
+      labelEn: "A beggar as Supreme General? No — refuse",
+      hintJa: "韓信は二度と戻らぬ。漢は漢中で枯れる",
+      hintEn: "Han Xin will not return. Han withers in Hanzhong",
+      dKarma: 2, dWife: 0, dWifeFear: 0,
+      dTrust: -3, dMinXin: 0,
+      dBu: 0, dZhi: 0, dMei: 0, dZheng: -5,
+      setFlag: "refused_hanxin", gotoScene: "liubang_withered_in_hanzhong"
+    }
+  ]),
+  narr("bg-mountain",
+    "韓信は『暗渡陳倉』の奇計を用い、章邯らの三秦王を撃破。関中はわずか数月で漢の手に落ちた。劉邦は東に進み、彭城を狙う。諸侯連合軍五十六万、対する項羽は斉征伐に出ていて手薄。",
+    "Han Xin's secret crossing at Chencang breaks the three Qin kings. Guanzhong falls to Han in just a few months. Liu Bang marches east toward Pengcheng. The allied force numbers five hundred sixty thousand. Xiang Yu is away campaigning in Qi — Pengcheng is thinly held."),
+  narr("bg-pengcheng",
+    "彭城を落とした劉邦は、宴に溺れる。三日。項羽が三万の精鋭騎兵を率い、半夜の砂塵の中から襲来。漢軍は壊乱。劉邦は数十騎で逃走。父・太公と妻・呂雉は捕虜となった。",
+    "Liu Bang takes Pengcheng and falls into three days of drinking. Then Xiang Yu arrives, with thirty thousand elite cavalry, out of a half-night sandstorm. The Han army shatters. Liu Bang flees with a few dozen riders. His father — and his wife Lü Zhi — are taken prisoner."),
+  think("bg-pengcheng", "劉邦", colorLiu,
+    "「な、なんだあれは……三万で五十六万を破ったのか、あの男は!」",
+    "“What — thirty thousand routs five hundred sixty thousand? That man — !“",
+    "呂雉……すまん。お前を質に取られて、それでも俺は逃げる。逃げて、勝つ。それが俺の戦い方だ。",
+    "Lü Zhi... I'm sorry. You're hostage and I will still flee. Flee and win. That is how I fight."),
+  narr("bg-yingyang",
+    "劉邦は滎陽で項羽軍と長期対峙。糧道を断たれ、追いつめられる。将・紀信が劉邦に似ているのを幸い、紀信は黄色い御車に乗り、自ら『沛公、降伏す』と城を出て項羽の前に出た。",
+    "Liu Bang holds Xingyang in a long stalemate. The grain road is cut. Then his general Ji Xin — who resembles Liu Bang — disguises himself in the imperial yellow chariot, exits the city declaring “The Duke of Pei surrenders!“ and presents himself before Xiang Yu."),
+  duo("bg-yingyang", "項羽", colorXiang, "紀信", colorJiXin, 2,
+    "「沛公はいずこか!」",
+    "“Where is the Duke of Pei?!“"),
+  duo("bg-yingyang", "紀信", colorJiXin, "項羽", colorXiang, 1,
+    "「沛公は、もう城を抜けておられる。私を焼かれるなり、煮るなり、好きにせよ。我が主は天命を得ておられる」",
+    "“The Duke is already gone from the city. Burn me, boil me, as you wish. My lord holds the Mandate of Heaven.“"),
+  narr("bg-yingyang",
+    "項羽は紀信を焼き殺した。劉邦は東門から数十騎で滎陽を抜け、関中へ戻る。",
+    "Xiang Yu burned Ji Xin alive. Liu Bang slipped out the east gate with a few dozen riders and fled back to Guanzhong."),
+  narr("bg-tent",
+    "数ヶ月後。韓信が斉を平定したとの知らせが届く――そして使者が一通の書状を持って来る:『斉の地は乱れやすく、仮に王に立ててもらえれば鎮められましょう』。",
+    "Months later. Word comes that Han Xin has pacified Qi. With it, a letter from his envoy: “Qi is restless. If I am made interim king of Qi, I can hold it.“"),
+  think("bg-tent", "劉邦", colorLiu,
+    "「な、ななななんだと―!! あの韓信、俺がここで死にかけている時に、王にしろだと――!!」",
+    "“Wha— WHAT?! Han Xin — while I'm here near death — he wants me to crown him KING?!“",
+    "怒鳴れば、こいつは離反する。離反したら、楚と漢の天秤は崩れる。だが、許せば俺は『脅されて従う男』だ。",
+    "If I shout, he defects. If he defects, the scales tip. But if I yield, I am the man who folds under pressure."),
+  narr("bg-tent",
+    "張良が劉邦の足を強く踏んだ。耳元に囁く――『今、許せ。怒れば韓信を失う。韓信を失えば、項羽に勝てぬ』。劉邦は瞬時に表情を変えた。",
+    "Zhang Liang stepped hard on Liu Bang's foot. Whispered in his ear: “Yield now. Anger him and you lose him. Lose him and you cannot beat Xiang Yu.“ Liu Bang's face changed in a beat."),
+  chooseStep("bg-tent", [
+    Choice {
+      labelJa: "「仮王? ふん、男たる者、王たるべし! 真の斉王に立ててやる!」と笑う",
+      labelEn: "Laugh: Interim king? A man should be the real thing. I name him true King of Qi!",
+      hintJa: "史実通り。韓信は感激する。だが、お主は内心で韓信を『使い終わったら処分する駒』と決めた",
+      hintEn: "As history. Han Xin is moved. But in your mind, he is now a piece to be discarded after use",
+      dKarma: 8, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: 0,
+      dBu: 0, dZhi: 3, dMei: 5, dZheng: 4,
+      setFlag: "feigned_generosity_hanxin", gotoScene: ""
+    },
+    Choice {
+      labelJa: "怒鳴って韓信の使者を投獄する",
+      labelEn: "Shout at the envoy, throw him in jail",
+      hintJa: "韓信は中立を宣言、楚漢どちらにもつかぬ。三国鼎立ルート",
+      hintEn: "Han Xin declares neutrality. Three-way standoff",
+      dKarma: -2, dWife: 0, dWifeFear: 0,
+      dTrust: -5, dMinXin: 0,
+      dBu: 0, dZhi: 0, dMei: -3, dZheng: -3,
+      setFlag: "denied_hanxin_kingship", gotoScene: "liubang_threeway_stub"
+    }
+  ]),
+  narr("bg-tent",
+    "鴻溝の地で楚漢の和約が成る。境界は鴻溝。項羽は劉邦の父・呂雉を返還し、東へ引き上げ始めた。",
+    "At Honggou Canal, a treaty between Chu and Han. The border: the canal itself. Xiang Yu returns Liu Bang's father and wife, and begins to withdraw eastward."),
+  duo("bg-tent", "張良", colorZhang, "劉邦", colorLiu, 1,
+    "「沛公。今こそ追撃を。項羽は疲弊し、兵糧も尽きかけている。今討たねば、十年後に災いとなる」",
+    "“My lord. Strike now. Xiang Yu is exhausted, his stores nearly empty. Do not strike now — and you will pay for it in ten years.“"),
+  chooseStep("bg-tent", [
+    Choice {
+      labelJa: "鴻溝の和約を信じ、軍を引き上げる",
+      labelEn: "Honor the Honggou Treaty — withdraw",
+      hintJa: "誠実。しかし、項羽は数年内に再起し、漢を脅かす",
+      hintEn: "Honest. But Xiang Yu rallies within years and threatens Han",
+      dKarma: -5, dWife: 3, dWifeFear: 0,
+      dTrust: 3, dMinXin: 5,
+      dBu: 0, dZhi: -2, dMei: 2, dZheng: -2,
+      setFlag: "kept_honggou", gotoScene: "liubang_honggou_keeper_end"
+    },
+    Choice {
+      labelJa: "張良・陳平の進言通り、約束を破って追撃する",
+      labelEn: "By Zhang Liang and Chen Ping's counsel — break the treaty and pursue",
+      hintJa: "史実。垓下へ。誠実さは捨てるが、天下は手に入る",
+      hintEn: "As history. To Gaixia. Honesty discarded; the realm gained",
+      dKarma: 10, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: -3,
+      dBu: 2, dZhi: 3, dMei: 0, dZheng: 5,
+      setFlag: "broke_honggou", gotoScene: ""
+    }
+  ]),
+  narr("bg-night",
+    "鴻溝を越えた漢軍は楚を追撃。同時に韓信・彭越・黥布の軍を呼び寄せる。垓下――最後の決戦の地が、霧の中に近づいてくる。",
+    "The Han army crosses Honggou in pursuit. Han Xin, Peng Yue and Ying Bu are summoned. Gaixia — the field of the final reckoning — appears through the mist."),
+  endingStep("liubang_act2_clear")
+]
+
+def liubangHongmenDied := [
+  narr("bg-tent",
+    "劉邦は項荘の剣を腹に受けて伏した。「俺は…項王に詫びに来ただけだ……」その言葉は誰にも聞かれなかった。樊噲は怒り狂って斬り死。張良は座を立つ間もなく囚われ、後に処刑された。歴史は、項羽が天下を握ったとして、別の物語を始める。",
+    "Xiang Zhuang's blade took Liu Bang in the belly. “I came... only to apologize to King Xiang...“ No one heard. Fan Kuai died fighting in rage. Zhang Liang was seized before he could rise, executed later. History begins a different story, in which Xiang Yu holds the realm."),
+  endingStep("liubang_died_hongmen")
+]
+
+def liubangWitheredInHanzhong := [
+  narr("bg-mountain",
+    "韓信を拒んだ劉邦の漢軍は、漢中の山中で錆びていった。蕭何が必死に補給を回しても、戦略を立てる人材が居らぬ。三年後、項羽が漢中まで攻め入り、劉邦は山中で病没した。樊噲は最後まで主を守って死んだ。",
+    "Without Han Xin, Liu Bang's army rusted in the Hanzhong mountains. Xiao He kept the supplies flowing — but there was no strategist. Three years later Xiang Yu marched on Hanzhong itself; Liu Bang died of illness in the mountains. Fan Kuai died defending him to the last."),
+  endingStep("liubang_withered")
+]
+
+def liubangThreewayStub := [
+  narr("bg-mountain",
+    "韓信を怒らせた劉邦は、彼を失った。韓信は中立を宣言し、斉に独立王朝を立てる。楚・漢・斉の三国鼎立の時代が始まる――しかし、それはまた別の物語。",
+    "Having shouted at Han Xin, Liu Bang lost him. Han Xin declared neutrality and founded an independent dynasty in Qi. A three-way standoff between Chu, Han, and Qi begins — but that is another story."),
+  endingStep("liubang_threeway")
+]
+
+def liubangHonggouKeeperEnd := [
+  narr("bg-mountain",
+    "劉邦は鴻溝の和約を守り、軍を引き上げた。項羽は東へ。劉邦は西へ。二人の天下分割が、本当に成立した――が、項羽は数年で再び牙を剥き、漢は十年以上の長戦に苦しむことになる。お主の『誠実』は、子孫が代わりに支払うことになるだろう。",
+    "Liu Bang honored the Honggou Treaty and withdrew. Xiang Yu went east, Liu Bang went west — the partition held. But Xiang Yu rallied within years; Han fought a decade-long war that drained the next generation. Your honesty will be paid for by your children."),
+  endingStep("liubang_honggou_kept")
+]
+
+-- ── Xiang Yu Act 2 ─────────────────────────────────────────────────
+def xiangyuAct2 := [
+  narr("bg-camp",
+    "数年が過ぎた。叔父・項梁は定陶で章邯軍に敗れ戦死。楚の旗手は項羽に移った。趙が秦軍に包囲され、楚は救援軍を派遣。総帥は宋義、副将に項羽。しかし宋義は安陽で四十六日間動かず、酒宴に明け暮れた。",
+    "Years pass. Uncle Xiang Liang fell at Dingtao to Zhang Han's army. The standard of Chu passes to Xiang Yu. The state of Zhao is besieged by Qin; Chu sends a relief army under Song Yi, with Xiang Yu as deputy. Song Yi camps at Anyang for forty-six days, drinking, refusing to move."),
+  think("bg-camp", "項羽", colorXiang,
+    "「酒宴している場合か! 趙が滅べば次は楚だ!」",
+    "“This is no time for drinking! When Zhao falls, Chu is next!“",
+    "宋義は懐王の信頼厚き者。だが、待っている間に趙が落ちれば、楚も終わる。",
+    "Song Yi has King Huai's trust. But if Zhao falls while we wait, Chu falls next."),
+  narr("bg-camp",
+    "翌朝。項羽は宋義の天幕に入り、一刀で首を斬った。「宋義は斉と謀って楚に背いた」と宣言。諸将は震えて項羽に従った。",
+    "Next morning. Xiang Yu entered Song Yi's tent and took his head with a single stroke. The generals trembled and followed Xiang Yu."),
+  narr("bg-jielo",
+    "鉅鹿の戦い。趙を包囲する秦軍二十万。楚軍は黄河を渡る。項羽は決断する。",
+    "The Battle of Julu. Twenty myriad Qin troops besiege Zhao. The Chu army crosses the Yellow River. Xiang Yu makes a decision."),
+  chooseStep("bg-jielo", [
+    Choice {
+      labelJa: "船を沈め、釜を破り、三日分の糧のみで戦う (破釜沈舟)",
+      labelEn: "Sink the boats, smash the cauldrons, three days of rations — sink the cauldrons",
+      hintJa: "兵に退路を断つ。死ぬ気で戦わせれば勝てる。歴史を作る一手",
+      hintEn: "No retreat. Men who must die will win. The move that makes history",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 8, dMinXin: 5,
+      dBu: 5, dZhi: 3, dMei: 5, dZheng: 0,
+      setFlag: "broke_cauldrons", gotoScene: ""
+    },
+    Choice {
+      labelJa: "退路を残し、慎重に布陣する",
+      labelEn: "Keep a retreat. Encamp cautiously",
+      hintJa: "兵は安心するが士気上がらず。秦軍に押し負ける",
+      hintEn: "The men are reassured, but listless. Qin breaks the line",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: -3, dMinXin: 0,
+      dBu: -2, dZhi: 1, dMei: -3, dZheng: 0,
+      setFlag: "kept_retreat", gotoScene: "xiangyu_julu_failed_end"
+    }
+  ]),
+  narr("bg-jielo",
+    "九戦九勝。秦軍二十万を打ち砕き、章邯を降伏に追い込んだ。諸侯の将は項羽に拝謁する際、皆膝行して進み、誰一人顔を上げ得なかった。項羽、ここに『覇王』の名を得る。",
+    "Nine battles, nine victories. Two hundred thousand Qin troops shattered. Zhang Han forced to surrender. When the lords of the other states came to do obeisance, every general crawled on his knees — none could raise his face. Here Xiang Yu earned the name Overlord."),
+  narr("bg-gorge",
+    "新安。章邯軍二十万の処遇。降伏兵が裏で不満を言うとの報。范増は項羽に進言――『関中に入れば反乱する。今、坑するべし』。",
+    "Xinan. The question of the twenty myriad surrendered. Reports of discontent in the ranks. Fan Zeng counsels: In Guanzhong they will turn. Bury them now."),
+  chooseStep("bg-gorge", [
+    Choice {
+      labelJa: "范増の進言通り、二十万を一夜にして坑殺する",
+      labelEn: "By Fan Zeng's counsel — bury all two hundred thousand in a single night",
+      hintJa: "史実。後の関中での民心は失われる。業も極めて重い",
+      hintEn: "As history. Public favor in Guanzhong is forever lost. Karma immense",
+      dKarma: 20, dWife: 0, dWifeFear: 0,
+      dTrust: 2, dMinXin: -30,
+      dBu: 3, dZhi: -2, dMei: -8, dZheng: -3,
+      setFlag: "killed_200k", gotoScene: ""
+    },
+    Choice {
+      labelJa: "「降伏した者を殺すは武の道に非ず」と編入する",
+      labelEn: "To slay men who surrendered is not the warrior's way — incorporate them",
+      hintJa: "民心は保たれる。だが食料不足、進軍が遅れる",
+      hintEn: "Public favor preserved. But supply strains, march slows",
+      dKarma: -10, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: 15,
+      dBu: 0, dZhi: 0, dMei: 8, dZheng: 5,
+      setFlag: "spared_200k", gotoScene: ""
+    }
+  ]),
+  narr("bg-tent",
+    "函谷関に至れば既に劉邦の兵がある。曹無傷の密告:『沛公、関中王たらんとして子嬰を相に』。項羽、四十万、激怒して進軍。鴻門に陣を張る――劉邦が百騎を連れて謝罪に来た。",
+    "At Hangu Pass — Liu Bang's troops already hold it. Cao Wushang's report. Xiang Yu rages, camps at Hongmen. Liu Bang arrives with a hundred riders to apologize."),
+  duo("bg-tent", "劉邦", colorLiu, "項羽", colorXiang, 2,
+    "「項王、私と将軍は共に秦を討つことを誓った仲――」",
+    "“King Xiang, you and I swore together to overthrow Qin —“"),
+  think("bg-tent", "項羽", colorXiang,
+    "「ふん、まあ、座れ」",
+    "“Hmph. Sit down.“",
+    "こいつ……俺の前に来て、頭を下げている。なぜか、斬る気が失せている。武人として、頭を下げた者は斬らぬ。",
+    "He came. To my face. With his head down. For some reason, my will to kill is gone. A warrior does not strike a man with bowed head."),
+  narr("bg-tent",
+    "范増は項羽に玉玦を三度上げる。「斬れ、斬れ、斬れ」と。項羽は応じない。范増は項荘を呼び、剣舞を以て劉邦を斬らんとする。項伯が立ち上がり、舞いで沛公を覆う。樊噲が乱入する。",
+    "Fan Zeng raises the jade ring three times. Strike. Strike. Strike. Xiang Yu does not respond. Xiang Zhuang dances; Xiang Bo dances counter. Fan Kuai bursts in."),
+  chooseStep("bg-tent", [
+    Choice {
+      labelJa: "范増の三度の合図に応えて、劉邦を斬る",
+      labelEn: "Answer Fan Zeng's three signals — strike Liu Bang down",
+      hintJa: "歴史改変。范増は『よくやった』と笑う。だが、お主は『英雄』ではなくなる",
+      hintEn: "A diverged history. Fan Zeng laughs well done. But you cease to be a hero",
+      dKarma: 5, dWife: -3, dWifeFear: 0,
+      dTrust: 3, dMinXin: -10,
+      dBu: 0, dZhi: 5, dMei: -10, dZheng: 5,
+      setFlag: "killed_liubang_hongmen", gotoScene: "xiangyu_killed_liu_end"
+    },
+    Choice {
+      labelJa: "「武人は頭を下げた者を斬らぬ」と劉邦を生かす",
+      labelEn: "A warrior does not strike a man with bowed head — let Liu Bang live",
+      hintJa: "史実。范増は震えて立ち去る。後に「子犬の輩、共に謀るに足らず」",
+      hintEn: "As history. Fan Zeng walks out trembling. Later: puppies, unfit to plan with",
+      dKarma: -3, dWife: 5, dWifeFear: 0,
+      dTrust: -5, dMinXin: 8,
+      dBu: 0, dZhi: -5, dMei: 10, dZheng: -3,
+      setFlag: "spared_liubang_hongmen", gotoScene: ""
+    }
+  ]),
+  narr("bg-palace",
+    "項羽、咸陽に入る。秦三世・子嬰を斬り、咸陽の街を屠り、阿房宮に火を放った。火は三月燃え続け、宝物は東の彭城に運ばれた。",
+    "Xiang Yu enters Xianyang. Executes Ziying. Massacres the city. Sets fire to the Epang Palace — three months it burned. The treasures are carted east to Pengcheng."),
+  duo("bg-burning", "韓生", "#6a4a4a", "項羽", colorXiang, 2,
+    "「項王、関中は険要、土地肥沃、ここを都とすべし」",
+    "“King Xiang. Guanzhong is strategically perfect, the land fertile. Make this your capital.“"),
+  think("bg-burning", "項羽", colorXiang,
+    "「ふん、富貴にして郷里に帰らずんば、繍を衣て夜に行くが如し」",
+    "“Hmph. To be rich and not return home is to walk in fine silk at night — who would see it?“",
+    "都は彭城だ。咸陽など、燃やしてしまえばいい。",
+    "The capital will be Pengcheng. As for Xianyang — burn it."),
+  narr("bg-pengcheng",
+    "項羽は西楚覇王として彭城に都す。諸侯論功行賞は不公平を生み、田栄が斉で反乱。項羽は斉征伐に出陣。その隙に劉邦が関中から東進、彭城を奇襲して落とした。",
+    "Xiang Yu rules as Hegemon-King of Western Chu, capital at Pengcheng. Tian Rong rebels in Qi. Xiang Yu marches on Qi — and Liu Bang surges east, taking Pengcheng by surprise."),
+  duo("bg-pengcheng", "項羽", colorXiang, "范増", colorFanZeng, 1,
+    "「斉から戻る。三万騎で構わぬ。彭城を取り返す」",
+    "“I return from Qi. Thirty thousand cavalry — that is enough. We retake Pengcheng.“"),
+  narr("bg-pengcheng",
+    "夜陰、項羽の三万騎が彭城の漢軍を急襲。劉邦の五十六万は壊乱、十数万が泗水に溺れ死んだ。劉邦は数十騎で逃走。父・太公と妻・呂雉は項羽の捕虜となった。",
+    "Under cover of dark, Xiang Yu's thirty thousand strike Liu Bang's army at Pengcheng. The five hundred sixty thousand shatter. Liu Bang's father and wife are taken hostage."),
+  think("bg-pengcheng", "項羽", colorXiang,
+    "「あの女、呂雉とかいうか。あいつの目、強いな」",
+    "“That woman — Lü Zhi, was it. Her eyes are strong.“",
+    "劉邦は逃げた。また逃げた。何度も逃げる。あの男だけは、俺には捕まらん。",
+    "Liu Bang fled. Again. He always flees. That one alone slips me."),
+  narr("bg-yingyang",
+    "滎陽の長期攻囲。陳平は黄金四万斤を以て楚の陣に流言を放った――『鍾離眛・龍且・范増は漢と内通している』。項羽は次第に范増を疑う。",
+    "The long siege of Xingyang. Chen Ping spends forty thousand catties of gold spreading rumors in the Chu camp. Xiang Yu begins to doubt Fan Zeng."),
+  duo("bg-tent", "范増", colorFanZeng, "項羽", colorXiang, 1,
+    "「項王。陳平の計でございます。私を疑う必要は無い」",
+    "“King Xiang. This is Chen Ping's stratagem. There is no need to doubt me.“"),
+  chooseStep("bg-tent", [
+    Choice {
+      labelJa: "范増を信じ、陳平の使者を見破る",
+      labelEn: "Trust Fan Zeng — see through Chen Ping's envoy",
+      hintJa: "歴史改変。范増が生き残れば、項羽は最後まで戦える",
+      hintEn: "History diverges. With Fan Zeng alive, Xiang Yu fights to the end with counsel",
+      dKarma: -5, dWife: 0, dWifeFear: 0,
+      dTrust: 10, dMinXin: 0,
+      dBu: 0, dZhi: 5, dMei: 5, dZheng: 8,
+      setFlag: "trusted_fanzeng", gotoScene: ""
+    },
+    Choice {
+      labelJa: "范増の態度を疎んじ、待遇を下げる",
+      labelEn: "Cool toward Fan Zeng — reduce his honors",
+      hintJa: "史実。范増は『天下事はもはや決した』と陣を去る",
+      hintEn: "As history. Fan Zeng: The realm is decided. He departs",
+      dKarma: 5, dWife: 0, dWifeFear: 0,
+      dTrust: -15, dMinXin: 0,
+      dBu: 0, dZhi: -8, dMei: -3, dZheng: -5,
+      setFlag: "doubted_fanzeng", gotoScene: ""
+    }
+  ]),
+  narr("bg-tent",
+    "兵糧が尽きる。項羽は鴻溝の和約を結び、劉邦の父・呂雉を返還した。項羽の軍は東へ撤退を始めた。",
+    "Provisions exhausted. Xiang Yu makes the Honggou Treaty, returns Liu Bang's father and wife. The Chu army begins its eastward withdrawal."),
+  think("bg-tent", "項羽", colorXiang,
+    "「呂雉、お主は強かった。我が陣にあって一度も泣かなんだ。劉邦に告げよ――『俺は約束を守る男だ』と」",
+    "“Lü Zhi. You were strong. In my camp, never once did you weep. Tell Liu Bang — I am a man who keeps his word.“",
+    "范増よ、お主の言が正しかったのか。だが、もう遅い。お主は陣中で亡くなったと聞いた。あれを聞いた時、俺の中で何かが、終わった気がした。",
+    "Fan Zeng. Were you right? Too late now. They say you died in camp. When I heard — something in me, ended."),
+  endingStep("xiangyu_act2_clear")
+]
+
+def xiangyuJuluFailedEnd := [
+  narr("bg-jielo",
+    "退路を残した項羽軍は秦軍に圧迫され、半数を失って撤退。趙は陥落。秦は天下を保ち、項羽は江東の一地方将として生涯を終えた。歴史は、こうも語ることが出来た。",
+    "With a retreat preserved, Xiang Yu's army was pushed back, losing half its strength. Zhao fell. Qin held the realm. History could also have been thus."),
+  endingStep("xiangyu_julu_failed")
+]
+
+def xiangyuKilledLiuEnd := [
+  narr("bg-tent",
+    "項羽の剣が劉邦を真っ二つにした。樊噲は怒り狂って自刃、張良は囚われ後に処刑。項羽は『西楚帝国』を建てる――しかし、その治世は寂しい。范増は『この子、ついに儂の言を聞いたか』と笑い、晩年を彭城で過ごす。虞姫は項羽のそばで老い、二人は子を成して、平和な治世が続いた。だが、それは、別の世界の物語である。",
+    "Xiang Yu's blade split Liu Bang in two. Xiang Yu founded the Empire of Western Chu — but the reign was lonely. Fan Zeng smiled: The boy finally heeded me. Yu Ji aged at Xiang Yu's side; they had children; the realm was at peace. But this is the story of another world."),
+  endingStep("xiangyu_killed_liu")
+]
+
+-- ── Han Xin Act 2 ──────────────────────────────────────────────────
+def hanxinAct2 := [
+  narr("bg-camp",
+    "韓信は項梁の下で持戟郎中。何度も献策するが、項羽は耳を貸さない。叔父亡き後、項梁の遺臣として渡り歩き、やがて漢中に流された劉邦の軍に投じた。連敖――小役人扱い。ある日、軍法違反で十三人と共に斬首される寸前――。",
+    "Han Xin serves Xiang Liang as a halberd-bearing attendant. Counsel after counsel; Xiang Yu does not listen. He drifts to Liu Bang's army in Hanzhong. A petty clerk. One day, condemned to die with thirteen others —"),
+  duo("bg-mountain", "夏侯嬰", colorXiaHou, "韓信", colorHan, 2,
+    "「待て! お主、目だけは生きておるな。名を申せ」",
+    "“Wait. Your eyes — they still burn. State your name.“"),
+  duo("bg-mountain", "韓信", colorHan, "夏侯嬰", colorXiaHou, 1,
+    "「淮陰の韓信。漢王が天下を取ろうとなさるならば、私を殺すのは惜しゅうござる」",
+    "“Han Xin of Huai-yin. If the King of Han would take the realm — to kill me would be a waste.“"),
+  narr("bg-mountain",
+    "夏侯嬰は韓信を助け、蕭何に紹介した。蕭何と韓信は語り明かす。十日も経たぬうちに、蕭何は韓信を「国士無双」と劉邦に推した。だが、劉邦は容れない。韓信は漢中で死ぬのは惜しい、と思い始めた。",
+    "Xiahou Ying saves Han Xin, brings him to Xiao He. Within ten days Xiao He hails him as matchless. Liu Bang does not act. Han Xin begins to think — to die in Hanzhong would be a shame."),
+  think("bg-mountain", "韓信", colorHan,
+    "「漢中の山で朽ちる気はない。今夜、立つ」",
+    "“I will not rot in these mountains. Tonight I ride.“",
+    "胯下の辱を呑んだのは、こんな所で死ぬためではない。漂母の千金の恩は、まだ返せていない。",
+    "I did not crawl under that bully to die here. The thousand-piece debt to the washerwoman — still unpaid."),
+  narr("bg-mountain",
+    "月夜。韓信は馬を駆って漢中の出口へ。蕭何、報を聞き――『丞相も逃げた』と兵営は騒然。蕭何、自ら馬で韓信を追う。",
+    "Moonlit night. Han Xin rides for the Hanzhong exit. Xiao He hears — “the chancellor too has fled!“ Xiao He himself takes a horse and chases."),
+  duo("bg-mountain", "蕭何", colorXiao, "韓信", colorHan, 1,
+    "「待たれよ韓信! 戻ってくだされ! 漢王には私が話す! あなたは大将軍たるべき人だ!」",
+    "“Han Xin — wait! Come back! I will speak to the King! You must be Supreme General!“"),
+  duo("bg-mountain", "韓信", colorHan, "蕭何", colorXiao, 2,
+    "「……蕭何様。御身がここまで追ってくれたなら、もう一度、戻りまする」",
+    "“...Xiao He. If you yourself chased this far — I will return.“"),
+  narr("bg-altar",
+    "蕭何は劉邦に強要する:『斎戒沐浴し、吉日を選んで、拝将壇を築いて礼を以て大将軍に任ぜよ』。劉邦はしぶしぶ従う。",
+    "Xiao He pressed Liu Bang: “Bathe, fast, choose an auspicious day, build a proper platform, and appoint him Supreme General with full ceremony.“ Liu Bang grudgingly agreed."),
+  duo("bg-altar", "劉邦", colorLiu, "韓信", colorHan, 2,
+    "「韓信、漢中をどう破る? 関中を奪い返すには、どうすればよい?」",
+    "“Han Xin. How do we break out of Hanzhong? How do we retake Guanzhong?“"),
+  duo("bg-altar", "韓信", colorHan, "劉邦", colorLiu, 1,
+    "「項王の暴は天下を失わしむ所以。漢王の徳は天下を得しむ所以。焼いた桟道を修復する振りをし、その間に陳倉から急襲を……」",
+    "“Xiang Yu's cruelty is why he will lose the realm. Your benevolence is why you will gain it. Feign repair of the burned gallery roads, while striking from Chencang —“"),
+  think("bg-altar", "韓信", colorHan,
+    "「(劉邦の目がじっと俺を見ている)」",
+    "“(The King's eyes are on me.)“",
+    "ついに、見られている。誰かに、本当に見られている。",
+    "At last. I am being seen. Truly seen."),
+  narr("bg-mountain",
+    "韓信の『明修桟道、暗渡陳倉』。漢軍は故道の桟道を修復する振りをしつつ、本隊は陳倉から関中に入った。三秦王は次々に敗れ、関中はわずか数月で漢の手に戻った。",
+    "Han Xin's openly repair the gallery, secretly cross at Chencang. The main force enters Guanzhong from Chencang. The three Qin kings fall one after another; Guanzhong returns to Han within months."),
+  narr("bg-river",
+    "趙征伐。井陘口にて、韓信三万、対する趙の陳余は二十万。常識ではあり得ぬ寡兵差。韓信は布陣する――背に大河を負い、退路を断つ。趙軍は笑った。『あの男、兵法を知らぬか』。",
+    "The campaign against Zhao. At Jingxing Pass: Han Xin's thirty thousand against Chen Yu's two hundred thousand. Han Xin arrays his men — backs to a great river, no retreat. The Zhao army laughs: “Does that man not know war?“"),
+  think("bg-river", "韓信", colorHan,
+    "「兵法は『高きを背に低きを前にし、生地を選び死地を避けよ』と言う。だが、我が兵は精鋭に非ず、新兵が多い。死地に置かねば、戦わぬ」",
+    "“The art of war says high ground behind. But my men are not picked troops. Without dead ground, they will not fight.“",
+    "兵を活かすため、わざと死地に置く。普通の将は『陥之死地而后生』の意味を、頭ではわかっていても、現場では実行できぬ。",
+    "Place them in death-ground that they may live. Most generals understand the words; few have the nerve to execute."),
+  chooseStep("bg-river", [
+    Choice {
+      labelJa: "部下に布陣の意図を説明する",
+      labelEn: "Explain the formation to your officers",
+      hintJa: "部下は安心するが、敵に意図が漏れる可能性あり",
+      hintEn: "Officers reassured. Risk: the design may leak",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 3, dMinXin: 0,
+      dBu: 0, dZhi: 1, dMei: 2, dZheng: 1,
+      setFlag: "explained_beishui", gotoScene: ""
+    },
+    Choice {
+      labelJa: "黙して陣を敷き、勝った後で説明する",
+      labelEn: "Stay silent. Encamp. Explain after winning",
+      hintJa: "史実。部下は震えるが、勝てば信頼は絶対に",
+      hintEn: "As history. The men tremble — but victory wins absolute trust",
+      dKarma: 1, dWife: 0, dWifeFear: 0,
+      dTrust: 8, dMinXin: 0,
+      dBu: 0, dZhi: 5, dMei: 5, dZheng: 3,
+      setFlag: "silent_beishui", gotoScene: ""
+    }
+  ]),
+  narr("bg-river",
+    "暁。趙の二十万が雪崩のように攻め寄せる。韓信の本陣は退路無し、必死に防戦。同時に、別動隊二千が無人となった趙の本陣を奇襲、漢の赤旗を掲げた。趙軍崩壊。陳余は斬られた。",
+    "Dawn. Two hundred thousand Zhao troops avalanche down. The Han center, no retreat, fights to the death. Meanwhile a flying column of two thousand storms the empty Zhao camp and raises Han's red banners. Zhao breaks. Chen Yu falls."),
+  duo("bg-river", "部下", "#5a5a5a", "韓信", colorHan, 2,
+    "「将軍! 兵法では『丘陵を右背にし水沢を前左にせよ』とあるはず。なぜ背水の陣で勝てたのですか?」",
+    "“General! The art of war says hill to the right rear, marsh to the front left. How did the back-to-water formation win?“"),
+  duo("bg-river", "韓信", colorHan, "部下", "#5a5a5a", 1,
+    "「これも兵法だ。『陥之死地而後生、置之亡地而後存』。退路を断ったから、皆死力を尽くしたのだ」",
+    "“That too is the art of war. Cast them into dead-ground and they live. Cut the retreat, and every one fought to the last breath.“"),
+  narr("bg-river",
+    "斉征伐。劉邦の使者・酈食其は外交で斉を降伏させていたが、韓信はこれを蹴って攻撃。酈食其は斉王に煮殺された。項羽は龍且の二十万を派遣。韓信は濰水を堰き止め、龍且軍が渡河する瞬間、堰を切る。半分が溺れ、半分が分断された。龍且は斬られた。斉、平定。",
+    "The Qi campaign. Liu Bang's envoy Li Yiji had already negotiated Qi's surrender — but Han Xin attacked anyway. Li was boiled alive. Xiang Yu dispatched Long Ju. Han Xin dammed the Wei River. As Long Ju crossed, he broke the dam. Long Ju fell. Qi pacified."),
+  narr("bg-tent",
+    "韓信は劉邦に使者を送る:『斉の地は険しく民は乱れやすし。仮に王に立てて頂ければ鎮められましょう』。",
+    "Han Xin sends an envoy to Liu Bang: “If I be made interim king of Qi, I can hold it.“"),
+  narr("bg-tent",
+    "斉に蒯通という弁士があり、韓信に進言した――",
+    "In Qi, an orator named Kuai Tong came to Han Xin and said —"),
+  duo("bg-tent", "蒯通", colorKuaiTong, "韓信", colorHan, 1,
+    "「将軍。今、お主の手の中には天下の天秤がある。漢に加担すれば漢が勝つ。楚に加担すれば楚が勝つ。だが、第三の道――両者と離れ、自ら立つ。三国鼎立を成せば、お主は天下を取れる」",
+    "“General. The balance of the realm now sits in your hands. There is a third road — break with both and stand alone. A three-way standoff, and the realm becomes yours.“"),
+  think("bg-tent", "韓信", colorHan,
+    "「蒯通、お主の言葉は確かに筋が通っている。だが――」",
+    "“Kuai Tong. What you say is sound. And yet —“",
+    "蕭何は俺を発見してくれた人だ。劉邦は俺を大将軍に拝してくれた人だ。これらの恩を踏みにじって俺だけが天下を取る、それを俺はできない。",
+    "Xiao He found me. Liu Bang made me Supreme General. To trample these debts — I cannot."),
+  chooseStep("bg-tent", [
+    Choice {
+      labelJa: "蒯通の進言を退け、劉邦に忠誠を尽くす",
+      labelEn: "Refuse Kuai Tong's counsel — stay loyal to Liu Bang",
+      hintJa: "史実。垓下へ向かう。後に呂雉と蕭何の罠で殺される運命",
+      hintEn: "As history. To Gaixia. Your fate: trapped later by Lü Zhi and Xiao He",
+      dKarma: -3, dWife: 5, dWifeFear: 0,
+      dTrust: 5, dMinXin: 5,
+      dBu: 0, dZhi: 3, dMei: 5, dZheng: 0,
+      setFlag: "refused_kuaitong", gotoScene: ""
+    },
+    Choice {
+      labelJa: "蒯通の言を入れ、さらに『中華の天秤を傾けるより、その外で全く新しい秤を作る』と西へ向かう",
+      labelEn: "Accept Kuai Tong — then go further: Rather than tilt the balance, forge a new one beyond — turn west",
+      hintJa: "歴史改変。隠しEND『韓信西征』へ。中華の縛りを断ち、未知の地で新しい伝説を作る",
+      hintEn: "History diverges. Hidden END Han Xin Goes West. Build a new legend in unmapped land",
+      dKarma: -8, dWife: 10, dWifeFear: 0,
+      dTrust: 5, dMinXin: -5,
+      dBu: 3, dZhi: 10, dMei: 5, dZheng: 5,
+      setFlag: "kuaitong_west", gotoScene: "hanxin_xizheng"
+    }
+  ]),
+  narr("bg-tent",
+    "数日後、劉邦の返書が届く。『仮王? 男たる者、王たるべし! お主を真の斉王に立てる!』韓信は感激し、垓下に向かう兵を整え始めた。",
+    "Days later, the reply: “Interim king? A man must be the real thing. I name you true King of Qi.“ Han Xin was moved. He began to muster the troops for Gaixia."),
+  endingStep("hanxin_act2_clear")
+]
+
+-- 韓信西征 (隠しEND)
+def hanxinXizheng := [
+  narr("bg-mountain",
+    "韓信、楚漢両軍と離れ、三十万の精兵を率いて北西に向かった。漂雲も同行した。『あなたが行くなら、私も』。",
+    "Han Xin broke with both Chu and Han, marched northwest with three hundred thousand picked troops. Piao Yun came with him. “If you go, I go.“"),
+  narr("bg-gorge",
+    "西へ。月氏を破り、彼らを更に西へ押した。砂漠を渡り、雪山を越えた。彼方には、ヘレネスと呼ばれる、青い眼の人々の国があった。バクトリアの王・エウテュデモスが、韓信を迎えた。",
+    "West and west. He broke the Yuezhi, driving them further west still. Crossed deserts. Crossed snow mountains. Beyond lay a kingdom of blue-eyed people called Hellenes. King Euthydemus of Bactria received him."),
+  duo("bg-altar", "エウテュデモス", "#4a6a8a", "韓信", colorHan, 1,
+    "「東から、奇妙な戦法の将が来たと聞いた。我らはアレクサンドロスの末裔。お主の『背水の陣』を聞きたい」",
+    "“A general of strange tactics, from the east. We are the heirs of Alexander. Tell me of your back-to-water formation.“"),
+  duo("bg-altar", "韓信", colorHan, "エウテュデモス", "#4a6a8a", 2,
+    "「貴公のファランクスは、隊列を保てば無敵。だが、隊列を崩されれば脆い。我が背水の陣は、隊列ではなく『生死』で兵を縛る。発想が逆だ」",
+    "“Your phalanx is unbeatable so long as the line holds. But fragile when broken. My back-to-water binds men not by line, but by life and death itself. The principle is inverted.“"),
+  narr("bg-altar",
+    "韓信は西方の地で十五年を生きた。漂雲との間に三人の子を成した。バクトリアと月氏と、その更に西のセレウコスとの三国を渡り歩き、戦術書を残した。",
+    "Han Xin lived fifteen years in the western lands. He had three children with Piao Yun. He walked between Bactria, the Yuezhi, and the Seleucids beyond — and left a book on tactics."),
+  think("bg-river", "韓信", colorHan,
+    "「(死の床で) 漂雲、子よ、聞け。俺は中華で死なずに済んだ。蕭何は俺を見つけてくれたが、ここでは誰にも見つけられず、ただ自分で歩いた。それでよかった――」",
+    "“(on his deathbed) Piao Yun, my children, hear me. I escaped dying in China. Xiao He found me there, but here, no one found me. I walked on my own. And that was enough —“",
+    "漂母様。千金は、ついに届けられませなんだ。代わりに、ここに俺がおりまする。",
+    "Old mother of the river. The thousand pieces of gold — I never returned them. In their place, here I stand."),
+  narr("bg-river",
+    "東に伝わった噂は、断片的だった。『斉の韓信は西方の地で王となり、ギリシア人の妃を娶り、月氏と並んで栄えた』と。中華の正史にこの章はない。だが、ある時代のサマルカンドの古文書には、「東来之軍神・韓」という名が、確かに、記されていた。",
+    "Rumors reached the east only in fragments. “Han Xin of Qi became a king in the west, took a Greek consort, and prospered alongside the Yuezhi.“ Chinese official history holds no such chapter. But, in old Samarkand documents of one era, a name remains: “Han, the war-god from the east.“"),
+  endingStep("hanxin_xizheng_legend")
+]
+
+-- ── Zhang Liang Act 2 ──────────────────────────────────────────────
+def zhanglangAct2 := [
+  narr("bg-camp",
+    "張良は韓王成と再会し、韓の復興を図る。だが、留にて沛公・劉邦と再会――その不思議な縁が、彼の運命を変える。",
+    "Zhang Liang reunites with King Cheng of Han; they work to restore Han. But at Liu — by chance — he meets the Duke of Pei again. That strange bond will shape his fate."),
+  duo("bg-camp", "劉邦", colorLiu, "張良", colorZhang, 2,
+    "「子房、お主、太公兵法を学んだとか。我が陣の参謀となれ」",
+    "“Zifang. They say you have the Taigong's art of war. Be my strategist.“"),
+  think("bg-camp", "張良", colorZhang,
+    "「沛公はわが献策を、一言で聞き、即座に実行する。これほどの素質は他に見ぬ」",
+    "“The Duke hears my counsel in a word and acts on it at once. I have not seen such fitness elsewhere.“",
+    "私は黄石公に「孺子可教也」と言われた。あの言葉、ずっと、何のためかわからなかった。",
+    "Huangshi Gong said: The boy can be taught. For years I did not know what for."),
+  narr("bg-palace",
+    "張良の策で武関突破。咸陽到着後、子嬰降伏。張良は劉邦に阿房宮の宝物・後宮の女から離れるよう諫め、樊噲と共に説得した。劉邦は折れ、覇上に退いて『約法三章』を宣言。関中の民は劉邦を歓迎した。",
+    "By Zhang Liang's strategy, Wuguan Pass falls. The Duke withdraws to Bashang and proclaims the Three Articles. The people of Guanzhong welcome him."),
+  narr("bg-tent",
+    "項羽軍接近。項羽の叔父・項伯と張良は旧縁あり――項伯は密かに張良に告げに来た:『明日、項王が沛公を撃つ。早く逃げよ』。張良は『沛公を捨てて私が逃げるのは不義』と固辞。代わりに項伯に頼んだ。",
+    "Xiang Bo — Xiang Yu's uncle and Zhang Liang's old friend — comes secretly: “King Xiang will strike tomorrow. Flee.“ Zhang Liang refuses: “To abandon the Duke is not loyalty.“ Instead he asks Bo a favor."),
+  duo("bg-tent", "張良", colorZhang, "項伯", colorXiangBoOld, 1,
+    "「項伯殿。沛公は項王に弓引く意思は無い。明日、自ら詫びに参る。その時、項伯殿は身を以て沛公を覆ってくだされ」",
+    "“Master Xiang Bo. The Duke has no quarrel with the King. He will go himself. When he does — please cover him with your own body.“"),
+  duo("bg-tent", "項伯", colorXiangBoOld, "張良", colorZhang, 2,
+    "「ふむ。お主のためだ。承知した」",
+    "“Hmm. For your sake. Done.“"),
+  narr("bg-tent",
+    "鴻門。張良は西向に座し、項羽の表情と范増の手元を同時に観察する。范増、玉玦三度。項羽動かず。項伯舞いで覆い、樊噲乱入、劉邦は便所に立つ振りで逃走。",
+    "Hongmen. Zhang Liang watches both the King's face and Fan Zeng's hands. Three signals. The King does not move. Xiang Bo dances cover. Fan Kuai bursts in. The Duke excuses himself and rides away."),
+  think("bg-tent", "張良", colorZhang,
+    "「沛公が便所に立つ振りで抜け出した。私は座って、項王に弁解を続ける。私が動けば全てが終わる」",
+    "“The Duke is gone. I sit. I continue the apologies. If I move, everything ends.“",
+    "私は石になる。石は雄弁である必要がない。",
+    "I become stone. Stone need not be eloquent."),
+  narr("bg-camp",
+    "後、項羽は韓王成を彭城に拘束し、ついには殺した。張良は韓を完全に失い、漢に身を捧げる決意を固める。",
+    "Later, Xiang Yu detained King Cheng of Han and eventually killed him. Zhang Liang lost Han forever; he resolved to give himself wholly to Han."),
+  think("bg-camp", "張良", colorZhang,
+    "「韓王成は、私の主であった。だが、項羽はあの人を殺した。私はもう、韓人ではない。漢人だ」",
+    "“King Cheng of Han was my lord. Xiang Yu killed him. I am no longer a man of Han. I am a man of Han.“",
+    "ここから先、私の智は、項羽を倒すためにある。",
+    "From here, my mind exists to bring Xiang Yu down."),
+  narr("bg-tent",
+    "彭城大敗後、劉邦は下邑にて『誰を以て項羽を破るか』と問うた。張良は答える――『黥布は項羽の旧将、待遇に不満。彭越は梁地で項羽と対立。韓信は天下の名将。この三者を結べば、項羽は破れる』。これが『下邑の謀』である。",
+    "After Pengcheng, Liu Bang asked: “With whom shall we break Xiang Yu?“ Zhang Liang answered: “Ying Bu, Peng Yue, Han Xin — bind these three and Xiang Yu falls.“ This is the Xiayi stratagem."),
+  duo("bg-tent", "張良", colorZhang, "劉邦", colorLiu, 1,
+    "「沛公、断じてなりませぬ! 諸将は皆、故郷を捨てて沛公に従っている。今、六国の旧主を復活させれば、彼らは皆故郷へ帰る。漢の軍は瓦解しまする」",
+    "“My lord — absolutely not! Every general here has left home to follow you. Restore the old kings, and every one of them returns home. The army collapses.“"),
+  narr("bg-tent",
+    "劉邦は箸を投げ捨て、口の食物を吐き出して罵った。『あの腐れ儒者、危うく我が大事を誤らせるところであった!』。六国復活案は廃された。",
+    "Liu Bang flung his chopsticks, spat out his food. “That rotten scholar! He nearly ruined everything!“ The proposal was scrapped."),
+  narr("bg-tent",
+    "韓信の使者が『仮王に立ててほしい』と。劉邦は怒鳴ろうとした。張良が机の下で劉邦の足を強く踏んだ。",
+    "Han Xin's envoy: “Make me interim king.“ Liu Bang was about to shout. Zhang Liang trod hard on his foot under the table."),
+  duo("bg-tent", "張良", colorZhang, "劉邦", colorLiu, 1,
+    "「(囁) 今、韓信を怒らせれば天秤は崩れる。許せ。許して、後で考えればよい」",
+    "“(whisper) Anger him now and the balance breaks. Yield. Yield first; reckon later.“"),
+  think("bg-tent", "張良", colorZhang,
+    "「沛公の眼が、瞬時に変わる。これだから、私はこの男を見捨てられぬ」",
+    "“In a single breath the Duke's eyes change. This — this is why I cannot leave him.“",
+    "そして同時に。あの瞬時の切り替えこそが、後年、韓信の命取りになる。私はその時、おそらく、もうここに居らぬが。",
+    "And at the same moment — that very instant of change is what will, in years to come, cost Han Xin his life. I shall, by then, likely be elsewhere."),
+  narr("bg-tent",
+    "鴻溝の和約が成り、項羽が東へ撤退する。張良と陳平、進言する――『今こそ追撃! 項羽を生かせば後の災い』。劉邦、頷く。",
+    "Honggou is signed. Xiang Yu withdraws east. Zhang Liang and Chen Ping urge: “Now strike! Let Xiang Yu live and we pay later.“ Liu Bang nods."),
+  narr("bg-night",
+    "垓下が近づく。十面埋伏の策が形を成し始める。漢軍は四方から楚軍を包み、最後の歌――『四面楚歌』が、霧の中で歌われる時が、もうすぐである。",
+    "Gaixia draws near. The Ten-Sided Ambush takes shape. Han closes from every quarter. The Chu Songs from All Sides will soon be sung, in the mist."),
+  endingStep("zhangliang_act2_clear")
+]
+
+-- ── Xiao He Act 2 ──────────────────────────────────────────────────
+def xiaoheAct2 := [
+  narr("bg-pei",
+    "蕭何は劉邦と共に挙兵。劉邦が沛公と呼ばれる中、蕭何は後方を一手に握り、文書・補給・人事を仕切った。彼の名は、戦場には出ない。",
+    "Xiao He raised troops with Liu Bang. As Liu Bang became the Duke of Pei, Xiao He held the rear — records, supply, personnel. His name never appears on a battlefield."),
+  narr("bg-palace",
+    "劉邦が咸陽に入る。諸将は宮中の金銀財宝に殺到し、奪い合った。蕭何だけは、急ぎ丞相府の書庫に走った。",
+    "Liu Bang enters Xianyang. The generals stampede the palace treasure rooms, fighting over gold. Only Xiao He sprinted for the chancellor's archive."),
+  duo("bg-palace", "曹参", "#5a5a3a", "蕭何", colorXiao, 2,
+    "「蕭何殿、宝物は西の宮にあるぞ! こんな書庫に何を求めるか」",
+    "“Xiao He! The treasure's in the west palace! What do you want in here?“"),
+  chooseStep("bg-palace", [
+    Choice {
+      labelJa: "「律令、地図、戸籍 ―― これらこそ天下を治める器」と書庫の文書を全て押収する",
+      labelEn: "Laws, maps, census — these are the vessels of rule. Seize every document",
+      hintJa: "史実。漢中での補給・兵員・戦略の基盤となる。蕭何の最大の手柄",
+      hintEn: "As history. The foundation for Hanzhong. Xiao He's greatest deed",
+      dKarma: -2, dWife: 0, dWifeFear: 0,
+      dTrust: 5, dMinXin: 5,
+      dBu: 0, dZhi: 10, dMei: 0, dZheng: 12,
+      setFlag: "seized_archives", gotoScene: ""
+    },
+    Choice {
+      labelJa: "「分かった」と曹参と共に宝物を漁る",
+      labelEn: "Fine — go with Cao Shen and join the looting",
+      hintJa: "金銀は手に入る。だが、漢中で補給が回らず、漢軍は枯れる",
+      hintEn: "Gold acquired. But Hanzhong has no maps, no records — Han withers",
+      dKarma: 5, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: -3,
+      dBu: 0, dZhi: -5, dMei: 0, dZheng: -10,
+      setFlag: "joined_looting", gotoScene: "xiaohe_looter_end"
+    }
+  ]),
+  narr("bg-mountain",
+    "漢中で蕭何は韓信と語り明かした。十日にして、これは『国士無双』と見抜く。韓信が逃亡したとの報。蕭何は自ら馬で追った。",
+    "In Hanzhong, Xiao He talked through the night with Han Xin. Within ten days he saw: this man is matchless. When word came that Han Xin had fled, Xiao He himself rode after."),
+  think("bg-mountain", "蕭何", colorXiao,
+    "「(馬上、夜風の中) 漢王には後で何と言われようと良い。この男を失えば、漢は終わる」",
+    "“(On horseback) Whatever the King says later — if I lose this man, Han is finished.“",
+    "妙容、お前との約束を破って、また勝手なことをした。許せ。",
+    "Miao Rong — I have broken my word to you yet again. Forgive me."),
+  narr("bg-altar",
+    "蕭何は韓信を連れ戻し、劉邦に拝将壇を築かせた。漢中対の披露、暗渡陳倉の成功――蕭何の見立ては、誰の目にも明らかとなった。",
+    "Xiao He brought Han Xin back. Han Xin's strategy and the secret crossing at Chencang — Xiao He's reading proved out for all to see."),
+  narr("bg-pei",
+    "劉邦が東進した後、蕭何は関中の留守を預かった。法を整え、田畝を均し、兵を集め、糧を送り続けた。漢軍の戦闘力は、ここから来ている。",
+    "After Liu Bang moved east, Xiao He held Guanzhong. The fighting strength of Han began here."),
+  narr("bg-house",
+    "劉邦からの密書が届く。『最近、関中の民は私より蕭何殿を称えるとの噂を聞く。御身、お変わりは無いか』。蕭何は手紙を読んで沈黙した。妻・妙容が部屋に入ってくる。",
+    "A confidential letter from Liu Bang: “Lately the people of Guanzhong praise you more than me. Are you... well?“ Xiao He read it in silence. His wife Miao Rong entered."),
+  duo("bg-house", "妙容", "#7a5a8a", "蕭何", colorXiao, 2,
+    "「あなた、その顔。劉様が、あなたを疑っておられるのね」",
+    "“Husband. That face. The King has begun to doubt you.“"),
+  duo("bg-house", "蕭何", colorXiao, "妙容", "#7a5a8a", 1,
+    "「妙容よ……私は、お前にも、子にも、すまぬことを頼まねばならぬ」",
+    "“Miao Rong... I must ask of you — and of the children — something terrible.“"),
+  chooseStep("bg-house", [
+    Choice {
+      labelJa: "一族を質に出し、自らの評判を汚す ―― 「丞相が民田を強奪している」と噂を立てる",
+      labelEn: "Send the family as hostages. Sully your own reputation",
+      hintJa: "史実。劉邦は安心する。だが、お前は『良き人』ではなくなる",
+      hintEn: "As history. The King is reassured. But you cease to be a good man",
+      dKarma: 8, dWife: 0, dWifeFear: 0,
+      dTrust: 10, dMinXin: -15,
+      dBu: 0, dZhi: 5, dMei: -10, dZheng: 10,
+      setFlag: "hostages_and_smear", gotoScene: ""
+    },
+    Choice {
+      labelJa: "潔白を保ち、堂々と振る舞う",
+      labelEn: "Keep your purity. Behave with full dignity",
+      hintJa: "誇りは保てる。が、劉邦は疑念を深め、お前は呼び戻されて、自害を命じられる",
+      hintEn: "Pride preserved. The King's doubt deepens — you are summoned and ordered to take your life",
+      dKarma: -3, dWife: 5, dWifeFear: 0,
+      dTrust: -8, dMinXin: 10,
+      dBu: 0, dZhi: 0, dMei: 5, dZheng: -5,
+      setFlag: "kept_purity", gotoScene: "xiaohe_purity_death_end"
+    }
+  ]),
+  duo("bg-house", "妙容", "#7a5a8a", "蕭何", colorXiao, 2,
+    "「(子を抱いて、震えながら) わかった。私たち一族の名誉、あなたの大事の為に使ってくだされ。ただ……あなたの名誉だけは、私が、心の中で、覚えておきます」",
+    "“(holding the children, trembling) I understand. Take our family's name. Only — your own true name, I will keep in my heart.“"),
+  think("bg-house", "蕭何", colorXiao,
+    "「妙容よ。お前は、私が劉邦に賭けていることを、ずっと前から知っていた。今日、お前は私の共犯者となる」",
+    "“Miao Rong. You have always known I was wagering on Liu Bang. Today, you become my accomplice.“",
+    "韓信のことは、まだ妙容に言えていない。あの『国士無双』を、おそらく私は、いずれ、殺さねばならぬのだ。",
+    "About Han Xin — I have not yet told her. That matchless man — I shall, one day, almost certainly, have to kill him."),
+  narr("bg-pei",
+    "蕭何は一族を前線に送り、自らは民田を強奪して悪名を立てた。劉邦は密書を破り、笑った。『蕭何も人並みであったか』。蕭何は、その笑いを、生涯忘れない。",
+    "Xiao He sent his family to the front, then began seizing peasant fields, blackening his own name. Liu Bang tore up the letter and laughed: “So Xiao He is human after all.“ Xiao He never forgot that laugh."),
+  endingStep("xiaohe_act2_clear")
+]
+
+def xiaoheLooterEnd := [
+  narr("bg-palace",
+    "蕭何が宝物に走った日、漢中の運命は決まった。地図無く、戸籍無く、律令無し――補給も人事も滞った。韓信が来ても活かせず、漢軍は漢中の山中で、項羽の到来を待つ間に枯れた。蕭何は財をなしたが、史に名は残らなかった。",
+    "The day Xiao He ran for the gold, Hanzhong's fate was sealed. No maps, no rolls, no laws. The Han army withered in the mountains. Xiao He grew rich. History remembers him not."),
+  endingStep("xiaohe_looter")
+]
+
+def xiaohePurityDeathEnd := [
+  narr("bg-house",
+    "蕭何は潔白を保ち、堂々と振る舞った。劉邦の疑念は晴れず、ついに召還された。長安にて、自害を命ぜられる。妙容は子を抱いて泣いた。蕭何は最期に書を残した:『我、潔白を守りて死す。漢を守ること能わざるは、我が罪』。",
+    "Xiao He kept his purity. The King's doubt did not lift. Recalled, ordered to take his own life. Miao Rong wept holding the children. Xiao He left a final note: “I die in my purity. That I could not save Han is my fault.“"),
+  endingStep("xiaohe_purity_death")
+]
+
+-- ── Fan Zeng Act 2 — completes his life ────────────────────────────
+def fanzengAct2 := [
+  narr("bg-jielo",
+    "鉅鹿前夜。項羽は破釜沈舟を決意した。范増は項羽の天幕に入る。",
+    "Eve of Julu. Xiang Yu has resolved on breaking the cauldrons. Fan Zeng enters his tent."),
+  duo("bg-jielo", "范増", colorFanZeng, "項羽", colorXiang, 1,
+    "「項王。破釜沈舟は、勝てば天下に名を轟かす。負ければ全滅。賭けに過ぎる」",
+    "“King Xiang. Break the cauldrons — win, and your name shakes the realm. Lose, and you are annihilated. This is too steep a bet.“"),
+  duo("bg-jielo", "項羽", colorXiang, "范増", colorFanZeng, 2,
+    "「老父よ、賭けねば天下は取れぬ。御身、年を取られた」",
+    "“Old father. Without the wager, the realm is not won. You have grown old.“"),
+  think("bg-jielo", "范増", colorFanZeng,
+    "「(項羽の眼を見て、無言で退室) 若い……」",
+    "“(Reading his eyes, withdrawing without a word) Young...“",
+    "若いがゆえに止められぬ。私が止めねば、誰が止める。だが、止めることが、私の役割でないのかも知れぬ。",
+    "Too young to be stopped. If I do not stop him, who? Yet — perhaps stopping him is not my role."),
+  narr("bg-jielo",
+    "鉅鹿、九戦九勝。項羽の名は天下に響いた。范増の進言は、結果として『間違い』であった。",
+    "Julu — nine battles, nine victories. Xiang Yu's name shook the realm. Fan Zeng's counsel proved, by results, wrong."),
+  narr("bg-gorge",
+    "新安。秦兵二十万の処遇。范増は項羽に進言――『関中に入れば反乱する。今、坑するべし』。",
+    "Xinan. The question of the twenty myriad surrendered Qin. Fan Zeng counsels: In Guanzhong they will turn. Bury them now."),
+  think("bg-gorge", "范増", colorFanZeng,
+    "「(進言しながら) この策が天意に背くことは、私が一番よく知っている。だが、項羽軍は二十万の俘虜を引き連れては関中まで持たぬ」",
+    "“(While advising) I know better than anyone that this is against heaven's will. But Xiang Yu's army cannot drag twenty myriad prisoners to Guanzhong.“",
+    "天意と兵法は、両立せぬことがある。私は兵法を取る。",
+    "Heaven and war do not always agree. I choose war."),
+  narr("bg-gorge",
+    "項羽は范増の進言を容れ、二十万を一夜にして生き埋めにした。范増、それから関中の民心が永遠に項羽から離れたことを、誰よりもよく見ていた。",
+    "Xiang Yu accepted. Twenty myriad buried in a single night. From that moment, the people of Guanzhong turned forever from Xiang Yu — and Fan Zeng saw it more clearly than anyone."),
+  narr("bg-tent",
+    "鴻門の宴。范増は東向に座し、項羽の対面。劉邦が来た。范増、項羽に目で『斬れ』と告げる。次に、玉玦を上げる。一度。二度。三度。項羽、応じず。",
+    "Hongmen. Fan Zeng sits facing east, opposite the King. Liu Bang arrives. Fan Zeng's eyes to Xiang Yu: strike. Then the jade ring is raised. Once. Twice. Three times. The King does not respond."),
+  think("bg-tent", "范増", colorFanZeng,
+    "「(玉玦を握りしめて) この子、私の合図が見えぬのか。否、見えていて、応えぬのか」",
+    "“(Gripping the ring) Does the boy not see my signal? Or does he see — and refuse?“",
+    "もはや私一人で打つ。",
+    "Then I act alone."),
+  narr("bg-tent",
+    "范増は項荘を呼び、剣舞を以て劉邦を斬らしめんとした。項伯立ち上がりて舞いを以て覆い、樊噲乱入し、劉邦は便所に立つ振りで逃走。",
+    "Fan Zeng called Xiang Zhuang and bade him dance the sword to kill the Duke. Xiang Bo rose and danced cover. Fan Kuai burst in. The Duke escaped."),
+  narr("bg-tent",
+    "宴後、張良が白璧と玉斗を捧げて謝罪を伝えた。項羽は白璧を取った。范増は玉斗を地に投げ、剣で斬り砕き、罵った――",
+    "After the banquet, Zhang Liang offered jade discs and jade ladles in apology. Xiang Yu took the discs. Fan Zeng flung the ladles down, chopped them in two, and cursed —"),
+  duo("bg-tent", "范増", colorFanZeng, "項羽", colorXiang, 1,
+    "「子犬の輩よ! 共に謀るに足らず! 項王の天下を奪う者は、必ずや沛公であろう! 我ら皆、彼の俘となろう!」",
+    "“Puppies — unfit to plan with! He who will take the King's realm will be the Duke himself! All of us shall become his prisoners!“"),
+  think("bg-tent", "范増", colorFanZeng,
+    "「(立ち去りながら、心中に独白) この一言は、項羽に届いただろうか。届いていたとて、もう遅い」",
+    "“(Walking out) Did those words reach him? Even if they did — too late.“",
+    "亡き妻よ、お主が生きていれば、笑ったかな。『おじいさん、また熱くなりすぎたな』と。",
+    "My departed wife — would you have laughed? Old man, you got worked up again, didn't you."),
+  narr("bg-palace",
+    "項羽が彭城に都す決断をした時、范増は『関中に都すべし。関中は天下の要害』と進言。項羽は『衣繍夜行』と言って容れず。范増、また聞かれず。",
+    "When Xiang Yu chose Pengcheng for his capital, Fan Zeng counseled: “Capital should be Guanzhong. The terrain is the realm's hinge.“ Xiang Yu replied with “silks at night,“ and did not heed."),
+  narr("bg-yingyang",
+    "滎陽包囲、漢軍は窮地。范増は『あと一押し』と告げる。陳平の使者が来た。項羽は使者を厚遇――しかし、使者が出した料理を見て『鍾離眛様、龍且様、范増様の使者と聞いていたが、これは項王の使者の料理ではないか』と慌てて取り下げた。項羽、范増らが漢と通じていると疑い始める。",
+    "Xingyang surrounded. Fan Zeng: “One more push.“ Chen Ping's envoy arrives. The envoy realizes “the meal is for the King, not for the counselors,“ and hurries to withdraw it. Xiang Yu begins to doubt his counselors."),
+  duo("bg-yingyang", "范増", colorFanZeng, "項羽", colorXiang, 1,
+    "「項王。陳平の計でございます。私を疑う必要は無い」",
+    "“King Xiang. This is Chen Ping's stratagem. There is no need to doubt me.“"),
+  duo("bg-yingyang", "項羽", colorXiang, "范増", colorFanZeng, 2,
+    "「……ふむ」",
+    "“...Hm.“"),
+  think("bg-yingyang", "范増", colorFanZeng,
+    "「(項羽の沈黙を見て) 終わった。この沈黙が、私への返答だ」",
+    "“(Reading the silence) It is finished. This silence is his answer to me.“",
+    "私が項羽と居続けることは、もはや漢に利するだけだ。",
+    "For me to stay beside Xiang Yu now only profits Han."),
+  duo("bg-tent", "范増", colorFanZeng, "項羽", colorXiang, 1,
+    "「項王。天下の事はもはや決した。願わくは、私の骸骨を故郷に返してくだされ。老いた身、もはや何もできませぬ」",
+    "“King Xiang. The matter of the realm is decided. May I be granted leave to take my old bones home?“"),
+  duo("bg-tent", "項羽", colorXiang, "范増", colorFanZeng, 2,
+    "「……許す」",
+    "“...Granted.“"),
+  narr("bg-mountain",
+    "范増、楚陣を去って彭城へ。途中、背中に大きな疽が出来た。馬車の中で痛みに身を捩りながら、范増は独語する。",
+    "Fan Zeng left the camp for Pengcheng. On the road, a great boil rose on his back. Doubled with pain in the carriage, he spoke aloud —"),
+  think("bg-mountain", "范増", colorFanZeng,
+    "「私の言を聞かなんだか、項羽よ。お主は……」",
+    "“You did not heed me, Xiang Yu. You will...“",
+    "亡き妻よ、間もなく行く。お主に会う前に、項羽の最期を見届けられなんだことだけは、心残りだ。だが、それも、もう、いい。私の役目は、終わった。",
+    "My departed wife — I will be there soon. That I shall not have seen Xiang Yu's last is my only regret. But — that too, is now, fine. My part is done."),
+  narr("bg-mountain",
+    "彭城に着く前、范増は息絶えた。享年、推定七十五。陳平の計に敗れた老人が、誰にも看取られず、車中で死んだ――その一報を聞いた項羽は、何も言わなかった。",
+    "He died before reaching Pengcheng. Aged about seventy-five. The old man, defeated by Chen Ping's stratagem, died in a carriage with no one beside him. When the report reached Xiang Yu — he said nothing."),
+  narr("bg-mountain",
+    "ここに、范増の物語は終わる。彼は史記に『亜父』と記される――父に次ぐ者、の意。項羽は、ついぞ彼を、本当の意味で『父』と呼ばなかった。",
+    "Here Fan Zeng's story ends. He is recorded as the second father. Xiang Yu never, in his life, called him father in the way the word truly meant."),
+  endingStep("fanzeng_died_in_grief")
 ]
 
 -- ── Scene lookup ────────────────────────────────────────────────────
@@ -925,19 +1801,34 @@ def sceneOf(id) :=
   | "liubang_white_serpent" => liubangWhiteSerpent
   | "liubang_honest_dead_end" => liubangHonestDeadEnd
   | "liubang_act1_end_bad" => liubangAct1EndBad
+  | "liubang_act2" => liubangAct2
+  | "liubang_hongmen_died" => liubangHongmenDied
+  | "liubang_withered_in_hanzhong" => liubangWitheredInHanzhong
+  | "liubang_threeway_stub" => liubangThreewayStub
+  | "liubang_honggou_keeper_end" => liubangHonggouKeeperEnd
   | "xiangyu_act1" => xiangyuAct1
   | "xiangyu_meet_yu" => xiangyuMeetYu
   | "xiangyu_act1_stub_end" => xiangyuAct1StubEnd
+  | "xiangyu_act2" => xiangyuAct2
+  | "xiangyu_julu_failed_end" => xiangyuJuluFailedEnd
+  | "xiangyu_killed_liu_end" => xiangyuKilledLiuEnd
   | "hanxin_act1" => hanxinAct1
   | "hanxin_piao_mu" => hanxinPiaoMu
   | "hanxin_dead_end" => hanxinDeadEnd
+  | "hanxin_act2" => hanxinAct2
+  | "hanxin_xizheng" => hanxinXizheng
   | "zhangliang_act1" => zhanglangAct1
   | "zhangliang_act1_end" => zhanglangAct1End
   | "zhangliang_no_bingfa_end" => zhanglangNoBingfaEnd
+  | "zhangliang_act2" => zhanglangAct2
   | "xiaohe_act1" => xiaoheAct1
   | "xiaohe_act1_end" => xiaoheAct1End
+  | "xiaohe_act2" => xiaoheAct2
+  | "xiaohe_looter_end" => xiaoheLooterEnd
+  | "xiaohe_purity_death_end" => xiaohePurityDeathEnd
   | "fanzeng_act1" => fanzengAct1
   | "fanzeng_act1_end" => fanzengAct1End
+  | "fanzeng_act2" => fanzengAct2
   | _ => []
 
 def startSceneFor(charId) :=
@@ -1250,6 +2141,7 @@ def viewScene(state) :=
 -- Ending screen
 def endingTitle(id) :=
   match id with
+  -- Act 1 endings (legacy / dead-ends)
   | "act1_clear"        => "第一幕 完 ― 劉邦"
   | "honest_anonymous"  => "END: 無名の生"
   | "cold_alone"        => "END: 孤独の冷血漢"
@@ -1261,6 +2153,23 @@ def endingTitle(id) :=
   | "zhangliang_obscure" => "END: 無名の遺民"
   | "xiaohe_act1_clear" => "第一幕 完 ― 蕭何"
   | "fanzeng_act1_clear" => "第一幕 完 ― 范増"
+  -- Act 2 main endings
+  | "liubang_act2_clear" => "第二幕 完 ― 劉邦 (垓下前夜)"
+  | "xiangyu_act2_clear" => "第二幕 完 ― 項羽 (鴻溝の和約)"
+  | "hanxin_act2_clear" => "第二幕 完 ― 韓信 (垓下へ向かう)"
+  | "zhangliang_act2_clear" => "第二幕 完 ― 張良 (十面埋伏)"
+  | "xiaohe_act2_clear" => "第二幕 完 ― 蕭何 (共犯者として)"
+  | "fanzeng_died_in_grief" => "END ― 范増、憤死す (享年 約七十五)"
+  -- Act 2 dead-ends / divergences
+  | "liubang_died_hongmen" => "END: 鴻門に死す"
+  | "liubang_withered" => "END: 漢中に枯る"
+  | "liubang_threeway" => "END: 三国鼎立の影"
+  | "liubang_honggou_kept" => "END: 誠実の代償"
+  | "xiangyu_julu_failed" => "END: 鉅鹿に敗る"
+  | "xiangyu_killed_liu" => "END: 西楚帝国 (歴史改変)"
+  | "hanxin_xizheng_legend" => "★ 隠し END: 韓信西征 ―― 東来之軍神"
+  | "xiaohe_looter" => "END: 史に名を残さず"
+  | "xiaohe_purity_death" => "END: 潔白の死"
   | _ => "END"
 
 def viewEnding(state) :=
