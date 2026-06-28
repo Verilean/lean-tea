@@ -3410,15 +3410,44 @@ def viewSelect(state) :=
   ])
 
 -- Scene (dialogue) render
+-- Map a Japanese sprite name to its photo-realistic asset path.
+-- Returns "" if no portrait exists (e.g. unnamed extras like 「部下」).
+def spriteAssetForName(name) :=
+  if name == "劉邦" then "/assets/char_liubang.png"
+  else if name == "項羽" then "/assets/char_xiangyu.png"
+  else if name == "韓信" then "/assets/char_hanxin.png"
+  else if name == "張良" then "/assets/char_zhangliang.png"
+  else if name == "蕭何" then "/assets/char_xiaohe.png"
+  else if name == "范増" then "/assets/char_fanzeng.png"
+  else if name == "項伯" then "/assets/char_xiangbo.png"
+  else if name == "蒯通" then "/assets/char_kuaitong.png"
+  else if name == "黄石公" then "/assets/char_huangshi.png"
+  else if name == "呂雉" then "/assets/wife_luzhi.png"
+  else if name == "虞姫" then "/assets/wife_yuji.png"
+  else if name == "漂雲" then "/assets/wife_piaoyun.png"
+  else if name == "黒綺" then "/assets/wife_kokuki.png"
+  else if name == "妙容" then "/assets/wife_miaorong.png"
+  else ""
+
 def renderSprite(name, color, dim) :=
   let dimC := if dim then " dim" else "";
-  sjoin([
-    "<div class='sprite", dimC,
-    "' style='background:linear-gradient(180deg,", color,
-    " 0%, ", color, " 60%, rgba(0,0,0,0.85) 100%)'>",
-    hesc(name),
-    "</div>"
-  ])
+  let asset := spriteAssetForName(name);
+  if asset == "" then
+    -- Unknown name (extra / narrator placeholder) → coloured block.
+    sjoin([
+      "<div class='sprite", dimC,
+      "' style='background:linear-gradient(180deg,", color,
+      " 0%, ", color, " 60%, rgba(0,0,0,0.85) 100%)'>",
+      hesc(name),
+      "</div>"
+    ])
+  else
+    sjoin([
+      "<div class='sprite", dimC, "' style='background:none'>",
+      "<img class='sprite-img' src='", asset, "' alt='", hesc(name), "'>",
+      "<div class='sprite-name'>", hesc(name), "</div>",
+      "</div>"
+    ])
 
 def renderSprites(step) := (
   let s1id := step.spriteId;

@@ -194,7 +194,32 @@ def handler (cfg : LeanTea.Llm.Openai.Config)
   | "/api/ask", "POST" => handleAsk cfg req
   | "/favicon.ico", _ =>
     return { status := 204, headers := #[], body := .empty }
-  | _, _ => return Response.notFound
+  | path, _ =>
+    /- Serve PNG / WEBP image assets from examples/ChuHan/assets/.
+       Only allow alnum + underscore + dot + hyphen + slash in the
+       URL path to avoid directory traversal. -/
+    if path.startsWith "/assets/" then
+      let rel := (path.drop "/assets/".length).toString
+      let bad := rel.contains '.' && (rel.splitOn "..").length > 1
+      if bad || rel.contains '/' then return Response.notFound
+      else
+        let full := "examples/ChuHan/assets/" ++ rel
+        if ← System.FilePath.pathExists full then
+          let bytes ← IO.FS.readBinFile full
+          let mime :=
+            if rel.endsWith ".png"  then "image/png"
+            else if rel.endsWith ".jpg" || rel.endsWith ".jpeg" then "image/jpeg"
+            else if rel.endsWith ".webp" then "image/webp"
+            else "application/octet-stream"
+          return {
+            status := 200,
+            headers := #[("content-type", mime), ("cache-control", "max-age=3600")],
+            body := bytes
+          }
+        else
+          return Response.notFound
+    else
+      return Response.notFound
 
 /-! ## CLI -/
 

@@ -90,6 +90,19 @@
       transition: all 500ms;
     }
     .sprite.dim { opacity: 0.55; transform: translateY(8px); }
+    .sprite-img {
+      width: 100%; height: 100%; object-fit: cover; object-position: top;
+      border-radius: 10px 10px 0 0;
+      mask-image: linear-gradient(180deg, #000 60%, transparent 100%);
+      -webkit-mask-image: linear-gradient(180deg, #000 60%, transparent 100%);
+    }
+    .sprite-name {
+      position: absolute; bottom: 18px; left: 0; right: 0;
+      text-align: center; color: #e7e2d1; letter-spacing: 4px;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.9);
+      pointer-events: none;
+    }
+    .sprite { position: relative; }
     .dialogue-box {
       position: absolute; bottom: 20px; left: 20px; right: 20px;
       background: rgba(10,10,10,0.88); border: 1px solid #3a2a1a;
@@ -186,28 +199,30 @@
       padding: 8px 24px; cursor: pointer; }
 
     /* ── Background palette (placeholder before real art) ── */
-    .bg-pei      { background: linear-gradient(180deg, #4a3a2a 0%, #1a1410 70%, #0a0805 100%); }
-    .bg-banquet  { background: linear-gradient(180deg, #6a3a2a 0%, #2a1410 70%, #0a0505 100%); }
-    .bg-house    { background: linear-gradient(180deg, #3a2a1a 0%, #1a1208 70%, #0a0505 100%); }
-    .bg-mountain { background: linear-gradient(180deg, #1a3a4a 0%, #0a2030 70%, #050a14 100%); }
-    .bg-camp     { background: linear-gradient(180deg, #3a3a1a 0%, #1a1808 70%, #0a0a05 100%); }
-    .bg-court    { background: linear-gradient(180deg, #4a1a4a 0%, #2a0a2a 70%, #0a0a14 100%); }
-    .bg-battlefield { background: linear-gradient(180deg, #4a1a1a 0%, #2a0a0a 70%, #0a0505 100%); }
-    .bg-river    { background: linear-gradient(180deg, #1a2a4a 0%, #0a1830 70%, #05050a 100%); }
-    .bg-snow     { background: linear-gradient(180deg, #c8c8d8 0%, #6a6a8a 70%, #2a2a3a 100%); }
-    .bg-palace   { background: linear-gradient(180deg, #7a6a2a 0%, #2a2010 70%, #0a0805 100%); }
-    .bg-jielo    { background: linear-gradient(180deg, #8a3a1a 0%, #4a1a0a 50%, #2a0a05 100%);
-                   animation: ember 3s ease-in-out infinite alternate; }
+    /* Background scenes — photorealistic images via FLUX schnell. */
+    [class*="bg-"] { background-size: cover; background-position: center; }
+    .bg-pei        { background-image: url(/assets/bg_pei.png); }
+    .bg-banquet    { background-image: url(/assets/bg_banquet.png); }
+    .bg-house      { background-image: url(/assets/bg_house.png); }
+    .bg-mountain   { background-image: url(/assets/bg_mountain.png); }
+    .bg-camp       { background-image: url(/assets/bg_camp.png); }
+    .bg-court      { background-image: url(/assets/bg_court.png); }
+    .bg-battlefield{ background-image: url(/assets/bg_battlefield.png); }
+    .bg-river      { background-image: url(/assets/bg_river.png); }
+    .bg-snow       { background-image: url(/assets/bg_snow.png); }
+    .bg-palace     { background-image: url(/assets/bg_palace.png); }
+    .bg-jielo      { background-image: url(/assets/bg_jielo.png);
+                     animation: ember 3s ease-in-out infinite alternate; }
     @keyframes ember { from { filter: hue-rotate(0); } to { filter: hue-rotate(-15deg); } }
-    .bg-yingyang { background: linear-gradient(180deg, #4a3a3a 0%, #2a1a1a 60%, #0a0505 100%); }
-    .bg-pavilion { background: linear-gradient(180deg, #2a4a3a 0%, #102818 70%, #050a08 100%); }
-    .bg-tent     { background: linear-gradient(180deg, #4a3a2a 0%, #2a1a0a 70%, #0a0505 100%); }
-    .bg-altar    { background: linear-gradient(180deg, #1a4a6a 0%, #0a2030 60%, #050a14 100%); }
-    .bg-burning  { background: linear-gradient(180deg, #c8682a 0%, #6a1a0a 50%, #1a0505 100%);
-                   animation: ember 1.8s ease-in-out infinite alternate; }
-    .bg-pengcheng { background: linear-gradient(180deg, #8a4a2a 0%, #4a1a0a 70%, #0a0505 100%); }
-    .bg-gorge    { background: linear-gradient(180deg, #4a4a4a 0%, #2a2a2a 70%, #0a0a0a 100%); }
-    .bg-night    { background: linear-gradient(180deg, #1a1a3a 0%, #0a0a1a 80%, #050508 100%); }
+    .bg-yingyang   { background-image: url(/assets/bg_yingyang.png); }
+    .bg-pavilion   { background-image: url(/assets/bg_pavilion.png); }
+    .bg-tent       { background-image: url(/assets/bg_tent.png); }
+    .bg-altar      { background-image: url(/assets/bg_altar.png); }
+    .bg-burning    { background-image: url(/assets/bg_burning.png);
+                     animation: ember 1.8s ease-in-out infinite alternate; }
+    .bg-pengcheng  { background-image: url(/assets/bg_pengcheng.png); }
+    .bg-gorge      { background-image: url(/assets/bg_gorge.png); }
+    .bg-night      { background-image: url(/assets/bg_night.png); }
   /* ── Mini-game widgets ── */
   .mini-card {
     position: absolute; left: 50%; top: 56px; transform: translateX(-50%);
