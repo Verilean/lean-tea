@@ -160,13 +160,40 @@ private def writeStatus (s : String) : IO Unit := do
   stdout.putStr restoreCursor
   stdout.flush
 
+/-- Synchronous y/n/a/d prompt on the TUI's input stream. We
+    repaint the bottom of the screen with the question, then
+    `getLine` from stdin (cooked mode — the user just types one
+    letter + Enter). -/
+private def askDecision (name : String) (args : Json) : IO UserDecision := do
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  let preview := truncate args.compress 80
+  let mut decided : Option UserDecision := none
+  while decided.isNone do
+    stdout.putStr saveCursor
+    stdout.putStr "\n"
+    stdout.putStr clearToEnd
+    stdout.putStrLn (yellow s!"⚠ approve `{name}({preview})`?")
+    stdout.putStr (bold "  [y allow once / n deny once / a always allow / d always deny] > ")
+    stdout.putStr restoreCursor
+    stdout.flush
+    let line ← stdin.getLine
+    match line.trimAscii.toString.toLower with
+    | "y" => decided := some .allowOnce
+    | "n" => decided := some .denyOnce
+    | "a" => decided := some .allowAlways
+    | "d" => decided := some .denyAlways
+    | _   => pure ()
+  return decided.get!
+
 private def tuiHooks : ProgressHooks := {
   onLlmStart   := fun n   => writeStatus s!"⏳ round {n + 1} — thinking…",
   onLlmEnd     := fun _   => writeStatus "",
   onToolCall   := fun n a => writeStatus s!"→ {n}({truncate a.compress 80})",
   onToolResult := fun _ r =>
     let oneLine := r.replace "\n" " "
-    writeStatus s!"← {truncate oneLine 80}"
+    writeStatus s!"← {truncate oneLine 80}",
+  onAsk := askDecision
 }
 
 /-! ## CLI args -/
@@ -203,12 +230,14 @@ def main (rawArgs : List String) : IO Unit := do
   let nServers := o.servers.size
   let nTools := o.openAiTools.size
   let storeDir ← (·.getD (← LeanTea.Llm.ChatStore.defaultDir)) <$> IO.getEnv "LLM_CHAT_STORE"
+  let policy ← LeanTea.Llm.Policy.LiveRef.fromDisk storeDir
+  let policyCfg : PolicyConfig := { policy := some policy }
   let stdin ← IO.getStdin
   let mut history : Array ChatMsg := #[]
   let mut activeId : String := ""
   let mut pendingImages : Array String := #[]
   let mut status := dim "commands: /attach  /clear-attach  /clear  /sessions  \
-/save [name]  /load <id>  /new  /quit"
+/save  /load  /new  /policy  /policy-rm <n>  /quit"
   repaint o.model nServers nTools history status
   let mut loop := true
   while loop do
@@ -269,6 +298,19 @@ def main (rawArgs : List String) : IO Unit := do
           activeId := s.id
           status := dim s!"(loaded {s.id} `{s.name}`)"
           repaint o.model nServers nTools history status
+      else if user == "/policy" then
+        let rules ← policy.get
+        let lines := rules.toArray.zipIdx.toList.map fun (r, i) =>
+          s!"  [{i}] {r.action}  {r.pattern}"
+        let joined := if lines.isEmpty then "(no policy rules)"
+                      else String.intercalate "\n" lines
+        status := dim joined
+        repaint o.model nServers nTools history status
+      else if user.startsWith "/policy-rm " then
+        let n := (user.drop "/policy-rm ".length).trimAscii.toString.toNat?.getD 0
+        policy.deleteAt n
+        status := dim s!"(removed policy rule {n})"
+        repaint o.model nServers nTools history status
       else if user.startsWith "/attach " then
         let path := (user.drop "/attach ".length).trimAscii.toString
         try
@@ -282,7 +324,7 @@ def main (rawArgs : List String) : IO Unit := do
           repaint o.model nServers nTools history status
       else
         try
-          let newMsgs ← o.runTurnFull history user pendingImages tuiHooks
+          let newMsgs ← o.runTurnFull history user pendingImages tuiHooks policyCfg
           history := history ++ newMsgs
           pendingImages := #[]
           /- Auto-save the session each turn. -/

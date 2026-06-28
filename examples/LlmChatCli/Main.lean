@@ -31,6 +31,27 @@ private def truncate (s : String) (n : Nat) : String :=
   if s.length ≤ n then s
   else (s.take n).toString ++ "…"
 
+/-- Interactive prompt: ask y/n/a/d for a tool call. Loops until a
+    valid key is given. Reads from stdin. -/
+private def askDecision (name : String) (args : Json) : IO UserDecision := do
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  let argsPreview := truncate args.compress 200
+  stdout.putStrLn (cYellow s!"  ⚠ tool call needs approval: {name}({argsPreview})")
+  let mut decided : Option UserDecision := none
+  while decided.isNone do
+    stdout.putStr (cBold "  [y=allow once / n=deny once / a=always allow / d=always deny] > ")
+    stdout.flush
+    let line ← stdin.getLine
+    let key := line.trimAscii.toString.toLower
+    match key with
+    | "y" => decided := some .allowOnce
+    | "n" => decided := some .denyOnce
+    | "a" => decided := some .allowAlways
+    | "d" => decided := some .denyAlways
+    | _   => stdout.putStrLn (cRed "    (please type one of: y / n / a / d)")
+  return decided.get!
+
 private def cliHooks : ProgressHooks := {
   onLlmStart := fun n => IO.eprintln (cGrey s!"  ⏳ round {n + 1} — asking LLM"),
   onLlmEnd   := fun _ => pure (),
@@ -38,7 +59,8 @@ private def cliHooks : ProgressHooks := {
     IO.eprintln (cYellow s!"  → {name}({truncate args.compress 200})"),
   onToolResult := fun _ result =>
     let oneLine := result.replace "\n" " "
-    IO.eprintln (cGrey s!"  ← {truncate oneLine 200}")
+    IO.eprintln (cGrey s!"  ← {truncate oneLine 200}"),
+  onAsk := askDecision
 }
 
 /-- Guess the image mime type from a file extension. -/
@@ -76,9 +98,11 @@ def main (rawArgs : List String) : IO Unit := do
   let o ← fromConfig fc
   IO.eprintln (cCyan s!"loaded {o.openAiTools.size} tools across {o.servers.size} server(s)")
   let storeDir ← (·.getD (← LeanTea.Llm.ChatStore.defaultDir)) <$> IO.getEnv "LLM_CHAT_STORE"
+  let policy ← LeanTea.Llm.Policy.LiveRef.fromDisk storeDir
+  let policyCfg : PolicyConfig := { policy := some policy }
   IO.eprintln (cCyan s!"store={storeDir}")
   IO.eprintln (cGrey "commands: /attach <path>  /clear-attach  /history  /clear  \
-/sessions  /save [name]  /load <id>  /new  /quit")
+/sessions  /save [name]  /load <id>  /new  /policy  /policy-rm <n>  /quit")
   let stdin ← IO.getStdin
   let stdout ← IO.getStdout
   let mut history : Array ChatMsg := #[]
@@ -145,6 +169,17 @@ def main (rawArgs : List String) : IO Unit := do
           history := s.messages
           activeId := s.id
           IO.eprintln (cGrey s!"(loaded {s.id} `{s.name}` — {s.messages.size} msgs)")
+      else if user == "/policy" then
+        let rules ← policy.get
+        if rules.isEmpty then
+          IO.eprintln (cGrey "(no policy rules — every tool call is asked)")
+        else
+          for (r, i) in rules.toArray.zipIdx do
+            IO.eprintln (cGrey s!"  [{i}] {r.action}  {r.pattern}")
+      else if user.startsWith "/policy-rm " then
+        let n := (user.drop "/policy-rm ".length).trimAscii.toString.toNat?.getD 0
+        policy.deleteAt n
+        IO.eprintln (cGrey s!"(removed rule at index {n})")
       else if user == "/history" then
         IO.eprintln (cGrey s!"history: {history.size} message(s)")
         for m in history do
@@ -163,7 +198,7 @@ def main (rawArgs : List String) : IO Unit := do
           IO.eprintln (cRed s!"attach failed: {e}")
       else
         try
-          let newMsgs ← o.runTurnFull history user pendingImages cliHooks
+          let newMsgs ← o.runTurnFull history user pendingImages cliHooks policyCfg
           history := history ++ newMsgs
           pendingImages := #[]
           pendingPaths  := #[]

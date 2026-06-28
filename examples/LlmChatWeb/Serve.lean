@@ -167,6 +167,58 @@ private def pageHtml : String := "<!DOCTYPE html>
   }
   #send:disabled { background: #374151; cursor: progress; }
   body.dragging #main { outline: 3px dashed #2563eb; outline-offset: -16px; }
+  /* Policy approval modal */
+  #modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: none; align-items: center; justify-content: center; z-index: 100;
+  }
+  #modal-backdrop.show { display: flex; }
+  #modal {
+    background: #111827; color: #e5e7eb;
+    border: 1px solid #374151; border-radius: 10px;
+    padding: 18px 20px; min-width: 380px; max-width: 600px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  }
+  #modal h3 {
+    margin: 0 0 10px; font-size: 15px; color: #fbbf24;
+    display: flex; align-items: center; gap: 8px;
+  }
+  #modal .toolname { color: #93c5fd; font-family: ui-monospace, Menlo, monospace; }
+  #modal pre {
+    background: #0b0f17; border: 1px solid #1f2937; border-radius: 6px;
+    padding: 8px 10px; margin: 6px 0 14px;
+    font: 12px ui-monospace, Menlo, monospace; color: #cbd5e1;
+    overflow: auto; max-height: 200px;
+  }
+  #modal .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  #modal .actions button {
+    border: 0; border-radius: 6px; padding: 7px 12px;
+    font: inherit; font-weight: 600; cursor: pointer;
+  }
+  #modal .actions .allow      { background: #16a34a; color: white; }
+  #modal .actions .deny       { background: #dc2626; color: white; }
+  #modal .actions .allowAlways { background: #15803d; color: white; }
+  #modal .actions .denyAlways  { background: #991b1b; color: white; }
+  /* Policy panel pulled from sidebar */
+  #policyPanel {
+    border-top: 1px solid #1f2937; padding: 8px;
+    font-size: 12px; color: #cbd5e1; max-height: 200px; overflow-y: auto;
+  }
+  #policyPanel h3 {
+    margin: 0 0 6px; font-size: 11px; color: #93c5fd;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .rule { display: flex; align-items: center; gap: 6px; padding: 3px 4px; }
+  .rule .act { font-weight: 600; min-width: 40px; }
+  .rule .act.allow { color: #4ade80; }
+  .rule .act.deny  { color: #f87171; }
+  .rule .pat { flex: 1; font-family: ui-monospace, Menlo, monospace; overflow: hidden;
+               text-overflow: ellipsis; white-space: nowrap; }
+  .rule .x {
+    background: none; border: 0; color: #6b7280; cursor: pointer;
+    padding: 0 4px;
+  }
+  .rule .x:hover { color: #ef4444; }
 </style>
 </head>
 <body>
@@ -176,7 +228,24 @@ private def pageHtml : String := "<!DOCTYPE html>
     <button id=\"newchat\" title=\"new chat\">+ new</button>
   </header>
   <div id=\"sessions\"></div>
+  <div id=\"policyPanel\">
+    <h3>policy</h3>
+    <div id=\"policyRules\"></div>
+  </div>
 </aside>
+<div id=\"modal-backdrop\">
+  <div id=\"modal\">
+    <h3>⚠ approve tool call?</h3>
+    <div>tool: <span class=\"toolname\" id=\"modalToolName\"></span></div>
+    <pre id=\"modalArgs\"></pre>
+    <div class=\"actions\">
+      <button class=\"deny\"        data-act=\"deny-once\">deny once</button>
+      <button class=\"denyAlways\"  data-act=\"deny-always\">deny always</button>
+      <button class=\"allowAlways\" data-act=\"allow-always\">allow always</button>
+      <button class=\"allow\"       data-act=\"allow-once\">allow once</button>
+    </div>
+  </div>
+</div>
 <section id=\"main\">
   <div id=\"topbar\">
     <h1>llm-chat</h1>
@@ -430,8 +499,103 @@ document.addEventListener('drop', e => {
   if (e.dataTransfer && e.dataTransfer.files) attachFiles(e.dataTransfer.files);
 });
 
+// --- policy modal + poller ---
+const modalBackdrop = document.getElementById('modal-backdrop');
+const modalToolName = document.getElementById('modalToolName');
+const modalArgs = document.getElementById('modalArgs');
+const policyRules = document.getElementById('policyRules');
+
+let currentPendingId = null;
+let pollHandle = null;
+
+function showModal(pc) {
+  currentPendingId = pc.id;
+  modalToolName.textContent = pc.toolName;
+  modalArgs.textContent = JSON.stringify(pc.args, null, 2);
+  modalBackdrop.classList.add('show');
+}
+
+function hideModal() {
+  currentPendingId = null;
+  modalBackdrop.classList.remove('show');
+}
+
+async function pollPending() {
+  try {
+    const res = await fetch('/api/pending');
+    const j = await res.json();
+    if (j.pending && j.pending.id !== currentPendingId) {
+      showModal(j.pending);
+    } else if (!j.pending && currentPendingId) {
+      hideModal();
+    }
+  } catch (e) { /* network blip — try again next tick */ }
+}
+
+function startPolling() {
+  if (pollHandle) return;
+  pollHandle = setInterval(pollPending, 400);
+}
+function stopPolling() {
+  if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+  // one last poll to clear any stale modal
+  setTimeout(pollPending, 0);
+}
+
+document.querySelectorAll('#modal .actions button').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    if (!currentPendingId) return;
+    const id = currentPendingId;
+    hideModal();
+    await fetch('/api/decision', {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({id, action: btn.dataset.act})
+    });
+    loadPolicy();
+  });
+});
+
+async function loadPolicy() {
+  const res = await fetch('/api/policy');
+  const j = await res.json();
+  policyRules.innerHTML = '';
+  if (!j.rules.length) {
+    policyRules.innerHTML = '<div style=\"color:#6b7280\">(every tool call is asked)</div>';
+    return;
+  }
+  for (const r of j.rules) {
+    const div = document.createElement('div');
+    div.className = 'rule';
+    div.innerHTML = `<span class=\"act ${r.action}\">${esc(r.action)}</span>` +
+                    `<span class=\"pat\" title=\"${esc(r.pattern)}\">${esc(r.pattern)}</span>` +
+                    `<button class=\"x\" title=\"remove\">×</button>`;
+    div.querySelector('.x').onclick = async () => {
+      await fetch('/api/policy/' + r.idx, { method: 'DELETE' });
+      loadPolicy();
+    };
+    policyRules.appendChild(div);
+  }
+}
+
+// wrap sendMessage to poll while waiting on the response
+const origSend = sendMessage;
+sendMessage = async function() {
+  startPolling();
+  try { await origSend(); } finally { stopPolling(); loadPolicy(); }
+};
+// re-bind because we replaced the function ref
+send.onclick = sendMessage;
+input.onkeydown = e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+};
+
 loadState();
 loadSessions();
+loadPolicy();
 input.focus();
 </script>
 </body>
@@ -440,12 +604,27 @@ input.focus();
 
 /-! ## Server state -/
 
+/-- One pending tool call awaiting user approval. `decision` is set
+    by `POST /api/decision` and the orchestrator's `onAsk` hook
+    polls it until it flips from `none` to a real decision. -/
+private structure PendingCall where
+  id       : String
+  toolName : String
+  args     : Json
+  decision : IO.Ref (Option UserDecision)
+
 private structure Ctx where
-  orch    : Orchestrator
+  orch     : Orchestrator
   storeDir : String
   /-- In-memory cache for the active session — avoids re-reading
       the JSON file on every send. -/
-  cache   : IO.Ref (Std.HashMap String LeanTea.Llm.ChatStore.Session)
+  cache    : IO.Ref (Std.HashMap String LeanTea.Llm.ChatStore.Session)
+  /-- Live policy ref (shared with /api/policy endpoints). -/
+  policy   : LeanTea.Llm.Policy.LiveRef
+  /-- The one (or zero) pending tool-call decision the browser
+      is being asked about. We only ever have one at a time —
+      the orchestrator's onAsk is synchronous per call. -/
+  pending  : IO.Ref (Option PendingCall)
 
 private def Ctx.loadSession (ctx : Ctx) (id : String) : IO (Option LeanTea.Llm.ChatStore.Session) := do
   let m ← ctx.cache.get
@@ -462,6 +641,26 @@ private def Ctx.saveSession (ctx : Ctx) (s : LeanTea.Llm.ChatStore.Session)
   let m ← ctx.cache.get
   ctx.cache.set (m.insert s.id s')
   return s'
+
+/-- The orchestrator hook the policy flow runs when a rule says
+    `ask`. We post the pending call into `ctx.pending` and spin
+    until the browser resolves it via `POST /api/decision`. -/
+private def Ctx.askPolicy (ctx : Ctx) (toolName : String) (args : Json)
+    : IO UserDecision := do
+  let id ← do
+    let r ← IO.rand 0 0xffff_ffff
+    pure s!"pc-{r}"
+  let dref ← IO.mkRef (none : Option UserDecision)
+  let pc : PendingCall := { id, toolName, args, decision := dref }
+  ctx.pending.set (some pc)
+  /- Poll every 100ms. Plenty fast for a human-driven UI; tiny
+     overhead. We never time out — the browser must answer. -/
+  let mut decided : Option UserDecision := none
+  while decided.isNone do
+    IO.sleep 100
+    decided ← dref.get
+  ctx.pending.set none
+  return decided.get!
 
 private def stateJson (ctx : Ctx) : IO Json := do
   return Json.mkObj [
@@ -523,7 +722,9 @@ private def handleSend (ctx : Ctx) (id : String) (req : Request) : IO Response :
       return Response.text 404 body.compress
     | some s =>
       try
-        let newMsgs ← ctx.orch.runTurnFull s.messages msg images
+        let hooks : ProgressHooks := { onAsk := ctx.askPolicy }
+        let policyCfg : PolicyConfig := { policy := some ctx.policy }
+        let newMsgs ← ctx.orch.runTurnFull s.messages msg images hooks policyCfg
         let updated : LeanTea.Llm.ChatStore.Session :=
           { s with messages := s.messages ++ newMsgs }
         let updated' ← ctx.saveSession updated
@@ -532,6 +733,62 @@ private def handleSend (ctx : Ctx) (id : String) (req : Request) : IO Response :
       catch e =>
         let body := Json.mkObj [("error", Json.str s!"{e}")]
         return Response.text 500 body.compress
+
+/-! ## Policy endpoints -/
+
+private def pendingJson (ctx : Ctx) : IO Json := do
+  match ← ctx.pending.get with
+  | none    => return Json.mkObj [("pending", Json.null)]
+  | some pc =>
+    return Json.mkObj [("pending", Json.mkObj [
+      ("id",       Json.str pc.id),
+      ("toolName", Json.str pc.toolName),
+      ("args",     pc.args)
+    ])]
+
+private def handleDecision (ctx : Ctx) (req : Request) : IO Response := do
+  match Json.parse (String.fromUTF8! req.body) with
+  | .error e =>
+    let body := Json.mkObj [("error", Json.str s!"bad json: {e}")]
+    return Response.text 400 body.compress
+  | .ok j =>
+    let id     := (j.getObjVal? "id").toOption.bind (·.getStr?.toOption) |>.getD ""
+    let action := (j.getObjVal? "action").toOption.bind (·.getStr?.toOption) |>.getD ""
+    match ← ctx.pending.get with
+    | none =>
+      let body := Json.mkObj [("error", Json.str "no pending call")]
+      return Response.text 409 body.compress
+    | some pc =>
+      if pc.id != id then
+        let body := Json.mkObj [("error", Json.str "pending call id mismatch")]
+        return Response.text 409 body.compress
+      let decision : Option UserDecision := match action with
+        | "allow-once"   => some .allowOnce
+        | "deny-once"    => some .denyOnce
+        | "allow-always" => some .allowAlways
+        | "deny-always"  => some .denyAlways
+        | _              => none
+      match decision with
+      | none =>
+        let body := Json.mkObj [("error", Json.str s!"unknown action: {action}")]
+        return Response.text 400 body.compress
+      | some d =>
+        pc.decision.set (some d)
+        return Response.text 200 "{\"ok\":true}"
+
+private def policyListJson (ctx : Ctx) : IO Json := do
+  let rules ← ctx.policy.get
+  let arr := rules.toArray.zipIdx.map fun (r, i) =>
+    Json.mkObj [
+      ("idx",     Json.num (Int.ofNat i)),
+      ("pattern", Json.str r.pattern),
+      ("action",  Json.str r.action.toString)
+    ]
+  return Json.mkObj [("rules", Json.arr arr)]
+
+private def handlePolicyDelete (ctx : Ctx) (idx : Nat) : IO Response := do
+  ctx.policy.deleteAt idx
+  return Response.text 200 "{\"ok\":true}"
 
 /-! ## Routing
 
@@ -554,6 +811,11 @@ private def matchSessionPath (path : String) : Option (String × Option String) 
       | [id, sub] => some (id, some sub)
       | _ => none
 
+private def matchPolicyDeletePath (path : String) : Option Nat :=
+  let prefix_ := "/api/policy/"
+  if !path.startsWith prefix_ then none
+  else (path.drop prefix_.length).toString.toNat?
+
 private def handler (ctx : Ctx) : Handler := fun req => do
   match req.path, req.method with
   | "/", _ => return Response.html 200 pageHtml
@@ -565,12 +827,22 @@ private def handler (ctx : Ctx) : Handler := fun req => do
     let body := (← sessionsListJson ctx).compress
     return Response.text 200 body
   | "/api/sessions/new", "POST" => handleNewSession ctx
+  | "/api/pending", "GET" =>
+    let body := (← pendingJson ctx).compress
+    return Response.text 200 body
+  | "/api/decision", "POST" => handleDecision ctx req
+  | "/api/policy", "GET" =>
+    let body := (← policyListJson ctx).compress
+    return Response.text 200 body
   | p, m =>
     match matchSessionPath p, m with
     | some (id, none), "GET"     => handleGetSession ctx id
     | some (id, none), "DELETE"  => handleDeleteSession ctx id
     | some (id, some "send"), "POST" => handleSend ctx id req
-    | _, _ => return Response.notFound
+    | _, _ =>
+      match matchPolicyDeletePath p, m with
+      | some idx, "DELETE" => handlePolicyDelete ctx idx
+      | _, _ => return Response.notFound
 
 /-! ## CLI -/
 
@@ -607,8 +879,13 @@ def serveMain (args : List String) : IO Unit := do
   IO.eprintln s!"llm-chat-web: loaded {orch.openAiTools.size} tool(s); \
 storeDir={storeDir}; serving on http://{a.host}:{a.port}/"
   let cache ← IO.mkRef (∅ : Std.HashMap String LeanTea.Llm.ChatStore.Session)
-  let ctx : Ctx := { orch, storeDir, cache }
-  serve a.port a.host (handler ctx)
+  let policy ← LeanTea.Llm.Policy.LiveRef.fromDisk storeDir
+  let pending ← IO.mkRef (none : Option PendingCall)
+  let ctx : Ctx := { orch, storeDir, cache, policy, pending }
+  /- `serveConcurrent` (not `serve`) is required because /api/send
+     blocks on the policy `ask` hook waiting for /api/decision —
+     the sequential server would deadlock. -/
+  serveConcurrent a.port a.host (handler ctx)
 
 end LlmChatWeb
 

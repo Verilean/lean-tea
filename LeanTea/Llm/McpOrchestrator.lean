@@ -1,4 +1,5 @@
 import LeanTea.Llm.Openai
+import LeanTea.Llm.Policy
 import LeanTea.Net.HttpClient
 import Lean.Data.Json
 
@@ -420,6 +421,16 @@ Append the user's new message, then loop until the LLM stops asking
 for tools. Returns the appended messages so the UI can render the
 intermediate tool calls + results, not just the final answer. -/
 
+/-- What the user / policy decided about a specific tool invocation.
+    `allowOnce` / `denyOnce` apply only to this one call;
+    `allowAlways` / `denyAlways` also persist a new rule. -/
+inductive UserDecision where
+  | allowOnce
+  | denyOnce
+  | allowAlways
+  | denyAlways
+  deriving DecidableEq, Repr, Inhabited
+
 /-- Optional callbacks so a UI can stream visible progress (typing
     indicator, tool-call notifications). All optional — pass `{}` to
     suppress. -/
@@ -432,6 +443,18 @@ structure ProgressHooks where
   onToolCall : String → Json → IO Unit := fun _ _ => pure ()
   /-- Called after a tool call returns. `(name, rendered)`. -/
   onToolResult : String → String → IO Unit := fun _ _ => pure ()
+  /-- Called when policy says `ask` — UI prompts the user and returns
+      the decision. The default rejects (`denyOnce`) so a hookless
+      caller can't be exploited by a tool that hasn't been allowed.
+      `(toolName, args)`. -/
+  onAsk : String → Json → IO UserDecision := fun _ _ => pure .denyOnce
+  deriving Inhabited
+
+/-- Bundle of the live policy ref + a hook for asking the user. When
+    `policy` is `none` the orchestrator skips the check (legacy
+    behaviour — same as the old `runTurnFull` signature). -/
+structure PolicyConfig where
+  policy : Option LeanTea.Llm.Policy.LiveRef := none
   deriving Inhabited
 
 /-- Run one user turn. `history` is the existing conversation (without
@@ -450,7 +473,7 @@ structure ProgressHooks where
     UI decide whether to render a red banner or rethrow. -/
 partial def Orchestrator.runTurnFull (o : Orchestrator) (history : Array ChatMsg)
     (userInput : String) (userImages : Array String := #[])
-    (hooks : ProgressHooks := {})
+    (hooks : ProgressHooks := {}) (policy : PolicyConfig := {})
     : IO (Array ChatMsg) := do
   let userMsg : ChatMsg := {
     role := .user, text := userInput, images := userImages
@@ -496,15 +519,45 @@ partial def Orchestrator.runTurnFull (o : Orchestrator) (history : Array ChatMsg
         | .ok j    => j
         | .error _ => Json.mkObj []
       hooks.onToolCall name argsJ
-      let result ←
-        try o.callTool name argsJ
-        catch e => pure <| Json.mkObj [
-          ("isError", Json.bool true),
-          ("content", Json.arr #[Json.mkObj [
-            ("type", Json.str "text"),
-            ("text", Json.str s!"orchestrator: {e}")
-          ]])
-        ]
+      /- Policy gate. If no live policy is configured, we skip this
+         and just dispatch (legacy behaviour). Otherwise: check the
+         rules; on `ask` invoke the UI hook; on `deny` synthesize a
+         tool error rather than throwing so the LLM can recover. -/
+      let decision : LeanTea.Llm.Policy.Decision ←
+        match policy.policy with
+        | none    => pure LeanTea.Llm.Policy.Decision.allow
+        | some lr =>
+          match ← lr.check name with
+          | .allow => pure LeanTea.Llm.Policy.Decision.allow
+          | .deny  => pure LeanTea.Llm.Policy.Decision.deny
+          | .ask   =>
+            match ← hooks.onAsk name argsJ with
+            | .allowOnce   => pure LeanTea.Llm.Policy.Decision.allow
+            | .denyOnce    => pure LeanTea.Llm.Policy.Decision.deny
+            | .allowAlways =>
+              lr.append { pattern := name, action := LeanTea.Llm.Policy.Action.allow }
+              pure LeanTea.Llm.Policy.Decision.allow
+            | .denyAlways  =>
+              lr.append { pattern := name, action := LeanTea.Llm.Policy.Action.deny }
+              pure LeanTea.Llm.Policy.Decision.deny
+      let result ← match decision with
+        | LeanTea.Llm.Policy.Decision.deny =>
+          pure <| Json.mkObj [
+            ("isError", Json.bool true),
+            ("content", Json.arr #[Json.mkObj [
+              ("type", Json.str "text"),
+              ("text", Json.str s!"policy: tool `{name}` was denied by the user")
+            ]])
+          ]
+        | _ =>
+          try o.callTool name argsJ
+          catch e => pure <| Json.mkObj [
+            ("isError", Json.bool true),
+            ("content", Json.arr #[Json.mkObj [
+              ("type", Json.str "text"),
+              ("text", Json.str s!"orchestrator: {e}")
+            ]])
+          ]
       let rendered := renderToolResult result
       let truncated :=
         if rendered.length > 4000 then
