@@ -1449,7 +1449,7 @@ def liubangAct2 := [
   narr("bg-night",
     "鴻溝を越えた漢軍は楚を追撃。同時に韓信・彭越・黥布の軍を呼び寄せる。垓下――最後の決戦の地が、霧の中に近づいてくる。",
     "The Han army crosses Honggou in pursuit. Han Xin, Peng Yue and Ying Bu are summoned. Gaixia — the field of the final reckoning — appears through the mist."),
-  endingStep("liubang_act2_clear")
+  goScene("liubang_act3")
 ]
 
 def liubangHongmenDied := [
@@ -1643,7 +1643,7 @@ def xiangyuAct2 := [
     "“Lü Zhi. You were strong. In my camp, never once did you weep. Tell Liu Bang — I am a man who keeps his word.“",
     "范増よ、お主の言が正しかったのか。だが、もう遅い。お主は陣中で亡くなったと聞いた。あれを聞いた時、俺の中で何かが、終わった気がした。",
     "Fan Zeng. Were you right? Too late now. They say you died in camp. When I heard — something in me, ended."),
-  endingStep("xiangyu_act2_clear")
+  goScene("xiangyu_act3")
 ]
 
 def xiangyuJuluFailedEnd := [
@@ -2173,6 +2173,211 @@ def fanzengAct2Continue := [
   endingStep("fanzeng_died_in_grief")
 ]
 
+-- ── ACT 3 — 終局 (BCE 202-195) ─────────────────────────────────────
+-- Xiang Yu: 垓下 → 四面楚歌 → 虞美人剣舞 → 烏江自刎 (BCE 202)
+-- Liu Bang: 垓下 → 帝位 → 韓信粛清 → 黥布反乱 → 流矢 → 大風歌 → 崩御 (BCE 195)
+
+-- ── Xiang Yu Act 3 ─────────────────────────────────────────────────
+def xiangyuAct3 := [
+  narr("bg-night",
+    "BCE 202、十二月。漢軍は鴻溝の和約を破って追撃。韓信・彭越・黥布の軍が四方から楚軍を包囲した。場所は垓下、淮河の北。項羽の十万、対する漢軍は六十万。",
+    "BCE 202, twelfth month. The Han army broke the Honggou Treaty and pursued. Han Xin, Peng Yue and Ying Bu encircled Chu from every quarter. The place: Gaixia, north of the Huai River. Xiang Yu's one hundred thousand against Han's six hundred thousand."),
+  think("bg-night", "項羽", colorXiang,
+    "「囲まれたか。だが俺はまだ十万を擁する。明朝、突破する」",
+    "“Surrounded. But I still have a hundred thousand. We break out at dawn.“",
+    "兵糧は尽きかけている。だが、退けば楚は終わる。",
+    "Provisions almost gone. But to retreat is to end Chu."),
+  -- 四面楚歌
+  narr("bg-night",
+    "夜半。漢の陣営から、楚の歌が聞こえてきた。一人、二人、十人、百人――やがて四方から、楚の故郷の歌が、楚軍の耳を打った。「漢已得楚乎? 何楚人之多也」(漢はもう楚を取ったのか? 何と楚人の多きことよ)。",
+    "Midnight. From the Han lines came a Chu song. One, two, ten, a hundred — soon from every direction, the songs of Chu's homeland struck the Chu army's ears. “Has Han already taken Chu? How many of our own are over there!“"),
+  think("bg-night", "項羽", colorXiang,
+    "「(陣中、酒杯を傾けながら) 漢、すでに楚を得たるか。何ぞ楚人の多きや」",
+    "“(In the camp, raising a cup) Has Han already taken Chu? How many of our own.“",
+    "兵が逃げている。歌に呑まれて、夜の闇に消えてゆく。",
+    "Men are deserting. Swallowed by the song, vanishing into the night."),
+  narr("bg-tent",
+    "項羽は陣中で酒を呷り、虞姫を呼んだ。八年の縁である。",
+    "Xiang Yu drank in the tent and called for Yu Ji. Eight years' bond."),
+  duo("bg-tent", "項羽", colorXiang, "虞姫", colorYu, 1,
+    "「力は山を抜き、気は世を蓋う\n  時利あらず、騅(すい) 逝かず\n  騅 逝かざる、奈何(いかん) すべき\n  虞や、虞や、若(なんじ) を奈何せん」",
+    "“My strength uproots mountains, my spirit covers the age\n  But the times are against me, my horse Zhui will not run\n  Zhui will not run, what is there to do\n  Yu, oh Yu, what is to become of you“"),
+  duo("bg-tent", "虞姫", colorYu, "項羽", colorXiang, 2,
+    "「漢兵、已(すで) に地を略す\n  四方 楚歌の声\n  大王 意気尽き\n  賤妾(せんしょう) 何ぞ生に聊(やす) らわん」",
+    "“The Han have already taken the land\n  From every side, Chu songs\n  My lord's spirit is broken\n  How can your handmaid still wish to live?“"),
+  narr("bg-tent",
+    "虞姫、剣を抜いて舞った。項羽の盃の前で、ひとさし。歌い終わって、剣を自らの首に当てた。「お先に参ります」と笑った。項羽は、止めなかった。",
+    "Yu Ji drew a sword and danced. One verse before Xiang Yu's cup. As the song ended, she set the blade to her own throat. “I go first,“ she smiled. Xiang Yu did not stop her."),
+  think("bg-tent", "項羽", colorXiang,
+    "「(虞姫の屍を抱きながら) 虞よ、お主は強かった。俺より、強かった」",
+    "“(Holding her body) Yu, you were strong. Stronger than I.“",
+    "もはや、俺を縛るものは無い。",
+    "Now nothing remains to bind me."),
+  -- 突破
+  narr("bg-night",
+    "夜明け前、項羽は精騎八百を率いて南へ突破した。漢軍は気付いた時、すでに数十里追えなかった。淮河を渡る時、楚軍は百騎。陰陵で道を失い、農夫に道を問うた。農夫は左を指した――それは沼であった。",
+    "Before dawn, Xiang Yu broke south with eight hundred picked riders. By the time Han noticed, the chase was already dozens of li late. Crossing the Huai, the Chu force was a hundred riders. At Yinling they lost their way; a farmer pointed left — into a marsh."),
+  narr("bg-battlefield",
+    "東城に至るころ、二十八騎のみ。漢の追撃軍は数千。項羽は二十八騎を四隊に分け、自ら漢の一隊に突入し、将一人を斬って戻ってきた。「お前たち、覇王の戦いを、見たか?」",
+    "By Dongcheng, twenty-eight riders remained. Han's pursuit numbered thousands. Xiang Yu split his men into four squads, charged one Han unit himself, slew a general and returned. “Did you see the Overlord's fight?“"),
+  -- 烏江
+  narr("bg-river",
+    "烏江の渡し。亭長が舟を出して待っていた。",
+    "Wujiang ferry. The headman waits with a boat."),
+  duo("bg-river", "亭長", "#5a4a3a", "項羽", colorXiang, 2,
+    "「江東は小なれど、地は方千里、衆は数十万人にして、亦(また) 王たるに足る。願わくは大王、急ぎ渡られよ。我にこの舟あり、漢軍至るとも渡ること能わざるべし」",
+    "“Jiangdong is small, but a thousand li square, with hundreds of thousands of people — enough to make you king again. My lord, cross now. I have this boat; the Han cannot follow.“"),
+  think("bg-river", "項羽", colorXiang,
+    "「天の我を亡ぼすなり。我、何ぞ渡ることを為さん」",
+    "“It is Heaven that destroys me. Why should I cross?“",
+    "江東の父老、何の顔(かんばせ) を以て見ん。籍と江東の子弟八千人、江を渡って西へ。今や、一人も還らず。",
+    "How could I face the elders of Jiangdong? I led eight thousand sons of Jiangdong west across this river. Not one returns."),
+  chooseStep("bg-river", [
+    Choice {
+      labelJa: "渡し守の舟に乗って江東へ帰る ―― 隠しEND",
+      labelEn: "Take the boat and return to Jiangdong — hidden END",
+      hintJa: "歴史改変。江東で再起、あるいは虞姫の骨を抱いて隠遁の余生",
+      hintEn: "History diverges. Rebuild in Jiangdong — or retire with Yu Ji's bones",
+      dKarma: -5, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: 0,
+      dBu: 0, dZhi: 2, dMei: -5, dZheng: 0,
+      setFlag: "xiangyu_crossed", gotoScene: "xiangyu_crossed_end"
+    },
+    Choice {
+      labelJa: "舟を断り、馬を渡し守に贈って戦う",
+      labelEn: "Refuse the boat. Gift your horse to the ferryman, then fight",
+      hintJa: "史実。烏江自刎。覇王の最期",
+      hintEn: "As history. Wujiang self-cut. The Overlord's last fight",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 5, dMinXin: 10,
+      dBu: 10, dZhi: 0, dMei: 15, dZheng: 0,
+      setFlag: "xiangyu_refused", gotoScene: "xiangyu_wujiang_death"
+    }
+  ])
+]
+
+def xiangyuWujiangDeath := [
+  narr("bg-river",
+    "項羽は名馬・騅を渡し守に贈り、馬を降りた。残った騎兵も馬を降りた。漢軍が迫る。徒歩で短兵接戦。項羽一人で数百を斬った。身に数十の傷。",
+    "Xiang Yu gave his steed Zhui to the ferryman and dismounted. His remaining riders dismounted too. The Han closed in. On foot, blade to blade. Xiang Yu alone slew hundreds. Dozens of wounds on his body."),
+  narr("bg-river",
+    "漢の騎司馬・呂馬童が、項羽に気付いた。項羽、彼を見て笑った。",
+    "Lü Matong, a Han cavalry officer, recognized Xiang Yu. Xiang Yu looked at him and laughed."),
+  duo("bg-river", "項羽", colorXiang, "呂馬童", "#5a3a3a", 1,
+    "「お主は、旧知の馬童か。漢が俺の首に千金、邑万戸の懸賞を出していると聞いた。お主に、その功を与えよう」",
+    "“Are you my old acquaintance Matong? I hear Han offers a thousand gold and a ten-thousand-household fief for my head. I'll give you the prize.“"),
+  think("bg-river", "項羽", colorXiang,
+    "「(自らの首に剣を当てて) 虞や、すぐ参る」",
+    "“(Setting the blade to his own throat) Yu — I come soon.“",
+    "亡き叔父よ、范増よ、虞よ。籍 (せき)、ここに往く。",
+    "Departed uncle. Fan Zeng. Yu. Ji goes here."),
+  narr("bg-river",
+    "項羽は自らの首を刎ねた。享年三十一。漢軍の五人が屍を奪い合い、それぞれ五分の一を持ち帰って、約束の千金邑万戸を分けた。覇王の体は、五つに分かれて葬られた。",
+    "Xiang Yu cut his own throat. Aged thirty-one. Five Han soldiers fought over the body, each taking a fifth back for the promised reward. The Overlord's flesh was buried in five places."),
+  narr("bg-night",
+    "漢の高祖・劉邦は、項羽の屍を見て涙を流したという。「魯公の礼を以て葬れ」と命じた。物語は、こうして終わる。",
+    "Liu Bang, the Han ancestor, wept on seeing the body, and ordered: “Bury him with the rites of a Duke of Lu.“ Thus the story ends."),
+  endingStep("xiangyu_wujiang")
+]
+
+def xiangyuCrossedEnd := [
+  narr("bg-river",
+    "項羽は舟に乗った。江東に戻り、虞姫の骨を抱いて山中に隠遁した。漢の追討使は、何度も来たが、見つけられなかった。十年、二十年と経って、虞姫の墓の隣には、もう一つの墓が立った。誰もその名を彫らなかった。",
+    "Xiang Yu took the boat. He returned to Jiangdong and withdrew into the mountains with Yu Ji's bones. Han search parties came again and again — never found him. Ten, twenty years passed. Beside Yu Ji's grave, another grave rose. No one carved a name on it."),
+  endingStep("xiangyu_crossed_recluse")
+]
+
+-- ── Liu Bang Act 3 ─────────────────────────────────────────────────
+def colorLuFear := "#3a1a2a"
+
+def liubangAct3 := [
+  narr("bg-battlefield",
+    "BCE 202、二月。垓下の戦いに勝利した劉邦は、定陶において即位し、漢の高祖・皇帝となった。長安に都を定める準備が始まった。", "BCE 202, second month. Victorious at Gaixia, Liu Bang ascended at Dingtao as Emperor Gaozu of Han. Preparations for the new capital at Chang'an began."),
+  think("bg-palace", "劉邦", colorLiu,
+    "「ふん、ついに俺が皇帝か。長かったぜ」",
+    "“So I'm emperor at last. That was a long road.“",
+    "だが、項羽が死んだ今、次の脅威は内側にいる。韓信、彭越、黥布――この三人を、いつ、どう殺すか。",
+    "But with Xiang Yu dead, the next threats are inside. Han Xin. Peng Yue. Ying Bu. When and how to kill them."),
+  -- 韓信 楚王 → 淮陰侯
+  narr("bg-palace",
+    "劉邦は韓信を斉王から楚王に転封した。表向きは故郷の昇進だが、斉の地盤を奪う意味であった。やがて『鍾離眛(しょうりまい)を匿った』として、楚王から淮陰侯に降格。韓信は長安に蟄居の身となった。", "Liu Bang transferred Han Xin from King of Qi to King of Chu — nominally a promotion to his hometown, in fact stripping him of his Qi base. Soon, on the pretext of harboring Zhong Limei, Han Xin was demoted from King of Chu to Marquis of Huai-yin and confined to Chang'an."),
+  -- 黥布の反乱
+  narr("bg-battlefield",
+    "BCE 196。黥布、反乱。劉邦は自ら軍を率いて討伐に出た。決戦の場で、流れ矢が劉邦の胸に当たった。",
+    "BCE 196. Ying Bu revolts. Liu Bang himself leads the campaign. In the decisive battle, a stray arrow strikes him in the chest."),
+  think("bg-battlefield", "劉邦", colorLiu,
+    "「(矢を受けて) ぐっ……たいしたこたぁねえ。皆、気にすんな」",
+    "“(Taking the arrow) Tch... nothing. Don't fret, men.“",
+    "肋が折れた。胸が熱い。これは、長くねえ。",
+    "Ribs are broken. The chest burns. I have little time."),
+  -- 沛に帰る
+  narr("bg-pei",
+    "黥布を破った帰途、劉邦は故郷・沛を通った。父老を集めて宴を催し、十数人の童子に新作の歌を教えた。月夜、自ら筑を弾いて歌った――",
+    "After defeating Ying Bu, on his way back, Liu Bang passed through his hometown of Pei. He gathered the elders, held a feast, taught new lyrics to a dozen boys. By moonlight, striking the zither, he sang —"),
+  say("bg-pei", "劉邦", colorLiu,
+    "「大風 起こりて 雲飛揚す\n  威 海内に加わりて 故郷に帰る\n  安(いずく) んぞ猛士を得て 四方を守らしめん」",
+    "“A great wind rises, the clouds soar\n  My might covers the realm, I return to my home\n  Where shall I find brave men to guard the four quarters?“"),
+  think("bg-pei", "劉邦", colorLiu,
+    "「(歌い終わって、童子たちに合唱させ、自らも立ち上がって舞いつつ涙を流した)」",
+    "“(Finishing the song, having the boys sing it back, rising himself to dance — and weeping)“",
+    "故郷の沛の童子に、俺の歌を歌わせる。これで、俺の名前は、俺が死んでも沛に残る。",
+    "I make the boys of Pei sing my song. Now my name remains in Pei after I'm gone."),
+  -- 韓信粛清(呂雉の手による)
+  narr("bg-court",
+    "長安。劉邦が黥布討伐に出ている隙に、呂后は蕭何と謀り、韓信を長楽宮に呼び寄せた。『陳豨(ちんき)の反乱が鎮圧された、祝賀の宴を』と告げて。", "Chang'an. While Liu Bang was off campaigning against Ying Bu, Empress Lü, with Xiao He's connivance, summoned Han Xin to the Changle Palace — supposedly to celebrate the suppression of Chen Xi's revolt."),
+  duo("bg-court", "蕭何", colorXiao, "韓信", colorHan, 2,
+    "「韓淮陰侯。お主一人だけ、宴に参られぬのはまずかろう。私と一緒に行こう」",
+    "“Marquis Han of Huai-yin. It would not do for you alone to skip the celebration. Come — with me.“"),
+  think("bg-court", "韓信", colorHan,
+    "「……蕭何様、御身が呼ばれるのなら、参りまする」",
+    "“...Xiao He. If you come for me, I will go.“",
+    "成 (な) すも蕭何、敗 (やぶ) るも蕭何。あの月夜に追ってきてくれた人が、今日、俺を罠に連れて行く。それでも俺は、ついてゆく。",
+    "Made by Xiao He. Broken by Xiao He. The man who chased me down on that moonlit night now leads me to a trap. And still I follow."),
+  narr("bg-court",
+    "長楽宮の鐘室。韓信は囲まれた。劉邦は生前、『天蓋なく、地敷きなく、金属の兵器なき場所で、女に殺さしめよ』と言った。鐘室、上には蓋無く、下は布敷き、女たちが竹の槍で韓信を刺した。",
+    "The bell-chamber of Changle Palace. Han Xin was surrounded. Liu Bang had once said: “Let him die in a place without sky above, earth below, or metal weapons — at women's hands.“ The chamber: no roof above, cloth on the floor, women with bamboo spears."),
+  think("bg-court", "韓信", colorHan,
+    "「悔やまる、蒯通の計を用いざりしを」",
+    "“I regret not heeding Kuai Tong's counsel.“",
+    "漂母様、千金は、ついに、届けられませなんだ。",
+    "Old mother of the river. The thousand pieces of gold — never delivered."),
+  narr("bg-court",
+    "韓信、死す。BCE 196。三族(父族・母族・妻族)も誅された。劉邦が黥布討伐から帰った時、呂后が出迎えて報告した。",
+    "Han Xin dies. BCE 196. His three clans were also executed. When Liu Bang returned from the Ying Bu campaign, Empress Lü greeted him with the report."),
+  duo("bg-palace", "劉邦", colorLiu, "呂雉", colorLu, 2,
+    "「……そうか。韓信が死んだか」",
+    "“...I see. So Han Xin is dead.“"),
+  think("bg-palace", "劉邦", colorLiu,
+    "「(顔は無表情だが) ふぅ……ようやくか。ようやく、安心して死ねる」",
+    "“(Face blank) Finally. Now I can die in peace.“",
+    "(同時に) 呂雉、お主の手は、もはや俺と同じくらい血で濡れた。俺が死んだ後、この女が漢を握る。それは止められぬ。",
+    "And at the same time — Lü Zhi, your hands are now as bloody as mine. After me, she takes Han. There is no stopping it."),
+  -- 病重し、医を退ける
+  narr("bg-palace",
+    "胸の傷は癒えず、劉邦は床に臥した。呂后が良医を呼んだ。劉邦は医師に診せた後、こう言った。",
+    "The chest wound would not heal. Liu Bang took to his bed. Empress Lü brought the best physician. After the examination, Liu Bang said —"),
+  duo("bg-palace", "劉邦", colorLiu, "医者", "#5a5a5a", 1,
+    "「我、布衣を以て三尺の剣を提げ、天下を取った。これ天命に非ずや。命は天にあり、扁鵲(へんじゃく) と雖(いえど) も何をか益(えき) せん」",
+    "“I, a commoner with a three-foot sword, took the realm. Is this not Heaven's mandate? My life is in Heaven's hands. Even Bian Que can do nothing.“"),
+  narr("bg-palace",
+    "金五十斤を与えて医師を去らせた。後、呂后が後事を尋ねた。「蕭何の後は誰を相となすや」「曹参が良かろう」「曹参の後は」「王陵が良かろう。だが直すぎる。陳平が補(おぎ) なえばよい。陳平は智あれど独りでは持たぬ。周勃(しゅうぼつ) は重厚、漢を安んずるは必ず勃なり――」", "He gave the physician fifty catties of gold and sent him away. Later, Empress Lü asked about succession. “After Xiao He, who?“ — “Cao Shen.“ — “After Cao Shen?“ — “Wang Ling. Too straight, but Chen Ping balances him. Chen Ping is clever but alone he won't hold. Zhou Bo is steady — the one who will calm Han, surely Zhou Bo —“"),
+  duo("bg-palace", "呂雉", colorLu, "劉邦", colorLiu, 1,
+    "「その後は?」",
+    "“And after that?“"),
+  duo("bg-palace", "劉邦", colorLiu, "呂雉", colorLu, 2,
+    "「(息を整えて) ……お主の知るところに非ず」",
+    "“(Steadying his breath) ...That is beyond your knowing.“"),
+  narr("bg-palace",
+    "BCE 195、四月、甲辰。劉邦、長楽宮に崩ず。享年六十二。位は十二年、皇帝としては七年。「呂太后の世」がここから始まる。",
+    "BCE 195, fourth month, the day jiachen. Liu Bang dies in Changle Palace. Aged sixty-two. He reigned twelve years; seven as Emperor. From here begins “the age of the Empress Dowager Lü.“"),
+  -- 最後の think — 全生涯の総括
+  think("bg-palace", "劉邦", colorLiu,
+    "「(息絶える前、一瞬の意識) ……」",
+    "“(In the last flicker of consciousness)“",
+    "蕭何、樊噲、張良、子房よ。俺は、お主らを利用した。お主らを惚れさせ、お主らを使い、お主らを処分した。それで天下を取った。/呂雉、お主は俺の最大の獲物だった。お主に縛られて、俺は皇帝になった。お主は俺の最後の罰だ。/俺は、人たらしのまま死ぬことが、出来なかった。",
+    "Xiao He. Fan Kuai. Zhang Liang, Zifang. I used you all. I made you love me, I worked you, I disposed of you. With that I took the realm. / Lü Zhi, you were my greatest catch. Bound to you, I became emperor. You are my final punishment. / I could not die as a charmer. I could not."),
+  endingStep("liubang_died_emperor")
+]
 -- ── Scene lookup ────────────────────────────────────────────────────
 def sceneOf(id) :=
   match id with
@@ -2192,6 +2397,7 @@ def sceneOf(id) :=
   | "liubang_withered_in_hanzhong" => liubangWitheredInHanzhong
   | "liubang_threeway_stub" => liubangThreewayStub
   | "liubang_honggou_keeper_end" => liubangHonggouKeeperEnd
+  | "liubang_act3" => liubangAct3
   | "xiangyu_act1" => xiangyuAct1
   | "xiangyu_meet_yu" => xiangyuMeetYu
   | "xiangyu_chat_fanzeng" => xiangyuChatFanzeng
@@ -2199,6 +2405,9 @@ def sceneOf(id) :=
   | "xiangyu_act2" => xiangyuAct2
   | "xiangyu_julu_failed_end" => xiangyuJuluFailedEnd
   | "xiangyu_killed_liu_end" => xiangyuKilledLiuEnd
+  | "xiangyu_act3" => xiangyuAct3
+  | "xiangyu_wujiang_death" => xiangyuWujiangDeath
+  | "xiangyu_crossed_end" => xiangyuCrossedEnd
   | "hanxin_act1" => hanxinAct1
   | "hanxin_piao_mu" => hanxinPiaoMu
   | "hanxin_dead_end" => hanxinDeadEnd
@@ -2937,6 +3146,9 @@ def endingTitle(id) :=
   | "face_read_failed" => "END: 顔相を読み損ねる"
   | "hanxin_beishui_lost" => "END: 背水に敗る"
   | "fanzeng_jade_diverged" => "★ 隠し END: 鴻門に劉邦死す (歴史改変)"
+  | "xiangyu_wujiang" => "TRUE END ― 烏江自刎 (項羽 享年 31)"
+  | "xiangyu_crossed_recluse" => "★ 隠し END: 江東に隠遁す (項羽 + 虞姫の骨)"
+  | "liubang_died_emperor" => "TRUE END ― 漢高祖 崩御 (BCE 195, 享年 62)"
   -- Act 2 main endings
   | "liubang_act2_clear" => "第二幕 完 ― 劉邦 (垓下前夜)"
   | "xiangyu_act2_clear" => "第二幕 完 ― 項羽 (鴻溝の和約)"
