@@ -548,6 +548,27 @@ lean_exe gemini_mcp_serve where
   srcDir := "examples"
   root := `GeminiMcp.Serve
 
+/-! ## LLM chat demos — three UI shells over `LeanTea.Llm.McpOrchestrator`
+
+All three share the same `--config FILE.json` shape and the same
+orchestrator core. Use whichever fits your context:
+
+  * `llm_chat_cli` — stdin/stdout REPL, ANSI colours, scripts cleanly.
+  * `llm_chat_tui` — full-screen styled chat with ANSI repaint.
+  * `llm_chat_web` — single-page browser UI; talk from any device. -/
+
+lean_exe llm_chat_cli where
+  srcDir := "examples"
+  root := `LlmChatCli.Main
+
+lean_exe llm_chat_tui where
+  srcDir := "examples"
+  root := `LlmChatTui.Main
+
+lean_exe llm_chat_web where
+  srcDir := "examples"
+  root := `LlmChatWeb.Serve
+
 /-- MCP server backed by OS-level mouse / screenshot (Quartz on
     macOS today). Same JSON-RPC shape as `browser_mcp_serve` but
     the tools move the real mouse and capture the whole display —
