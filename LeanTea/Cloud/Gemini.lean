@@ -4,29 +4,29 @@ import Lean.Data.Json
 
 /-! # LeanTea.Cloud.Gemini — Google Gemini API client
 
-`v1beta` REST 経由で Gemini API を叩く小さなクライアント。Lean
-には TLS が無いので HTTPS は `curl(1)` shell-out。同パターンで動
-いてる `LeanTea.Auth.OAuth2` を踏襲。
+A tiny client for the `v1beta` REST surface of the Gemini API.
+Lean has no native TLS so HTTPS goes through `curl(1)` — same
+shape as `LeanTea.Auth.OAuth2`.
 
-## モデル一覧 (2026 年現在)
+## Models (as of 2026)
 
-| モデル | input ctx | 用途 |
+| model | input ctx | use-case |
 |---|---|---|
-| `gemini-2.5-pro` (default) | 2,097,152 | 重い code review / アーキレビュー |
-| `gemini-2.5-flash` | 1,048,576 | 高速・コスト重視 |
-| `gemini-2.5-flash-lite` | 1,048,576 | サマリ / 軽量 lint |
+| `gemini-2.5-pro` (default) | 2,097,152 | heavy code / architecture review |
+| `gemini-2.5-flash`         | 1,048,576 | fast + cheap general-purpose |
+| `gemini-2.5-flash-lite`    | 1,048,576 | summarisation / cheap lint |
 
-長いコンテキストを活かしたい場合は `Gemini.reviewMany` —
-`SafePath` 経由でファイルを束ねて読み込み、相対パス付きで一括投
-入する API を使う。
+For long-context use cases, `Gemini.reviewMany` bundles many
+files through `SafePath` into a single Markdown prompt and ships
+the lot in one request.
 
-## 認証
+## Auth
 
-`GEMINI_API_KEY` 環境変数を読む。AI Studio
-(https://aistudio.google.com/apikey) で発行。free tier は
-2.5-flash が 15 req/min / 1500 req/day。
+Reads `GEMINI_API_KEY` from the environment. Issue a key at
+https://aistudio.google.com/apikey. Free tier on `gemini-2.5-flash`
+is 15 req/min / 1500 req/day.
 
-## 例
+## Example
 
 ```lean
 let cfg ← Gemini.Config.fromEnv!
@@ -36,14 +36,21 @@ IO.println s!"tokens in={resp.usage.input} out={resp.usage.output}"
 ```
 
 ```lean
--- 多くのファイルをまとめてレビュー
+-- Holistic multi-file review
 let resp ← Gemini.reviewMany cfg
   (workspace := "/path/to/repo")
   (paths := #["LeanTea/Net/Http.lean", "LeanTea/Net/Server.lean"])
-  (prompt := "アーキテクチャレビュー: 設計上の弱点を指摘")
+  (prompt := "Architecture review: call out design weaknesses")
   {}
 ```
--/
+
+## A note on prompt strings
+
+`defaultReviewSystem` and the default prompt in `reviewDiff` are
+written in Japanese on purpose — they're what we send to Gemini,
+and we want the model's review output to come back in Japanese for
+this codebase. Callers can override either via `CallOpts.system`
+and the `prompt` argument respectively. -/
 
 namespace LeanTea.Cloud.Gemini
 
@@ -54,20 +61,21 @@ open Lean (Json)
 
 structure Config where
   apiKey   : String
-  /-- default `gemini-2.5-pro`。呼び出しごとに上書き可。 -/
+  /-- Default `gemini-2.5-pro`. Override per-call via `CallOpts.model`. -/
   model    : String := "gemini-2.5-pro"
   endpoint : String := "https://generativelanguage.googleapis.com/v1beta"
-  /-- 最大 output token。default はモデル既定。 -/
+  /-- Max output tokens. `none` uses the model default. -/
   maxOutputTokens : Option Nat := none
-  /-- temperature (0.0 = deterministic). default はモデル既定。 -/
+  /-- Temperature (`0.0` = deterministic). `none` uses the model default. -/
   temperature : Option Float := none
-  /-- curl のタイムアウト秒。長コンテキストは生成時間がかかる
-      ので default 300s = 5 分。 -/
+  /-- curl timeout in seconds. Long-context generations can take a
+      while, so the default is 300s (5 min). -/
   timeoutSec : Nat := 300
   deriving Inhabited, Repr
 
-/-- 環境変数から Config を組み立て。`GEMINI_API_KEY` 必須、
-    `GEMINI_MODEL` / `GEMINI_ENDPOINT` は任意。 -/
+/-- Build a `Config` from environment variables. `GEMINI_API_KEY`
+    is required; `GEMINI_MODEL` / `GEMINI_ENDPOINT` are optional
+    overrides. -/
 def Config.fromEnv? : IO (Option Config) := do
   match ← IO.getEnv "GEMINI_API_KEY" with
   | none => return none
@@ -77,33 +85,34 @@ def Config.fromEnv? : IO (Option Config) := do
       "https://generativelanguage.googleapis.com/v1beta"
     return some { apiKey := key, model, endpoint }
 
-/-- panic 変種。CI で「key 設定漏れ」を早期に止めるのに便利。 -/
+/-- Panic variant — useful in CI to fail fast when the key is
+    missing rather than silently degrading. -/
 def Config.fromEnv! : IO Config := do
   match ← Config.fromEnv? with
   | some c => return c
   | none   => throw (IO.userError
-    "Gemini.Config.fromEnv!: GEMINI_API_KEY が設定されてません")
+    "Gemini.Config.fromEnv!: GEMINI_API_KEY is not set")
 
-/-! ## Request / Response 型 -/
+/-! ## Request / Response types -/
 
-/-- 1 メッセージ (multi-turn chat 用)。 -/
+/-- One message in a multi-turn chat. -/
 structure Message where
-  /-- `"user"` or `"model"` -/
+  /-- `"user"` or `"model"`. -/
   role : String
   text : String
   deriving Inhabited, Repr
 
-/-- 呼び出しオプション。すべて optional で `{}` で OK。 -/
+/-- Per-call options. All optional — pass `{}` for defaults. -/
 structure CallOpts where
-  /-- Config.model を上書き。 -/
+  /-- Override `Config.model`. -/
   model         : Option String := none
-  /-- system prompt。Gemini では `systemInstruction` フィールドに行く。 -/
+  /-- System prompt. Maps to Gemini's `systemInstruction` field. -/
   system        : Option String := none
-  /-- maxOutputTokens 上書き。 -/
+  /-- Override `Config.maxOutputTokens`. -/
   maxOutputTokens : Option Nat := none
-  /-- temperature 上書き。 -/
+  /-- Override `Config.temperature`. -/
   temperature   : Option Float := none
-  /-- response JSON schema (構造化出力)。 -/
+  /-- Response JSON schema (structured output). -/
   jsonSchema    : Option Json := none
   deriving Inhabited
 
@@ -116,23 +125,24 @@ structure Usage where
 structure Response where
   text  : String
   usage : Usage
-  /-- 完了理由 (`STOP` / `MAX_TOKENS` / `SAFETY` / …)。 -/
+  /-- Finish reason (`STOP` / `MAX_TOKENS` / `SAFETY` / …). -/
   finishReason : String := ""
-  /-- 使ったモデル名 (呼び出し時点での解決値)。 -/
+  /-- Model that actually served the request (resolved at call time). -/
   model : String := ""
-  /-- raw レスポンス body — デバッグ・ログ用。 -/
+  /-- Raw response body — kept around for debugging / logging. -/
   raw : String := ""
   deriving Inhabited, Repr
 
-/-! ## curl wrapper — TLS が必要なので shell out -/
+/-! ## curl wrapper — TLS needs shell-out -/
 
 private structure CurlResp where
   status : Nat
   body   : String
   err    : String := ""
 
-/-- POST JSON body to URL via curl, return status + body.
-    Body は temp file 経由で渡す (巨大 prompt + binary safe)。 -/
+/-- POST a JSON body to `url` via curl, returning status + body.
+    The request body is staged through a temp file so very large
+    prompts work and the bytes are passed binary-safe. -/
 private def curlPost (url : String) (jsonBody : String) (timeoutSec : Nat)
     : IO CurlResp := do
   let tmpDir := (← IO.getEnv "TMPDIR").getD "/tmp"
@@ -166,9 +176,9 @@ private def curlPost (url : String) (jsonBody : String) (timeoutSec : Nat)
 private def jObj (xs : List (String × Json)) : Json := Json.mkObj xs
 private def jArr (xs : List Json) : Json := Json.arr xs.toArray
 
-/-- `Json.num` takes a `JsonNumber`; encode floats by `toString`+reparse.
-    Good enough for temperature / topP. Matches the trick used in
-    `LeanTea.Llm.Openai`. -/
+/-- `Json.num` wants a `JsonNumber`; we encode floats by
+    `toString`+reparse. Good enough for temperature / topP. Same
+    trick as `LeanTea.Llm.Openai`. -/
 private def floatJson (f : Float) : Json :=
   match Json.parse (toString f) with
   | .ok j    => j
@@ -208,7 +218,7 @@ private def parseResponse (model rawBody : String) : IO Response := do
       let code := err.getNatD "code"
       throw <| IO.userError s!"Gemini API error {code}: {msg}"
     | none => pure ()
-    -- candidates[0].content.parts[*].text を結合
+    -- Concatenate candidates[0].content.parts[*].text
     let candidates := (j.getObjVal? "candidates").toOption.getD Json.null
     let arr := match candidates.getArr? with | .ok a => a.toList | .error _ => []
     let cand := arr.head?.getD Json.null
@@ -227,7 +237,7 @@ private def parseResponse (model rawBody : String) : IO Response := do
 
 /-! ## Core: generate -/
 
-/-- メッセージ列 (chat history) を投げて 1 turn 分の応答を取る。 -/
+/-- Send a message list (chat history) and return one turn's response. -/
 def generate (cfg : Config) (messages : List Message) (opts : CallOpts := {})
     : IO Response := do
   let model := opts.model.getD cfg.model
@@ -240,24 +250,25 @@ def generate (cfg : Config) (messages : List Message) (opts : CallOpts := {})
 
 /-! ## Convenience APIs -/
 
-/-- 単発質問。 -/
+/-- One-shot prompt. -/
 def ask (cfg : Config) (prompt : String) (opts : CallOpts := {})
     : IO Response :=
   generate cfg [{ role := "user", text := prompt }] opts
 
-/-- chat — 履歴 + 新メッセージ。`history` は `[("user", "..."), ("model", "..."), ...]`
-    の交互ペアになっているのが Gemini の期待。 -/
+/-- Multi-turn chat. `history` must be alternating user/model turns
+    (Gemini's expected shape). -/
 def chat (cfg : Config) (history : List Message) (message : String)
     (opts : CallOpts := {}) : IO Response :=
   generate cfg (history ++ [{ role := "user", text := message }]) opts
 
 /-! ## Holistic codebase review
 
-Gemini Pro の 2M token を活かす本命 API。`SafePath` で workspace
-の外を読まないことを保証しつつ、複数ファイルを Markdown 形式で
-prompt に束ねて一括投入する。 -/
+The headline API — bundles multiple files into one Markdown prompt
+to exploit Pro's 2M-token context. `SafePath` guarantees the
+workspace boundary is honoured even when the caller passes
+attacker-controlled paths. -/
 
-/-- 拡張子 → fenced code block の言語ヒント。 -/
+/-- Map a file extension to a fenced-code-block language hint. -/
 private def guessLang (path : String) : String :=
   let lc := path.toLower
   if      lc.endsWith ".lean" then "lean"
@@ -289,12 +300,15 @@ private def guessLang (path : String) : String :=
   else if lc.endsWith ".dockerfile" || lc.endsWith "Dockerfile" then "dockerfile"
   else ""
 
-/-- 1 ファイルを `## File: <path>\n\`\`\`lang\n<body>\n\`\`\`` 形に。 -/
+/-- Render one file as a `## File: <path>\n\`\`\`lang\n<body>\n\`\`\`` block. -/
 private def renderFile (relPath : String) (body : String) : String :=
   let lang := guessLang relPath
   s!"\n\n## File: {relPath}\n\n```{lang}\n{body}\n```\n"
 
-/-- 既定の system prompt — 「全ファイルを俯瞰してから具体所見」 -/
+/-- Default system prompt — asks the model to look across all files
+    first, then drill into specifics. Intentionally written in
+    Japanese so the response comes back in Japanese; override via
+    `CallOpts.system` for English output. -/
 def defaultReviewSystem : String :=
 "あなたはシニアソフトウェアエンジニアです。これから複数のソースファ
 イルが Markdown の `## File: <path>` ブロック群として与えられます。
@@ -313,19 +327,21 @@ def defaultReviewSystem : String :=
 structure ReviewStats where
   fileCount : Nat
   totalBytes : Nat
-  /-- 読み込みでスキップしたファイル (理由付き)。 -/
+  /-- Files we skipped while bundling, with reasons. -/
   skipped : List (String × String) := []
   deriving Inhabited, Repr
 
-/-- 複数ファイルを `SafePath` で workspace チェックしながら読み、
-    Markdown に束ねて Gemini に渡す。
+/-- Read multiple files through `SafePath`, bundle them into one
+    Markdown prompt, and send to Gemini.
 
-    - `workspace` は読み込み制限の root (`..` で外には出れない)。
-    - `paths` は workspace からの相対パス。
-    - `prompt` は user 質問。空の場合は「俯瞰レビューしてください」だけ。
-    - `system` を指定しない場合は `defaultReviewSystem`。
+    - `workspace` is the read root (`..` can't escape it).
+    - `paths` are workspace-relative.
+    - `prompt` is the user instruction; empty falls back to the
+      default Japanese review prompt.
+    - When `opts.system` is unset, `defaultReviewSystem` is used.
 
-    返り値: `Response` と、何ファイル何バイト送ったかの統計。 -/
+    Returns the `Response` plus stats (how many files / bytes
+    actually made it into the bundle, plus any skipped ones). -/
 def reviewMany (cfg : Config)
     (workspace : String)
     (paths : Array String)
@@ -356,9 +372,12 @@ def reviewMany (cfg : Config)
   let resp ← ask cfg userText optsWithSys
   return (resp, { fileCount := count, totalBytes := bytes, skipped })
 
-/-! ## Diff review — 軽量 git diff レビュー -/
+/-! ## Diff review — lightweight git-diff focused review -/
 
-/-- `git diff <base> <head>` を取って、それを Gemini にレビューさせる。 -/
+/-- Run `git diff <base> <head>` inside `workspace` and pipe the
+    output to Gemini for a focused review. The default system
+    prompt and fallback user prompt are in Japanese on purpose;
+    callers can override via `opts.system` and `prompt`. -/
 def reviewDiff (cfg : Config) (workspace base head : String)
     (prompt : String := "") (opts : CallOpts := {})
     : IO Response := do
