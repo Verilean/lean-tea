@@ -143,7 +143,11 @@ record Step where
   miniKind : String,       -- "" | "face_read" | "jade_ring" | "beishui"
   miniGood : String,       -- scene id on high score
   miniOk   : String,       -- scene id on medium score
-  miniBad  : String        -- scene id on low score
+  miniBad  : String,       -- scene id on low score
+  -- LLM NPC chat hook. Set npcChat to an id (e.g. "xiaohe") to launch
+  -- the chat phase on advance; gotoScene field is reused as
+  -- the "after-chat continuation" destination.
+  npcChat  : String        -- "" or NPC id
 
 record Choice where
   labelJa : String, labelEn : String,
@@ -176,7 +180,7 @@ def blankStep :=
     spriteFocus: 0,
     choices: [],
     battle: "", gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
   }
 
 -- A dialogue beat ----------------------------------------------------
@@ -191,7 +195,7 @@ def say(bg, who, color, sayJa, sayEn) :=
     spriteFocus: 1,
     choices: [],
     battle: "", gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
   }
 
 -- A dialogue beat with inner monologue --------------------------------
@@ -206,7 +210,7 @@ def think(bg, who, color, sayJa, sayEn, thinkJa, thinkEn) :=
     spriteFocus: 1,
     choices: [],
     battle: "", gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
   }
 
 -- A two-sprite beat ---------------------------------------------------
@@ -221,7 +225,7 @@ def duo(bg, who, color, who2, color2, focus, sayJa, sayEn) :=
     spriteFocus: focus,
     choices: [],
     battle: "", gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
   }
 
 -- A narration line (no speaker, no sprite) ---------------------------
@@ -236,7 +240,7 @@ def narr(bg, sayJa, sayEn) :=
     spriteFocus: 0,
     choices: [],
     battle: "", gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
   }
 
 -- A choice menu -------------------------------------------------------
@@ -251,7 +255,7 @@ def chooseStep(bg, cs) :=
     spriteFocus: 0,
     choices: cs,
     battle: "", gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
   }
 
 -- Transitions ---------------------------------------------------------
@@ -266,7 +270,7 @@ def goScene(id) :=
     spriteFocus: 0,
     choices: [],
     battle: "", gotoScene: id, ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
   }
 
 def doBattle(id) :=
@@ -280,7 +284,7 @@ def doBattle(id) :=
     spriteFocus: 0,
     choices: [],
     battle: id, gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
   }
 
 def endingStep(id) :=
@@ -294,7 +298,7 @@ def endingStep(id) :=
     spriteFocus: 0,
     choices: [],
     battle: "", gotoScene: "", ending: id,
-    miniKind: "", miniGood: "", miniOk: "", miniBad: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
   }
 
 -- A mini-game step. Advancing INTO this step switches the phase to
@@ -311,7 +315,26 @@ def miniStep(bg, kind, good, ok, bad) :=
     spriteFocus: 0,
     choices: [],
     battle: "", gotoScene: "", ending: "",
-    miniKind: kind, miniGood: good, miniOk: ok, miniBad: bad
+    miniKind: kind, miniGood: good, miniOk: ok, miniBad: bad, npcChat: ""
+  }
+
+-- An LLM NPC chat step. On advance, the phase switches to 'llm_chat'
+-- and a chat session with the named NPC begins. On exit ('終わる'),
+-- the player goes to `sceneAfter`. The NPC's behaviour is anchored
+-- by `characterCard` server-side (see Serve.lean).
+def npcChatStep(bg, npcId, sceneAfter) :=
+  Step {
+    bg: bg,
+    speakerJa: "", speakerEn: "",
+    sayJa: "", sayEn: "",
+    thinkJa: "", thinkEn: "",
+    spriteId: "", spriteName: "", spriteColor: "",
+    spriteId2: "", spriteName2: "", spriteColor2: "",
+    spriteFocus: 0,
+    choices: [],
+    battle: "", gotoScene: sceneAfter, ending: "",
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "",
+    npcChat: npcId
   }
 
 -- ── Story content ───────────────────────────────────────────────────
@@ -721,6 +744,36 @@ def liubangFaceOkContinues := [
   say("bg-banquet", "蕭何", colorXiao,
     "「……いえ。ご自愛を」",
     "“...Nothing. Take care of yourself.“"),
+  -- ★ LLM TRPG: free-form chat with 蕭何
+  chooseStep("bg-banquet", [
+    Choice {
+      labelJa: "蕭何と少し話す ★LLM自由会話★",
+      labelEn: "Chat freely with Xiao He ★LLM free conversation★",
+      hintJa: "蕭何に好きなことを聞ける。彼は紀元前 209 年の人物として返事をする",
+      hintEn: "Ask Xiao He anything. He'll reply in-character as a BCE 209 figure",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 1, dMinXin: 0,
+      dBu: 0, dZhi: 1, dMei: 0, dZheng: 0,
+      setFlag: "chatted_xiaohe", gotoScene: "liubang_chat_xiaohe"
+    },
+    Choice {
+      labelJa: "話さずに次へ進む",
+      labelEn: "Skip the chat and continue",
+      hintJa: "",
+      hintEn: "",
+      dKarma: 0, dWife: 0, dWifeFear: 0,
+      dTrust: 0, dMinXin: 0,
+      dBu: 0, dZhi: 0, dMei: 0, dZheng: 0,
+      setFlag: "skipped_chat", gotoScene: "liubang_after_xiaohe_chat"
+    }
+  ])
+]
+
+def liubangChatXiaohe := [
+  npcChatStep("bg-banquet", "xiaohe", "liubang_after_xiaohe_chat")
+]
+
+def liubangAfterXiaoheChat := [
   narr("bg-house",
     "翌日、呂家の客間。劉邦は初めて呂雉と対面した。",
     "Next morning, the guest hall. Liu Bang meets Lü Zhi for the first time."),
@@ -1936,6 +1989,8 @@ def sceneOf(id) :=
   | "liubang_face_ok" => liubangFaceOk
   | "liubang_face_failed" => liubangFaceFailed
   | "liubang_face_ok_continues" => liubangFaceOkContinues
+  | "liubang_chat_xiaohe" => liubangChatXiaohe
+  | "liubang_after_xiaohe_chat" => liubangAfterXiaoheChat
   | "liubang_act2" => liubangAct2
   | "liubang_hongmen_died" => liubangHongmenDied
   | "liubang_withered_in_hanzhong" => liubangWitheredInHanzhong
@@ -2059,6 +2114,47 @@ def initMiniFor(kind) := Mini {
   bsScore: 0, bsLog1: "", bsLog2: "", bsLog3: "", bsFinished: false
 }
 
+-- ── LLM-driven NPC chat state ──────────────────────────────────────
+record Llm where
+  active : Bool,
+  npcId : String,           -- e.g. "xiaohe"
+  npcName : String,         -- display name
+  npcColor : String,        -- sprite color
+  history : Array,          -- list of {role: "user"|"assistant", text: ...}
+  pending : Bool,           -- waiting for /api/ask response
+  sceneAfter : String,      -- scene id to goto on "終わる"
+  lastError : String        -- last network/LLM error, "" if none
+
+def initLlm := Llm {
+  active: false, npcId: "", npcName: "", npcColor: "",
+  history: [], pending: false, sceneAfter: "", lastError: ""
+}
+
+def npcMetaName(id) :=
+  if id == "xiaohe" then "蕭何"
+  else if id == "luwen" then "呂公"
+  else if id == "luzhi" then "呂雉"
+  else if id == "fankuai" then "樊噲"
+  else if id == "fanzeng" then "范増"
+  else if id == "xiangbo" then "項伯"
+  else "?"
+
+def npcMetaColor(id) :=
+  if id == "xiaohe" then "#5a3a6a"
+  else if id == "luwen" then "#4a3a2a"
+  else if id == "luzhi" then "#a08060"
+  else if id == "fankuai" then "#6a4a2a"
+  else if id == "fanzeng" then "#3a5a3a"
+  else if id == "xiangbo" then "#5a3a3a"
+  else "#5a5a5a"
+
+def initLlmFor(npcId, sceneAfter) := Llm {
+  active: true, npcId: npcId,
+  npcName: npcMetaName(npcId),
+  npcColor: npcMetaColor(npcId),
+  history: [], pending: false, sceneAfter: sceneAfter, lastError: ""
+}
+
 -- State
 def initState := {
   phase: "title",
@@ -2071,7 +2167,8 @@ def initState := {
   battle: initBattle,
   mini: initMini,
   endingId: "",
-  toast: "", mini: state.mini
+  toast: "",
+  llm: initLlm
 }
 
 -- ── Helpers for state manipulation ──────────────────────────────────
@@ -2174,19 +2271,19 @@ def update(msg, state) :=
   | "startSelect" => { phase: "select", lang: state.lang,
                        char: "", sceneId: "", beat: 0,
                        stats: state.stats, flags: state.flags,
-                       battle: state.battle, endingId: "", toast: "" , mini: state.mini}
+                       battle: state.battle, endingId: "", toast: "" , mini: state.mini, llm: state.llm}
   | "pickChar" => (
     let cid := msg.id;
     let sid := startSceneFor(cid);
     { phase: "scene", lang: state.lang,
       char: cid, sceneId: sid, beat: 0,
       stats: initStats, flags: {},
-      battle: initBattle, endingId: "", toast: "" , mini: initMini})
+      battle: initBattle, endingId: "", toast: "" , mini: initMini, llm: initLlm})
   | "setLang" =>
     { phase: state.phase, lang: msg.lang,
       char: state.char, sceneId: state.sceneId, beat: state.beat,
       stats: state.stats, flags: state.flags,
-      battle: state.battle, endingId: state.endingId, toast: state.toast , mini: state.mini}
+      battle: state.battle, endingId: state.endingId, toast: state.toast , mini: state.mini, llm: state.llm}
   | "advance" => (
     if state.phase != "scene" then state
     else
@@ -2198,7 +2295,7 @@ def update(msg, state) :=
         { phase: "scene", lang: state.lang,
           char: state.char, sceneId: cur.gotoScene, beat: 0,
           stats: state.stats, flags: state.flags,
-          battle: state.battle, endingId: "", toast: state.toast , mini: state.mini}
+          battle: state.battle, endingId: "", toast: state.toast , mini: state.mini, llm: state.llm}
       else
         let nb := state.beat + 1;
         let nxt := stepAt(scene, nb);
@@ -2206,23 +2303,29 @@ def update(msg, state) :=
           { phase: "ending", lang: state.lang,
             char: state.char, sceneId: state.sceneId, beat: nb,
             stats: state.stats, flags: state.flags,
-            battle: state.battle, endingId: nxt.ending, toast: state.toast , mini: state.mini}
+            battle: state.battle, endingId: nxt.ending, toast: state.toast , mini: state.mini, llm: state.llm}
         else if nxt.gotoScene != "" then
           { phase: "scene", lang: state.lang,
             char: state.char, sceneId: nxt.gotoScene, beat: 0,
             stats: state.stats, flags: state.flags,
-            battle: state.battle, endingId: "", toast: state.toast , mini: state.mini}
+            battle: state.battle, endingId: "", toast: state.toast , mini: state.mini, llm: state.llm}
         else if nxt.miniKind != "" then
           { phase: "minigame", lang: state.lang,
             char: state.char, sceneId: state.sceneId, beat: nb,
             stats: state.stats, flags: state.flags,
             battle: state.battle, endingId: state.endingId, toast: state.toast,
-            mini: initMiniFor(nxt.miniKind) }
+            mini: initMiniFor(nxt.miniKind) , llm: state.llm}
+        else if nxt.npcChat != "" then
+          { phase: "llm_chat", lang: state.lang,
+            char: state.char, sceneId: state.sceneId, beat: nb,
+            stats: state.stats, flags: state.flags,
+            battle: state.battle, endingId: state.endingId, toast: state.toast,
+            mini: state.mini, llm: initLlmFor(nxt.npcChat, nxt.gotoScene) }
         else
           { phase: state.phase, lang: state.lang,
             char: state.char, sceneId: state.sceneId, beat: nb,
             stats: state.stats, flags: state.flags,
-            battle: state.battle, endingId: state.endingId, toast: state.toast , mini: state.mini})
+            battle: state.battle, endingId: state.endingId, toast: state.toast , mini: state.mini, llm: state.llm})
   | "choose" => (
     let scene := sceneOf(state.sceneId);
     let cur := stepAt(scene, state.beat);
@@ -2235,12 +2338,12 @@ def update(msg, state) :=
         { phase: "scene", lang: state.lang,
           char: state.char, sceneId: c.gotoScene, beat: 0,
           stats: newStats, flags: state.flags,
-          battle: state.battle, endingId: "", toast: c.setFlag , mini: state.mini}
+          battle: state.battle, endingId: "", toast: c.setFlag , mini: state.mini, llm: state.llm}
       else
         { phase: state.phase, lang: state.lang,
           char: state.char, sceneId: state.sceneId, beat: state.beat + 1,
           stats: newStats, flags: state.flags,
-          battle: state.battle, endingId: state.endingId, toast: c.setFlag , mini: state.mini}
+          battle: state.battle, endingId: state.endingId, toast: c.setFlag , mini: state.mini, llm: state.llm}
     else state)
   -- Mini: face_read ─────────────────────────
   | "miniFace" => (
@@ -2264,7 +2367,7 @@ def update(msg, state) :=
     { phase: state.phase, lang: state.lang,
       char: state.char, sceneId: state.sceneId, beat: state.beat,
       stats: state.stats, flags: state.flags, battle: state.battle,
-      endingId: state.endingId, toast: state.toast, mini: newM })
+      endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm})
   | "miniFaceShow" => (
     let m := state.mini;
     let sc := faceReadScore(m.faceEyes, m.faceMouth, m.facePose);
@@ -2283,7 +2386,7 @@ def update(msg, state) :=
     { phase: state.phase, lang: state.lang,
       char: state.char, sceneId: state.sceneId, beat: state.beat,
       stats: state.stats, flags: state.flags, battle: state.battle,
-      endingId: state.endingId, toast: state.toast, mini: newM })
+      endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm})
   | "miniFaceDone" => (
     let scene := sceneOf(state.sceneId);
     let cur := stepAt(scene, state.beat);
@@ -2291,7 +2394,7 @@ def update(msg, state) :=
     { phase: "scene", lang: state.lang,
       char: state.char, sceneId: nextSceneId, beat: 0,
       stats: state.stats, flags: state.flags, battle: state.battle,
-      endingId: "", toast: "mini:face", mini: initMini })
+      endingId: "", toast: "mini:face", mini: initMini , llm: state.llm})
   -- Mini: jade_ring ─────────────────────────
   | "miniRingTick" => (
     let m := state.mini;
@@ -2317,7 +2420,7 @@ def update(msg, state) :=
         { phase: state.phase, lang: state.lang,
           char: state.char, sceneId: state.sceneId, beat: state.beat,
           stats: state.stats, flags: state.flags, battle: state.battle,
-          endingId: state.endingId, toast: state.toast, mini: newM }
+          endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm}
       else
         let newM := Mini {
           kind: m.kind,
@@ -2334,7 +2437,7 @@ def update(msg, state) :=
         { phase: state.phase, lang: state.lang,
           char: state.char, sceneId: state.sceneId, beat: state.beat,
           stats: state.stats, flags: state.flags, battle: state.battle,
-          endingId: state.endingId, toast: state.toast, mini: newM })
+          endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm})
   | "miniRingClick" => (
     let m := state.mini;
     if m.ringFinished then state
@@ -2358,7 +2461,7 @@ def update(msg, state) :=
       { phase: state.phase, lang: state.lang,
         char: state.char, sceneId: state.sceneId, beat: state.beat,
         stats: state.stats, flags: state.flags, battle: state.battle,
-        endingId: state.endingId, toast: state.toast, mini: newM })
+        endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm})
   | "miniRingDone" => (
     let scene := sceneOf(state.sceneId);
     let cur := stepAt(scene, state.beat);
@@ -2366,7 +2469,7 @@ def update(msg, state) :=
     { phase: "scene", lang: state.lang,
       char: state.char, sceneId: nextSceneId, beat: 0,
       stats: state.stats, flags: state.flags, battle: state.battle,
-      endingId: "", toast: "mini:ring", mini: initMini })
+      endingId: "", toast: "mini:ring", mini: initMini , llm: state.llm})
   -- Mini: beishui ─────────────────────────
   | "miniBsCard" => (
     let m := state.mini;
@@ -2376,7 +2479,7 @@ def update(msg, state) :=
       { phase: state.phase, lang: state.lang,
         char: state.char, sceneId: state.sceneId, beat: state.beat,
         stats: state.stats, flags: state.flags, battle: state.battle,
-        endingId: state.endingId, toast: state.toast, mini: newM })
+        endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm})
   | "miniBsDone" => (
     let scene := sceneOf(state.sceneId);
     let cur := stepAt(scene, state.beat);
@@ -2384,13 +2487,63 @@ def update(msg, state) :=
     { phase: "scene", lang: state.lang,
       char: state.char, sceneId: nextSceneId, beat: 0,
       stats: state.stats, flags: state.flags, battle: state.battle,
-      endingId: "", toast: "mini:bs", mini: initMini })
+      endingId: "", toast: "mini:bs", mini: initMini , llm: state.llm})
+  -- Mini: LLM NPC chat ─────────────────────
+  | "llmSendUser" => (
+    let m := state.llm;
+    let entry := { role: "user", text: msg.text };
+    let newH := arrPush(m.history, entry);
+    let newL := Llm {
+      active: m.active, npcId: m.npcId,
+      npcName: m.npcName, npcColor: m.npcColor,
+      history: newH, pending: true, sceneAfter: m.sceneAfter,
+      lastError: ""
+    };
+    { phase: state.phase, lang: state.lang,
+      char: state.char, sceneId: state.sceneId, beat: state.beat,
+      stats: state.stats, flags: state.flags, battle: state.battle,
+      endingId: state.endingId, toast: state.toast, mini: state.mini,
+      llm: newL })
+  | "llmReply" => (
+    let m := state.llm;
+    let entry := { role: "assistant", text: msg.text };
+    let newH := arrPush(m.history, entry);
+    let newL := Llm {
+      active: m.active, npcId: m.npcId,
+      npcName: m.npcName, npcColor: m.npcColor,
+      history: newH, pending: false, sceneAfter: m.sceneAfter,
+      lastError: ""
+    };
+    { phase: state.phase, lang: state.lang,
+      char: state.char, sceneId: state.sceneId, beat: state.beat,
+      stats: state.stats, flags: state.flags, battle: state.battle,
+      endingId: state.endingId, toast: state.toast, mini: state.mini,
+      llm: newL })
+  | "llmError" => (
+    let m := state.llm;
+    let newL := Llm {
+      active: m.active, npcId: m.npcId,
+      npcName: m.npcName, npcColor: m.npcColor,
+      history: m.history, pending: false, sceneAfter: m.sceneAfter,
+      lastError: msg.text
+    };
+    { phase: state.phase, lang: state.lang,
+      char: state.char, sceneId: state.sceneId, beat: state.beat,
+      stats: state.stats, flags: state.flags, battle: state.battle,
+      endingId: state.endingId, toast: state.toast, mini: state.mini,
+      llm: newL })
+  | "llmEnd" => (
+    let after := state.llm.sceneAfter;
+    { phase: "scene", lang: state.lang,
+      char: state.char, sceneId: after, beat: 0,
+      stats: state.stats, flags: state.flags, battle: state.battle,
+      endingId: "", toast: "llm:end", mini: state.mini, llm: initLlm })
   -- Save / load are JS-side (page.html replaces state directly).
   | "reset" => initState
   | "backToSelect" => { phase: "select", lang: state.lang,
                         char: "", sceneId: "", beat: 0,
                         stats: initStats, flags: {},
-                        battle: initBattle, endingId: "", toast: "" , mini: state.mini}
+                        battle: initBattle, endingId: "", toast: "" , mini: state.mini, llm: state.llm}
   | _ => state
 
 -- ── View ────────────────────────────────────────────────────────────
@@ -2769,6 +2922,45 @@ def viewMinigame(state) :=
   else if state.mini.kind == "beishui" then viewMiniBeishui(state)
   else viewTitle(state)
 
+-- ── LLM chat view ─────────────────────────────────────────────────
+def renderChatBubble(m) :=
+  let role := m.role;
+  let bubbleClass := if role == "user" then "chat-bubble user" else "chat-bubble npc";
+  sjoin([
+    "<div class='", bubbleClass, "'>", hesc(m.text), "</div>"
+  ])
+
+def chatBubblesLoop(arr, i, acc) :=
+  if i < arrLen(arr) then
+    chatBubblesLoop(arr, i + 1, sconcat(acc, renderChatBubble(arrGet(arr, i))))
+  else acc
+
+def viewLlmChat(state) :=
+  let l := state.llm;
+  let bubbles := chatBubblesLoop(l.history, 0, "");
+  let pendingHtml := if l.pending
+    then "<div class='chat-pending'>… 考えている</div>" else "";
+  let errorHtml := if l.lastError == "" then ""
+    else sjoin(["<div class='chat-error'>", hesc(l.lastError), "</div>"]);
+  sjoin([
+    "<div class='scene-bg bg-tent'>", renderHud(state),
+    "<div class='chat-wrap'>",
+    "<div class='chat-header'><span class='chat-npc-name' style='color:",
+    l.npcColor, "'>", hesc(l.npcName), "</span>",
+    " と話す <button class='chat-end' data-msg='{“tag“:“llmEnd“}'>終わる ▶</button></div>",
+    "<div class='chat-history' id='chatHistory'>",
+    bubbles, pendingHtml, errorHtml,
+    "</div>",
+    "<div class='chat-input-row'>",
+    "<textarea id='chatInput' class='chat-input' rows='2' placeholder='ここに話しかける言葉を入力 (Enter で送信)' ",
+    if l.pending then "disabled" else "",
+    "></textarea>",
+    "<button class='chat-send' id='chatSend' ", if l.pending then "disabled" else "",
+    ">送信</button>",
+    "</div>",
+    "</div></div>"
+  ])
+
 -- Top-level view
 def view(state) :=
   match state.phase with
@@ -2778,6 +2970,7 @@ def view(state) :=
   | "battle"   => viewBattle(state)
   | "ending"   => viewEnding(state)
   | "minigame" => viewMinigame(state)
+  | "llm_chat" => viewLlmChat(state)
   | _ => viewTitle(state)
 
 -- Smoke entry point so the LeanJs runner can verify the program
