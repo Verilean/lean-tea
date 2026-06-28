@@ -280,7 +280,18 @@ private def chatOnce (o : Orchestrator) (messages : Array Json) : IO Json := do
   | .error e => throw <| IO.userError s!"openai: bad JSON\n{e}\n{raw}"
   | .ok j    => return j
 
-/-! ## Tool result rendering -/
+/-! ## Tool result rendering
+
+A tool result is an MCP `{content: [...]}` object where each item is
+either `{type:"text",text:...}` or `{type:"image",mimeType:...,data:<base64>}`.
+We split these:
+
+  * `renderToolResult` joins all text parts into one string (which goes
+    back to the LLM via the `role:"tool"` message — OpenAI tool messages
+    only carry strings, not multimodal blocks).
+  * `extractToolImages` pulls every image block out as a `data:` URL,
+    ready for the UI to render and (for vision models) for the next
+    LLM round to actually look at via a synthetic user message. -/
 
 private def renderToolResult (result : Json) : String :=
   let isErr := (result.getObjVal? "isError").toOption.bind (fun j =>
@@ -294,10 +305,22 @@ private def renderToolResult (result : Json) : String :=
       (item.getObjVal? "text").toOption.bind (·.getStr?.toOption) |>.getD ""
     | "image" =>
       let mime := (item.getObjVal? "mimeType").toOption.bind (·.getStr?.toOption) |>.getD "image/png"
-      s!"(image attachment: {mime} — not shown in this UI)"
+      s!"(image: {mime} — shown to the user; also attached as the next vision message)"
     | _ => item.compress
   let joined := String.intercalate "\n" parts.toList
   if isErr then s!"ERROR: {joined}" else joined
+
+/-- Pull every `image` content block out of a tool result as
+    `data:<mime>;base64,<…>` URLs. -/
+private def extractToolImages (result : Json) : Array String :=
+  let content := (result.getObjVal? "content").toOption.getD (Json.arr #[])
+  let arr := (content.getArr?).toOption.getD #[]
+  arr.filterMap fun item =>
+    let typ := (item.getObjVal? "type").toOption.bind (·.getStr?.toOption) |>.getD ""
+    if typ != "image" then none else
+      let mime := (item.getObjVal? "mimeType").toOption.bind (·.getStr?.toOption) |>.getD "image/png"
+      let data := (item.getObjVal? "data").toOption.bind (·.getStr?.toOption) |>.getD ""
+      if data.isEmpty then none else some s!"data:{mime};base64,{data}"
 
 /-! ## Public chat shape
 
@@ -322,6 +345,11 @@ structure ChatMsg where
   /-- Human-visible text. For `assistant` messages that are pure
       tool calls this can be empty; the call list lives in `toolCalls`. -/
   text : String := ""
+  /-- Attached images as `data:<mime>;base64,…` URLs. Populated for
+      user messages (uploads) and for tool messages (tool results that
+      included image content blocks). The renderer for both UI and
+      LLM uses this to surface images. -/
+  images : Array String := #[]
   /-- For `assistant` messages that called tools — the raw call list
       from OpenAI. Each entry has `id` / `function.name` / `function.arguments`. -/
   toolCalls : Array Json := #[]
@@ -332,7 +360,25 @@ structure ChatMsg where
   toolName : String := ""
   deriving Inhabited
 
-/-- Serialise a `ChatMsg` back to the OpenAI message Json shape. -/
+/-- Build an OpenAI multi-block `content` array from a text part and
+    a list of image data URLs. Used for `user` messages that carry
+    attachments (file uploads, paste, drag-drop). -/
+private def multiBlockContent (text : String) (images : Array String) : Json :=
+  let textBlock := Json.mkObj [
+    ("type", Json.str "text"),
+    ("text", Json.str text)
+  ]
+  let imgBlocks := images.map fun url =>
+    Json.mkObj [
+      ("type",      Json.str "image_url"),
+      ("image_url", Json.mkObj [("url", Json.str url)])
+    ]
+  Json.arr (#[textBlock] ++ imgBlocks)
+
+/-- Serialise a `ChatMsg` back to the OpenAI message Json shape. User
+    messages with attached images use the multi-block content shape
+    (`[{type:"text",...}, {type:"image_url",...}]`); everything else
+    is a plain string content. -/
 def ChatMsg.toJson (m : ChatMsg) : Json :=
   match m.role with
   | .assistant =>
@@ -350,9 +396,12 @@ def ChatMsg.toJson (m : ChatMsg) : Json :=
       ("content",      Json.str m.text)
     ]
   | r =>
+    let content : Json :=
+      if m.images.isEmpty then Json.str m.text
+      else multiBlockContent m.text m.images
     Json.mkObj [
       ("role",    Json.str r.toString),
-      ("content", Json.str m.text)
+      ("content", content)
     ]
 
 /-- Build the OpenAI messages array for a request, prepending the
@@ -386,17 +435,26 @@ structure ProgressHooks where
   deriving Inhabited
 
 /-- Run one user turn. `history` is the existing conversation (without
-    the new user message). Returns the new messages appended to
-    history — at minimum the user message and a final assistant
-    message; possibly interleaved with assistant-tool-call and tool
-    messages.
+    the new user message). `userImages` are `data:` URLs attached
+    alongside the prompt (file uploads, drag-drop, clipboard paste —
+    callers do the base64 conversion). Returns the new messages
+    appended to history.
+
+    Tool results that include image content blocks are surfaced in
+    two places: the tool `ChatMsg` carries them as `images` (so the
+    UI can render them inline), and a synthetic `user` message with
+    those images is inserted right after the tool message so a
+    vision-capable LLM can actually look at them next round.
 
     On the LLM/MCP side, errors are surfaced via `throw` — let the
     UI decide whether to render a red banner or rethrow. -/
-partial def Orchestrator.runTurn (o : Orchestrator) (history : Array ChatMsg)
-    (userInput : String) (hooks : ProgressHooks := {})
+partial def Orchestrator.runTurnFull (o : Orchestrator) (history : Array ChatMsg)
+    (userInput : String) (userImages : Array String := #[])
+    (hooks : ProgressHooks := {})
     : IO (Array ChatMsg) := do
-  let userMsg : ChatMsg := { role := .user, text := userInput }
+  let userMsg : ChatMsg := {
+    role := .user, text := userInput, images := userImages
+  }
   let mut acc : Array ChatMsg := #[userMsg]
   let mut working : Array ChatMsg := history.push userMsg
   let mut round : Nat := 0
@@ -452,21 +510,49 @@ partial def Orchestrator.runTurn (o : Orchestrator) (history : Array ChatMsg)
         if rendered.length > 4000 then
           (rendered.take 4000).toString ++ s!"\n…[{rendered.length - 4000} more chars omitted]"
         else rendered
+      let images := extractToolImages result
       hooks.onToolResult name truncated
       let toolMsg : ChatMsg := {
         role := .tool,
         text := truncated,
+        images,
         toolCallId := id,
         toolName := name
       }
       acc := acc.push toolMsg
       working := working.push toolMsg
+      /- For vision-capable LLMs, append a synthetic user message with
+         the images so they're visible next round. Tool messages
+         carry only strings in the OpenAI spec; vision content has to
+         live on a user message. We hide this from the UI via
+         `synthetic := true`-style intent — the role stays `.user` but
+         the empty text + non-empty images keeps it visually unobtrusive
+         when the UI checks `m.text.isEmpty && m.images.isEmpty`. -/
+      unless images.isEmpty do
+        let visionMsg : ChatMsg := {
+          role   := .user,
+          text   := s!"(image attached above is the result of `{name}` — \
+look at it to decide what to do next.)",
+          images
+        }
+        working := working.push visionMsg
+        /- We don't push the synthetic message into `acc` because the
+           UI already renders the tool message's images; surfacing it
+           twice would be confusing. The next round's request still
+           uses `working`, so the LLM sees the images. -/
     round := round + 1
   /- Hit maxRounds without a tool-free reply. Surface as an error
      so the UI can show "agent gave up" rather than silently
      truncating. -/
   throw <| IO.userError s!"orchestrator: hit maxRounds={o.maxRounds} \
 without a final answer"
+
+/-- Image-less convenience wrapper. The three demo apps default to
+    this when the caller doesn't attach images. -/
+def Orchestrator.runTurn (o : Orchestrator) (history : Array ChatMsg)
+    (userInput : String) (hooks : ProgressHooks := {})
+    : IO (Array ChatMsg) :=
+  o.runTurnFull history userInput #[] hooks
 
 /-! ## Config JSON parsing
 

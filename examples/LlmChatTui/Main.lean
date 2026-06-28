@@ -67,10 +67,16 @@ private def truncate (s : String) (n : Nat) : String :=
   if s.length ≤ n then s
   else (s.take n).toString ++ "…"
 
+private def imgBadge (imgs : Array String) : String :=
+  if imgs.isEmpty then ""
+  else
+    let kb := (imgs.foldl (fun acc u => acc + u.length * 3 / 4) 0) / 1024
+    blue s!" [📎 {imgs.size} img, {kb} kB]"
+
 private def renderMessage (width : Nat) (m : ChatMsg) : List String :=
   match m.role with
   | .user =>
-    let head := cyan (bold "you ")
+    let head := cyan (bold "you ") ++ imgBadge m.images
     let body := softWrap (width - 4) m.text
     match body with
     | []      => [head]
@@ -85,7 +91,7 @@ private def renderMessage (width : Nat) (m : ChatMsg) : List String :=
       | []      => [head]
       | l :: ls => (head ++ l) :: ls.map (fun x => "    " ++ x)
   | .tool =>
-    let head := yellow s!"    ↳ {m.toolName}"
+    let head := yellow s!"    ↳ {m.toolName}{imgBadge m.images}"
     let preview := truncate (m.text.replace "\n" "↵") (width - 8)
     [head, dim s!"      {preview}"]
   | .system =>
@@ -174,6 +180,18 @@ private partial def parseArgs (xs : List String) (a : Args) : Args :=
   | _ :: rest               => parseArgs rest a
   | []                      => a
 
+/-- Guess image mime from extension. -/
+private def guessImageMime (path : String) : String :=
+  let lc := path.toLower
+  if      lc.endsWith ".png"  then "image/png"
+  else if lc.endsWith ".jpg" || lc.endsWith ".jpeg" then "image/jpeg"
+  else if lc.endsWith ".webp" then "image/webp"
+  else if lc.endsWith ".gif"  then "image/gif"
+  else "image/png"
+
+private def imageToDataUrl (path : String) : IO String :=
+  LeanTea.Llm.Openai.imageDataUrlFromFile path (guessImageMime path)
+
 def main (rawArgs : List String) : IO Unit := do
   let a := parseArgs rawArgs {}
   if a.configPath.isEmpty then
@@ -184,9 +202,14 @@ def main (rawArgs : List String) : IO Unit := do
   let o ← fromConfig fc
   let nServers := o.servers.size
   let nTools := o.openAiTools.size
+  let storeDir ← (·.getD (← LeanTea.Llm.ChatStore.defaultDir)) <$> IO.getEnv "LLM_CHAT_STORE"
   let stdin ← IO.getStdin
   let mut history : Array ChatMsg := #[]
-  repaint o.model nServers nTools history
+  let mut activeId : String := ""
+  let mut pendingImages : Array String := #[]
+  let mut status := dim "commands: /attach  /clear-attach  /clear  /sessions  \
+/save [name]  /load <id>  /new  /quit"
+  repaint o.model nServers nTools history status
   let mut loop := true
   while loop do
     let line ← stdin.getLine
@@ -194,11 +217,88 @@ def main (rawArgs : List String) : IO Unit := do
       loop := false
     else
       let user := line.trimAscii.toString
-      unless user.isEmpty do
+      if user.isEmpty then
+        pure ()
+      else if user == "/quit" then
+        loop := false
+      else if user == "/clear" then
+        history := #[]
+        status := dim "(history cleared)"
+        repaint o.model nServers nTools history status
+      else if user == "/clear-attach" then
+        pendingImages := #[]
+        status := dim "(attachments cleared)"
+        repaint o.model nServers nTools history status
+      else if user == "/sessions" then
+        let summaries ← LeanTea.Llm.ChatStore.list storeDir
+        let lines := summaries.toList.map fun s =>
+          let mark := if s.id == activeId then "*" else " "
+          s!"{mark} {s.id} ({s.count} msgs) {s.name}"
+        let joined := if lines.isEmpty then "(no saved sessions)"
+                      else String.intercalate "\n" lines
+        status := dim joined
+        repaint o.model nServers nTools history status
+      else if user == "/new" then
+        history := #[]
+        activeId := ""
+        pendingImages := #[]
+        status := dim "(new session)"
+        repaint o.model nServers nTools history status
+      else if user.startsWith "/save" then
+        let nameArg := (user.drop "/save".length).trimAscii.toString
+        let session : LeanTea.Llm.ChatStore.Session ←
+          if activeId.isEmpty then LeanTea.Llm.ChatStore.newSession nameArg
+          else pure {
+            id := activeId, name := nameArg,
+            created := 0, updated := 0,
+            messages := history
+          }
+        let saved ← LeanTea.Llm.ChatStore.save storeDir
+          { session with messages := history }
+        activeId := saved.id
+        status := dim s!"(saved {saved.id} `{saved.name}`)"
+        repaint o.model nServers nTools history status
+      else if user.startsWith "/load " then
+        let id := (user.drop "/load ".length).trimAscii.toString
+        match ← LeanTea.Llm.ChatStore.load storeDir id with
+        | none =>
+          status := red s!"no such session: {id}"
+          repaint o.model nServers nTools history status
+        | some s =>
+          history := s.messages
+          activeId := s.id
+          status := dim s!"(loaded {s.id} `{s.name}`)"
+          repaint o.model nServers nTools history status
+      else if user.startsWith "/attach " then
+        let path := (user.drop "/attach ".length).trimAscii.toString
         try
-          let newMsgs ← o.runTurn history user tuiHooks
+          let url ← imageToDataUrl path
+          pendingImages := pendingImages.push url
+          status := blue s!"📎 attached {path} ({(url.length * 3 / 4 / 1024)} kB) — \
+{pendingImages.size} pending"
+          repaint o.model nServers nTools history status
+        catch e =>
+          status := red s!"attach failed: {e}"
+          repaint o.model nServers nTools history status
+      else
+        try
+          let newMsgs ← o.runTurnFull history user pendingImages tuiHooks
           history := history ++ newMsgs
-          repaint o.model nServers nTools history
+          pendingImages := #[]
+          /- Auto-save the session each turn. -/
+          let session : LeanTea.Llm.ChatStore.Session ←
+            if activeId.isEmpty then
+              let fresh ← LeanTea.Llm.ChatStore.newSession
+              pure { fresh with messages := history }
+            else pure {
+              id := activeId, name := "",
+              created := 0, updated := 0,
+              messages := history
+            }
+          let saved ← LeanTea.Llm.ChatStore.save storeDir session
+          activeId := saved.id
+          status := dim s!"session {saved.id}"
+          repaint o.model nServers nTools history status
         catch e =>
           repaint o.model nServers nTools history (red s!"error: {e}")
   o.shutdown

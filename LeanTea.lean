@@ -42,6 +42,7 @@ import LeanTea.Template
 import LeanTea.Markdown
 import LeanTea.Llm.Openai
 import LeanTea.Llm.McpOrchestrator
+import LeanTea.Llm.ChatStore
 import LeanTea.Browser
 import LeanTea.Agent.Memory
 import LeanTea.Agent.Script
