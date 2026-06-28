@@ -1794,7 +1794,7 @@ def hanxinKuaitongDecide := [
   narr("bg-tent",
     "数日後、劉邦の返書が届く。『仮王? 男たる者、王たるべし! お主を真の斉王に立てる!』韓信は感激し、垓下に向かう兵を整え始めた。",
     "Days later, the reply: “Interim king? A man must be the real thing. I name you true King of Qi.“ Han Xin was moved. He began to muster the troops for Gaixia."),
-  endingStep("hanxin_act2_clear")
+  goScene("hanxin_act3")
 ]
 
 -- 韓信西征 (隠しEND)
@@ -1936,7 +1936,7 @@ def zhanglangAct2 := [
   narr("bg-night",
     "垓下が近づく。十面埋伏の策が形を成し始める。漢軍は四方から楚軍を包み、最後の歌――『四面楚歌』が、霧の中で歌われる時が、もうすぐである。",
     "Gaixia draws near. The Ten-Sided Ambush takes shape. Han closes from every quarter. The Chu Songs from All Sides will soon be sung, in the mist."),
-  endingStep("zhangliang_act2_clear")
+  goScene("zhangliang_act3")
 ]
 
 -- ── Xiao He Act 2 ──────────────────────────────────────────────────
@@ -2028,7 +2028,7 @@ def xiaoheAct2 := [
   narr("bg-pei",
     "蕭何は一族を前線に送り、自らは民田を強奪して悪名を立てた。劉邦は密書を破り、笑った。『蕭何も人並みであったか』。蕭何は、その笑いを、生涯忘れない。",
     "Xiao He sent his family to the front, then began seizing peasant fields, blackening his own name. Liu Bang tore up the letter and laughed: “So Xiao He is human after all.“ Xiao He never forgot that laugh."),
-  endingStep("xiaohe_act2_clear")
+  goScene("xiaohe_act3")
 ]
 
 def xiaoheLooterEnd := [
@@ -2378,6 +2378,215 @@ def liubangAct3 := [
     "Xiao He. Fan Kuai. Zhang Liang, Zifang. I used you all. I made you love me, I worked you, I disposed of you. With that I took the realm. / Lü Zhi, you were my greatest catch. Bound to you, I became emperor. You are my final punishment. / I could not die as a charmer. I could not."),
   endingStep("liubang_died_emperor")
 ]
+-- ── Han Xin Act 3 — 凱旋 → 降格 → 鐘室 (BCE 202-196) ───────────────
+def colorPiaoMu := "#4a4a4a"
+def colorZhongLi := "#5a3a3a"
+
+def hanxinAct3 := [
+  narr("bg-river",
+    "BCE 202、垓下に項羽を破った韓信は、楚王に封ぜられた。故郷・淮陰へ凱旋。最初に向かった先は、あの河辺だった。",
+    "BCE 202. After breaking Xiang Yu at Gaixia, Han Xin was enfeoffed as King of Chu. He returned in triumph to his home, Huai-yin. The first place he went was the river bank."),
+  narr("bg-river",
+    "漂母はすでに亡くなっていた。韓信は墓の前に立ち、約束の千金を捧げた。",
+    "The washerwoman was already dead. Han Xin stood before her grave and offered the promised thousand pieces of gold."),
+  think("bg-river", "韓信", colorHan,
+    "「(墓に手を合わせて) 漂母様。約束は、果たしました。遅くなり申しました」",
+    "“(Pressing his palms together at the grave) Old mother. The promise is kept. I am late.“",
+    "あの飯一杯。あれが俺の生涯の方向を決めた。",
+    "That one bowl of rice. It set the direction of my whole life."),
+  -- 鍾離眛 (Zhong Limei)
+  narr("bg-house",
+    "やがて、項羽の旧将・鍾離眛が韓信を頼って亡命してきた。劉邦は鍾離眛を捕えよと厳命したが、韓信は旧友を匿った。",
+    "Soon, Xiang Yu's former general Zhong Limei sought refuge with Han Xin. Liu Bang ordered Zhong Limei seized, but Han Xin sheltered his old friend."),
+  duo("bg-house", "鍾離眛", colorZhongLi, "韓信", colorHan, 2,
+    "「韓信よ。お主が俺を売れば、漢に取り入れよう。が、お主、そう長く生きはせぬぞ。俺を殺せば、次はお主だ」",
+    "“Han Xin. Sell me to Han and you'll buy favor. But you will not live long. Kill me, and you are next.“"),
+  -- 偽巡幸事件
+  narr("bg-palace",
+    "BCE 201。劉邦は『楚の地を遊幸する』と称して、楚王の韓信を呼び寄せた。韓信は鍾離眛に頼られて困り、鍾離眛は自ら首を刎ねた――『お主のために、俺の首を持って行け』。",
+    "BCE 201. Liu Bang announced a “royal tour of Chu“ and summoned Han Xin. Trapped by his guest's plight, Zhong Limei took his own life. “Take my head for your sake.“"),
+  duo("bg-palace", "劉邦", colorLiu, "韓信", colorHan, 2,
+    "「韓信よ、お主を陳に拘留する。楚王から淮陰侯に降格だ。長安に住め。お主、不満があるか」",
+    "“Han Xin. I detain you at Chen. Demoted from King of Chu to Marquis of Huai-yin. You live in Chang'an. Any objection?“"),
+  think("bg-palace", "韓信", colorHan,
+    "「不満は無く、ありませぬ」",
+    "“No objection, your majesty.“",
+    "果敢ない。鍾離眛の言葉が、ようやく、腑に落ちた。だが、もはや遅し。蒯通の進言を入れていれば――しかし、あの時の俺には、出来なかった。それが俺の限界だ。",
+    "Bitter. Zhong Limei's words finally make sense. Too late. Had I heeded Kuai Tong — but I couldn't have, then. That was my wall."),
+  -- 「多々益々弁ず」逸話
+  narr("bg-palace",
+    "長安。劉邦と韓信が、ある日、武勲を語り合った。",
+    "Chang'an. One day Liu Bang and Han Xin discussed past battles."),
+  duo("bg-palace", "劉邦", colorLiu, "韓信", colorHan, 2,
+    "「韓信よ、俺はどれほどの兵を率いることが出来ると思う?」",
+    "“Han Xin. How many men do you think I could lead?“"),
+  duo("bg-palace", "韓信", colorHan, "劉邦", colorLiu, 1,
+    "「陛下は、十万人を率いるに止まりまする」",
+    "“Your Majesty would not lead more than ten myriad.“"),
+  duo("bg-palace", "劉邦", colorLiu, "韓信", colorHan, 2,
+    "「ほう。お主は?」",
+    "“And you?“"),
+  duo("bg-palace", "韓信", colorHan, "劉邦", colorLiu, 1,
+    "「臣は、多々益々弁(べん) ず (多ければ多いほど、なお良し)」",
+    "“The more the better — without limit.“"),
+  duo("bg-palace", "劉邦", colorLiu, "韓信", colorHan, 2,
+    "「ふん。多々益々弁ずる男が、なぜ俺の家臣に成り下がっておるのか?」",
+    "“Hmph. Then why does the “without limit“ man find himself my servant?“"),
+  duo("bg-palace", "韓信", colorHan, "劉邦", colorLiu, 1,
+    "「陛下は兵を率いるに能はず、将を率いるに能(よ) し。これ天の与うる所、人力に非ざるなり」",
+    "“Your Majesty cannot lead troops well, but leads generals well. This is heaven's gift, not human work.“"),
+  think("bg-palace", "韓信", colorHan,
+    "「(劉邦の眼を見て) この返事は、俺の処刑令状になるかもしれぬ。だが、俺は嘘がつけぬ」",
+    "“(Reading the Emperor's eyes) This answer may become my death warrant. But I cannot lie.“",
+    "蒯通の言を、俺は今、痛いほど思い出している。だが、思い出すだけだ。",
+    "Kuai Tong's words burn in my mind. I only remember them."),
+  -- 陳豨の謀反 + 鐘室
+  narr("bg-court",
+    "BCE 196。陳豨(ちんき) が代地で謀反。劉邦は親征した。韓信は病を称して陪席せず、密かに陳豨と通じていた、とも言われる。", "BCE 196. Chen Xi revolts at Dai. Liu Bang personally takes the field. Han Xin, pleading illness, did not accompany him — and may have been in secret correspondence with Chen Xi."),
+  narr("bg-court",
+    "呂后は蕭何と謀り、韓信を長楽宮へ呼び寄せた。「陳豨の反乱、鎮圧された。祝賀の宴を」。蕭何が自ら韓信を迎えに来た。",
+    "Empress Lü, with Xiao He, summoned Han Xin to Changle Palace. “Chen Xi's revolt is put down — come to the celebration.“ Xiao He came himself to fetch him."),
+  duo("bg-court", "蕭何", colorXiao, "韓信", colorHan, 2,
+    "「韓淮陰侯。お主一人だけ、宴に参られぬのはまずかろう。私と一緒に行こう」",
+    "“Marquis Han of Huai-yin. It would not do for you alone to skip. Come — with me.“"),
+  think("bg-court", "韓信", colorHan,
+    "「(蕭何の眼を見て) ……」",
+    "“(Reading Xiao He's eyes)“",
+    "蕭何様。御身の眼に、淮陰の若者を見出した、あの十年前の眼の輝きは、もう無い。これは、罠だ。だが、御身の言葉を、俺は今までも、これからも、断れぬ。それが俺の業 (ごう) だ。",
+    "Xiao He. The light that was in your eyes ten years ago, the moment you saw me in Huai-yin — it is gone. This is a trap. And yet I cannot refuse your words, then or now. This is my karma."),
+  duo("bg-court", "韓信", colorHan, "蕭何", colorXiao, 1,
+    "「……参りまする、蕭何様」",
+    "“...I shall come, Xiao He.“"),
+  -- 鐘室の処刑
+  narr("bg-court",
+    "長楽宮の鐘室。天井は青空に開き、地は布敷き、金属の兵器は一切無い――劉邦の生前の約束を、呂后は文字通り果たした。女たちが竹槍を握って待っていた。",
+    "Changle's bell-chamber. The roof open to the sky, the floor cloth-laid, no metal weapons — Empress Lü kept Liu Bang's vow to the letter. Women waited with bamboo spears."),
+  think("bg-court", "韓信", colorHan,
+    "「(竹の槍が突き刺さる中) ……」",
+    "“(As the bamboo spears pierced him)“",
+    "我、悔ゆらくは蒯通の計を用いざりしを。乃ち為に児女子に詐(あざむ) かるるを、豈(あに) 天に非ずや。/漂母様。千金は届けた。蕭何様――御身に感謝も恨みも、ありませぬ。御身に出会ったから、俺は俺で居られたのです。/それで、よかった。",
+    "I regret only not heeding Kuai Tong's counsel. To be deceived by women now — is this not heaven? / Old mother of the river: the thousand pieces were delivered. Xiao He: I have neither thanks nor resentment for you. Because of you, I was able to be myself. / And that was enough."),
+  narr("bg-court",
+    "韓信、死す。BCE 196。三族誅滅。淮陰の貧しい剣士は、最も美しい兵法と最も惨めな最期を、共に史記に刻まれた。",
+    "Han Xin dies. BCE 196. His three clans were executed. The poor swordsman of Huai-yin has, in the Records, both the most beautiful art of war and the most miserable end."),
+  endingStep("hanxin_death_changle")
+]
+
+-- ── Zhang Liang Act 3 — 引退 → 山に消える ──────────────────────────
+def colorQiyao := "#6a6a8a"
+
+def zhanglangAct3 := [
+  narr("bg-palace",
+    "BCE 202、漢の天下が定まった。劉邦は功臣を封じる時、張良に言った――『お主は望むものを言え。斉の三万戸を与えよう』。張良は、断った。",
+    "BCE 202. Han was secure. Enfeoffing the meritorious, Liu Bang said to Zhang Liang: “Name what you want. I give you three myriad households of Qi.“ Zhang Liang refused."),
+  duo("bg-palace", "張良", colorZhang, "劉邦", colorLiu, 1,
+    "「沛公、私が初めて沛公と出会ったのは、留(りゅう) の地。あの縁を忘れぬよう、留の万戸を頂ければ十分でございます」",
+    "“My lord, the first place we met was Liu. To remember that bond, ten thousand households of Liu will suffice.“"),
+  think("bg-palace", "張良", colorZhang,
+    "「(深々と頭を下げて) 三万戸を辞退した理由は、もう一つあるが、それは口にせぬ方が良い」",
+    "“(Bowing deeply) There is another reason I refuse the three myriad — best left unspoken.“",
+    "韓信は、いずれ殺される。私が大封を受ければ、私もそうなる。「飛鳥尽きて良弓蔵せられ、狡兎死して走狗烹らる」――私は、留 (りゅう) であって、留めない (とどまらない)。",
+    "Han Xin will be killed in time. With great enfeoffment, so will I. “When the flying birds are gone, the good bow is stored away; when the cunning hare dies, the running dog is cooked.“ I stay in Liu — but I do not stay."),
+  -- 黄老の道
+  narr("bg-mountain",
+    "張良はその後、辟穀(へきこく — 穀物を断つ)、導引(どういん — 体操) を始めた。「人間世(にんげんよ) のことは、もはや成った。私は赤松子(せきしょうし) の門人とならん」と告げて、長安を出た。",
+    "From then on, Zhang Liang began bigu (cereal abstinence) and daoyin (calisthenics). “The matters of the human world are done. I will become a disciple of Master Red Pine,“ he said, and left Chang'an."),
+  -- 商山四皓
+  narr("bg-pavilion",
+    "BCE 197。劉邦が太子を廃そうとした時、呂后は張良に泣きついた。張良は密かに『商山四皓』(東園公・甪里先生・綺里季・夏黄公) ―― 劉邦が常に招聘を拒まれていた老隠者四人 ―― を呼んで、太子の供とした。", "BCE 197. When Liu Bang tried to depose the crown prince, Empress Lü tearfully appealed to Zhang Liang. He secretly summoned the “Four Hoarheads of Shang Mountain“ — four old recluses Liu Bang had vainly tried to recruit — to attend the prince."),
+  narr("bg-palace",
+    "宴の席で、太子の脇に立つ白髯の四老人を見た劉邦は、戚夫人を呼んで言った――『あの四人を見たか。太子の羽翼は、もはや成った。我、廃すること能はず』。", "At the feast, seeing four white-bearded elders flanking the prince, Liu Bang called his concubine Lady Qi: “See those four? The prince's wings are grown. I cannot unseat him.“"),
+  think("bg-palace", "張良", colorZhang,
+    "「(廷の遠くから見ながら) ……これで太子は守られた」",
+    "“(Watching from afar) ...The prince is safe now.“",
+    "戚夫人は哀れだ。だが、漢を保つには、これしか道は無かった。私は、また人を不幸にした。",
+    "Lady Qi is to be pitied. But there was no other way to preserve Han. Again, I have made someone unhappy."),
+  -- 山に消える
+  narr("bg-mountain",
+    "BCE 189 ごろ、張良没。場所は不明。山中で仙人と共に居る、と噂された者もあり、ただ病死した、と記す者もあった。漂雲ならぬ妻 (歴史に名は無いが、本作では『黒綺』とする) が、最後の数年を共に山中で過ごし、共に旅立った。", "Around BCE 189, Zhang Liang died. The place unknown. Some said he was with immortals in the mountains; some simply that he died of illness. His wife — unnamed in history, here called Kokuki — spent his last years with him and departed alongside him."),
+  duo("bg-mountain", "黒綺", colorQiyao, "張良", colorZhang, 2,
+    "「あなた。漢の宮中に居れば、もっと長く生きられたでしょうに」",
+    "“My husband. Had you stayed at court, you would have lived longer.“"),
+  duo("bg-mountain", "張良", colorZhang, "黒綺", colorQiyao, 1,
+    "「(微笑んで) 黒綺、私は、生きるために生きたのではない。為すために生きた。為し終えた。あとは、お主との時間が、全てだ」",
+    "“(Smiling) Kokuki, I did not live for the sake of living. I lived to do. The doing is done. The time with you is all that remains.“"),
+  narr("bg-mountain",
+    "黄石公の試練を受けた青年は、こうして人間世から消えた。彼に救われた漢は、四百年続いた。彼が止められなかった韓信の死は、漢の影として、永く語り継がれた。",
+    "The young man who passed Huang Shi Gong's test left the human world thus. The Han he saved lasted four hundred years. The death of Han Xin he could not prevent remained, long after, as Han's shadow."),
+  endingStep("zhangliang_immortal_path")
+]
+
+-- ── Xiao He Act 3 — 韓信を殺す共犯者として、最後まで生きる ─────────
+def xiaoheAct3 := [
+  narr("bg-palace",
+    "BCE 202、漢成立。蕭何は相国 (しょうこく) に封じられた。論功行賞で第一の功績と認められた。武人たちは反対した――『戦場で命を懸けたのは我ら。文書を書いていただけの蕭何が一番とは何事か』。",
+    "BCE 202. Han is founded. Xiao He is enfeoffed as Chief Counselor. The first merit is given to him. The warriors object: “We risked our lives on the battlefield. The clerk who only wrote documents is the first?“"),
+  duo("bg-palace", "劉邦", colorLiu, "武人たち", "#5a5a5a", 2,
+    "「お主らは猟犬じゃ。獲物の在処を示してくれたのは蕭何じゃ。猟人と犬と、どちらが上か?」",
+    "“You are hunting dogs. Xiao He pointed out the prey. The hunter or the dog — which is above?“"),
+  think("bg-palace", "蕭何", colorXiao,
+    "「(深く頭を下げて) 陛下、過分のお言葉……」",
+    "“(Bowing deeply) Your Majesty, your words are too gracious...“",
+    "劉邦は、私を一番にすることで、武人たちと私の間に楔(くさび) を打ち込んだ。私は皇帝の最も近い臣となったが、同時に、最も孤独な臣となった。それは、お互い、わかっている。",
+    "By making me first, Liu Bang has driven a wedge between me and the warriors. I am the closest minister — and the most alone. We both know this."),
+  -- 月下追韓信の後悔と、現在
+  narr("bg-house",
+    "夜、蕭何の私邸。妻・妙容と二人。",
+    "Night. Xiao He's residence. Alone with his wife, Miao Rong."),
+  duo("bg-house", "妙容", "#7a5a8a", "蕭何", colorXiao, 2,
+    "「あなた。あの『月下追韓信』の夜、私は知っておりました。あなたが、いずれ、韓信様を救うのではなく、葬る方の人になることを」",
+    "“Husband. That moonlit night when you chased Han Xin — I knew. That you would, in time, become the man who buries him, not the man who saves him.“"),
+  think("bg-house", "蕭何", colorXiao,
+    "「(妙容の顔を見て、何も言えず)」",
+    "“(Looking at her, unable to speak)“",
+    "妙容、お主は、二十年前から、私の業(ごう) を知っていた。それでも私と共に居てくれた。お主には、もう何の言い訳もできぬ。",
+    "Miao Rong. You knew my karma twenty years before me. And you stayed. I owe you no more excuses."),
+  -- 鐘室の召喚
+  narr("bg-court",
+    "BCE 196。陳豨の謀反、劉邦親征。呂后が蕭何を呼んだ。", "BCE 196. Chen Xi revolts; Liu Bang takes the field. Empress Lü summons Xiao He."),
+  duo("bg-court", "呂雉", colorLu, "蕭何", colorXiao, 2,
+    "「相国、韓信を呼び寄せる役を、お主に頼みたい。お主の言葉なら、彼は信じる」",
+    "“Counselor, summon Han Xin for me. Only your words he will trust.“"),
+  duo("bg-court", "蕭何", colorXiao, "呂雉", colorLu, 1,
+    "「……承知いたしました」",
+    "“...As you command.“"),
+  think("bg-court", "蕭何", colorXiao,
+    "「(辞して、自邸の道すがら) 成 (な) すも蕭何、敗 (やぶ) るも蕭何――この句は、いずれ、こいつの墓碑銘になるであろう」",
+    "“(Walking back home) Made by Xiao He, broken by Xiao He — this phrase will become his epitaph in time.“",
+    "妙容、お主と相談する必要は、もう、無い。私は、共犯者として、これを為さねばならぬ。",
+    "Miao Rong. No more consultation with you. As an accomplice, I must do this."),
+  narr("bg-court",
+    "蕭何は韓信を長楽宮に連れて行った。鐘室の処刑。韓信は、最期の瞬間、蕭何に向かって何も言わなかった。蕭何も、何も言わなかった。",
+    "Xiao He led Han Xin to Changle Palace. The execution in the bell-chamber. At the last moment, Han Xin said nothing to Xiao He. Xiao He said nothing either."),
+  -- 投獄事件
+  narr("bg-palace",
+    "BCE 195、劉邦が黥布討伐より帰った時、関中の民が蕭何を讃え過ぎる、との讒言が再び。劉邦は蕭何を投獄した。後、廷尉が無罪を訴え、釈放された。劉邦はその日、蕭何を呼んで言った。",
+    "BCE 195, returning from the Ying Bu campaign, Liu Bang heard rumors that Guanzhong's people praised Xiao He too well. He had Xiao He jailed. Later, the chief justice argued for his innocence; he was released. That day Liu Bang summoned him —"),
+  duo("bg-palace", "劉邦", colorLiu, "蕭何", colorXiao, 2,
+    "「蕭何よ。お主を投獄したことを、悪く思うな。俺はただ、お主の名声が高すぎるのを、抑えただけだ」",
+    "“Xiao He. Do not think ill of being jailed. I only checked your reputation — too high.“"),
+  think("bg-palace", "蕭何", colorXiao,
+    "「(平伏して) 陛下、何の不満もございませぬ」",
+    "“(Prostrating) Your Majesty, no objection at all.“",
+    "劉邦よ、お主はもう長くない。お主が死ねば、呂雉の世が来る。私の役目は、漢を保つことだけだ。お主とも、もうすぐ、お別れだ。",
+    "Liu Bang, you will not last. After you, comes Lü Zhi's age. My only role is to preserve Han. Soon we part."),
+  -- 没
+  narr("bg-house",
+    "BCE 193、蕭何没。劉邦の崩御 (BCE 195) より二年遅れて、彼は世を去った。最後の言葉は、後継者・曹参を推挙することであった。「曹参、用うべし」――政の方針を変えず、漢初の安定期を支えた。", "BCE 193, Xiao He dies — two years after Liu Bang (BCE 195). His final word was his recommendation of his successor: “Use Cao Shen.“ Cao Shen kept the policies, sustaining the early stability of Han."),
+  duo("bg-house", "妙容", "#7a5a8a", "蕭何", colorXiao, 2,
+    "「あなた、もう休んでください」",
+    "“My husband, rest now.“"),
+  think("bg-house", "蕭何", colorXiao,
+    "「(息を整えて) 妙容、私の生涯、賭けは、勝った。だが、賭け金は、お主たち一族の名誉と、韓信の命だった」",
+    "“(Steadying his breath) Miao Rong, the wager of my life — I won it. But the stake was your family's honor and Han Xin's life.“",
+    "それでも、漢は四百年続く。私の罪は、漢の安寧と引き換えに、贖われた、と信じたい。",
+    "Even so, Han will last four hundred years. I want to believe my crime was paid for, exchanged for Han's peace."),
+  narr("bg-house",
+    "蕭何、目を閉じた。漢の最初の相国の物語は、こうして終わる。彼は史記に『漢の宗廟・社稷を立てた者』として記される。同時に、『韓信を殺した者』としても。両方の記述は、矛盾しない。",
+    "Xiao He closed his eyes. The story of Han's first chancellor thus ends. He is recorded as “he who built Han's ancestral shrine and altars,“ and also as “he who killed Han Xin.“ The two records do not contradict."),
+  endingStep("xiaohe_died_chancellor")
+]
+
 -- ── Scene lookup ────────────────────────────────────────────────────
 def sceneOf(id) :=
   match id with
@@ -2420,12 +2629,14 @@ def sceneOf(id) :=
   | "hanxin_beishui_failed" => hanxinBeishuiFailed
   | "hanxin_beishui_continues" => hanxinBeishuiContinues
   | "hanxin_xizheng" => hanxinXizheng
+  | "hanxin_act3" => hanxinAct3
   | "zhangliang_act1" => zhanglangAct1
   | "zhangliang_act1_end" => zhanglangAct1End
   | "zhangliang_chat_huangshi" => zhanglangChatHuangshi
   | "zhangliang_act1_after_chat" => zhanglangAct1AfterChat
   | "zhangliang_no_bingfa_end" => zhanglangNoBingfaEnd
   | "zhangliang_act2" => zhanglangAct2
+  | "zhangliang_act3" => zhanglangAct3
   | "xiaohe_act1" => xiaoheAct1
   | "xiaohe_act1_end" => xiaoheAct1End
   | "xiaohe_chat_miaorong" => xiaoheChatMiaorong
@@ -2433,6 +2644,7 @@ def sceneOf(id) :=
   | "xiaohe_act2" => xiaoheAct2
   | "xiaohe_looter_end" => xiaoheLooterEnd
   | "xiaohe_purity_death_end" => xiaohePurityDeathEnd
+  | "xiaohe_act3" => xiaoheAct3
   | "fanzeng_act1" => fanzengAct1
   | "fanzeng_act1_end" => fanzengAct1End
   | "fanzeng_chat_xiangbo" => fanzengChatXiangbo
@@ -3149,6 +3361,9 @@ def endingTitle(id) :=
   | "xiangyu_wujiang" => "TRUE END ― 烏江自刎 (項羽 享年 31)"
   | "xiangyu_crossed_recluse" => "★ 隠し END: 江東に隠遁す (項羽 + 虞姫の骨)"
   | "liubang_died_emperor" => "TRUE END ― 漢高祖 崩御 (BCE 195, 享年 62)"
+  | "hanxin_death_changle" => "TRUE END ― 長楽宮鐘室の最期 (韓信 BCE 196)"
+  | "zhangliang_immortal_path" => "TRUE END ― 仙人の道へ (張良 BCE 189 頃)"
+  | "xiaohe_died_chancellor" => "TRUE END ― 漢初の相国、賭けに勝つ (蕭何 BCE 193)"
   -- Act 2 main endings
   | "liubang_act2_clear" => "第二幕 完 ― 劉邦 (垓下前夜)"
   | "xiangyu_act2_clear" => "第二幕 完 ― 項羽 (鴻溝の和約)"
