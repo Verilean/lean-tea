@@ -46,6 +46,8 @@ import LeanTea.Llm.ChatStore
 import LeanTea.Browser
 import LeanTea.Agent.Memory
 import LeanTea.Agent.Script
+import LeanTea.Agent.Playbook
+import LeanTea.Agent.Conductor
 import LeanTea.Crypto.Base64
 import LeanTea.Crypto.Sha256
 import LeanTea.Crypto.Hmac

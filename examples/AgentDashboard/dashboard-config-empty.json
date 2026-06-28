@@ -1,0 +1,8 @@
+{
+  "model": "(unused)",
+  "baseUrl": "http://127.0.0.1:11211/v1",
+  "system": "(unused)",
+  "servers": [],
+  "observerJs": "",
+  "tickMs": 500
+}

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>toy game — agent target</title>
+<style>
+  * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+  body {
+    background: #0b0f17; color: #e4e7eb; padding: 24px;
+    display: flex; flex-direction: column; gap: 18px; max-width: 520px; margin: 0 auto;
+  }
+  header { display: flex; gap: 12px; align-items: center; }
+  header h1 { margin: 0; font-size: 18px; color: #93c5fd; }
+  header .screen {
+    background: #1f2937; color: #fbbf24; padding: 4px 10px; border-radius: 6px;
+    font: 600 12px ui-monospace, Menlo, monospace; text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .stats {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;
+    background: #111827; border: 1px solid #1f2937; border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .stats .k { color: #6b7280; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .stats .v { color: #e4e7eb; font: 600 24px ui-monospace, Menlo, monospace; }
+  .energy {
+    height: 8px; background: #1f2937; border-radius: 4px; overflow: hidden;
+    margin-top: 6px;
+  }
+  .energy > div { height: 100%; background: linear-gradient(90deg, #16a34a, #22d3ee); transition: width 200ms; }
+  .actions {
+    display: flex; gap: 10px;
+  }
+  button {
+    background: #2563eb; color: white; border: 0; border-radius: 8px;
+    padding: 14px 18px; font: 600 14px inherit; cursor: pointer; flex: 1;
+  }
+  button.big   { background: #16a34a; }
+  button.heal  { background: #ca8a04; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #log {
+    background: #0f1422; border: 1px solid #1f2937; border-radius: 6px;
+    padding: 8px 12px; max-height: 180px; overflow-y: auto;
+    font: 12px ui-monospace, Menlo, monospace; color: #cbd5e1;
+  }
+  #log .battle { color: #fbbf24; }
+  #log .reward { color: #4ade80; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>toy game</h1>
+    <span class="screen" id="screen">hub</span>
+  </header>
+  <div class="stats">
+    <div><div class="k">coins</div><div class="v" id="coins">0</div></div>
+    <div><div class="k">energy</div><div class="v" id="energy">5</div>
+      <div class="energy"><div id="energyBar" style="width:100%"></div></div>
+    </div>
+    <div><div class="k">runs</div><div class="v" id="runs">0</div></div>
+  </div>
+  <div class="actions">
+    <button id="btnCoin">Collect Coin <small>+1</small></button>
+    <button id="btnQuest" class="big">Big Quest <small>+10</small></button>
+    <button id="btnHeal" class="heal">Rest <small>(refill energy)</small></button>
+  </div>
+  <div id="log"></div>
+<script>
+/*
+  Toy "game" the agent dashboard plays against. State is exposed on
+  window.__screen / window.__coins / window.__energy / window.__runs
+  so the conductor's observer JS can pull it cheaply.
+
+  Reward model (for the agent to discover via the bandit):
+    - Collect Coin: +1, costs 1 energy. Always available when energy>0.
+    - Big Quest:    +10, costs 3 energy. Briefly switches screen to "battle"
+                    for 1500ms before returning to "hub".
+    - Rest:         refills energy to 5. No reward, but unblocks the others.
+
+  The optimal policy is: Big Quest when energy>=3, else Rest, else
+  Collect Coin (the conductor should NEVER need Collect Coin because
+  Big Quest dominates on reward/energy ratio).
+*/
+const $ = id => document.getElementById(id);
+
+let coins = 0, energy = 5, runs = 0, screen = 'hub';
+
+function pushLog(s, klass) {
+  const d = document.createElement('div');
+  if (klass) d.className = klass;
+  const ts = new Date().toLocaleTimeString();
+  d.textContent = `${ts}  ${s}`;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+function render() {
+  $('coins').textContent = coins;
+  $('energy').textContent = energy;
+  $('runs').textContent = runs;
+  $('energyBar').style.width = (energy / 5 * 100) + '%';
+  $('screen').textContent = screen;
+  $('btnCoin').disabled  = (screen !== 'hub') || (energy < 1);
+  $('btnQuest').disabled = (screen !== 'hub') || (energy < 3);
+  $('btnHeal').disabled  = (screen !== 'hub') || (energy >= 5);
+  window.__screen = screen;
+  window.__coins  = coins;
+  window.__energy = energy;
+  window.__runs   = runs;
+}
+
+$('btnCoin').onclick = () => {
+  if ($('btnCoin').disabled) return;
+  coins += 1; energy -= 1; runs += 1;
+  pushLog('+1 coin', 'reward');
+  render();
+};
+
+$('btnQuest').onclick = () => {
+  if ($('btnQuest').disabled) return;
+  energy -= 3; runs += 1;
+  screen = 'battle';
+  pushLog('big quest started', 'battle');
+  render();
+  setTimeout(() => {
+    coins += 10;
+    screen = 'hub';
+    pushLog('+10 coins (quest cleared)', 'reward');
+    render();
+  }, 1500);
+};
+
+$('btnHeal').onclick = () => {
+  if ($('btnHeal').disabled) return;
+  energy = 5;
+  pushLog('energy refilled');
+  render();
+};
+
+render();
+</script>
+</body>
+</html>

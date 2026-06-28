@@ -1,0 +1,21 @@
+{
+  "id": "coin",
+  "name": "collect coin",
+  "description": "Click the Collect Coin button. Cheap, always available when energy>0.",
+  "pre": {"whenScreen": "hub"},
+  "estReward": 1.0,
+  "maxBurst": 5,
+  "timeoutMs": 5000,
+  "enabled": true,
+  "script": {
+    "name": "coin",
+    "description": "click coin",
+    "steps": [
+      {"act": "click_xy", "x": 80,  "y": 256, "note": "Collect Coin button"},
+      {"act": "wait",     "ms": 300},
+      {"act": "tool_call", "tool": "browser__browser_evaluate",
+                           "args": {"expression": "({reward: 1})"},
+                           "note": "report 1 coin"}
+    ]
+  }
+}

@@ -548,6 +548,15 @@ lean_exe coder_mcp_serve where
   srcDir := "examples"
   root := `CoderMcp.Serve
 
+/-- Visual control / telemetry for a `LeanTea.Agent.Conductor`. Boots
+    the MCP orchestrator + a conductor loop in `IO.asTask`, exposes
+    `live` / `playbooks` / `rewards` tabs with bandit stats + pause /
+    resume / abort controls. Pair with `browser_mcp_serve` + a tiny
+    JSON-based playbook collection to play a browser game. -/
+lean_exe agent_dashboard_serve where
+  srcDir := "examples"
+  root := `AgentDashboard.Serve
+
 /-- MCP server fronting the Google Gemini API. Five tools:
     `gemini_ask`, `gemini_chat`, `gemini_review_files` (long-context
     multi-file holistic review — exploits Pro's 2M-token window),

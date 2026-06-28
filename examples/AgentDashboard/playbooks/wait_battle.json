@@ -1,0 +1,20 @@
+{
+  "id": "wait_battle",
+  "name": "wait out battle",
+  "description": "When the toy game is on the battle screen, just wait — clicks don't do anything until it returns to hub.",
+  "pre": {"whenScreen": "battle"},
+  "estReward": 0.0,
+  "maxBurst": 0,
+  "timeoutMs": 3000,
+  "enabled": true,
+  "script": {
+    "name": "wait_battle",
+    "description": "sleep through the battle animation",
+    "steps": [
+      {"act": "wait", "ms": 1500, "note": "battle screen auto-clears after 1.5s"},
+      {"act": "tool_call", "tool": "browser__browser_evaluate",
+                           "args": {"expression": "({reward: 0})"},
+                           "note": "no-op reward — but successful run"}
+    ]
+  }
+}

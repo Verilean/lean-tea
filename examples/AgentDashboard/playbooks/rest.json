@@ -1,0 +1,21 @@
+{
+  "id": "rest",
+  "name": "rest (refill energy)",
+  "description": "Click Rest when no quest is doable. No reward, but unblocks the others.",
+  "pre": {"whenScreen": "hub"},
+  "estReward": 0.1,
+  "maxBurst": 1,
+  "timeoutMs": 3000,
+  "enabled": true,
+  "script": {
+    "name": "rest",
+    "description": "click rest",
+    "steps": [
+      {"act": "click_xy", "x": 400, "y": 256, "note": "Rest button"},
+      {"act": "wait",     "ms": 200},
+      {"act": "tool_call", "tool": "browser__browser_evaluate",
+                           "args": {"expression": "({reward: 0.1})"},
+                           "note": "minor reward so bandit doesn't shun rest entirely"}
+    ]
+  }
+}
