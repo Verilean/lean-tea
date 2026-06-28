@@ -479,6 +479,83 @@ function maybeCheckpoint(state) {
   }
 }
 
+// ─── Audio runtime: two cross-fading <audio> elements with idempotent
+// play(id). Files: /assets/bgm_${id}.ogg. Empty id ('') = stop. ──
+window.chuhanAudio = (function () {
+  const tracks = ['title','village','court','camp','battle','journey','grief','ending'];
+  // Probe asset existence once so we don't spam 404s when running
+  // before BGM has been generated.
+  const have = {};
+  tracks.forEach((id) => {
+    fetch('/assets/bgm_' + id + '.ogg', {method: 'HEAD'})
+      .then((r) => { have[id] = r.ok; })
+      .catch(() => { have[id] = false; });
+  });
+
+  const els = [new Audio(), new Audio()];
+  els.forEach((a) => { a.loop = true; a.volume = 0; a.preload = 'auto'; });
+  let active = -1;
+  let currentId = '';
+  let muted = localStorage.getItem('chuhan-muted') === '1';
+  const target = 0.45;
+
+  function fade(el, to, ms) {
+    const from = el.volume;
+    const t0 = performance.now();
+    function step(t) {
+      const k = Math.min(1, (t - t0) / ms);
+      el.volume = from + (to - from) * k;
+      if (k < 1) requestAnimationFrame(step);
+      else if (to === 0) { try { el.pause(); } catch (_) {} }
+    }
+    requestAnimationFrame(step);
+  }
+
+  function play(id) {
+    if (id === currentId) return;
+    currentId = id;
+    // Fade out the previous track.
+    if (active >= 0) fade(els[active], 0, 800);
+    if (!id) { active = -1; return; }
+    if (have[id] === false) return; // asset missing — silent
+    const next = 1 - (active < 0 ? 1 : active);
+    const el = els[next];
+    el.src = '/assets/bgm_' + id + '.ogg';
+    el.currentTime = 0;
+    el.volume = 0;
+    const tryPlay = el.play();
+    if (tryPlay && tryPlay.catch) tryPlay.catch(() => {/* autoplay blocked — first click unlocks */});
+    fade(el, muted ? 0 : target, 800);
+    active = next;
+  }
+
+  function sfx(id) {
+    if (muted) return;
+    const a = new Audio('/assets/sfx_' + id + '.ogg');
+    a.volume = 0.7;
+    a.play().catch(() => {});
+  }
+
+  function toggleMute() {
+    muted = !muted;
+    localStorage.setItem('chuhan-muted', muted ? '1' : '0');
+    if (active >= 0) fade(els[active], muted ? 0 : target, 200);
+  }
+
+  // First user gesture unlocks autoplay — retry current id if it didn't start.
+  function unlock() {
+    if (active >= 0 && els[active].paused && currentId) {
+      els[active].play().catch(() => {});
+    }
+    document.removeEventListener('click', unlock);
+    document.removeEventListener('keydown', unlock);
+  }
+  document.addEventListener('click', unlock);
+  document.addEventListener('keydown', unlock);
+
+  return { play, sfx, toggleMute, muted: () => muted };
+})();
+
 let state = loadSave() || initState();
 
 // ─── Test mode: ?scene=xxx (&char=xxx) jumps directly. ────────────

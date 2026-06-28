@@ -210,6 +210,9 @@ def handler (cfg : LeanTea.Llm.Openai.Config)
             if rel.endsWith ".png"  then "image/png"
             else if rel.endsWith ".jpg" || rel.endsWith ".jpeg" then "image/jpeg"
             else if rel.endsWith ".webp" then "image/webp"
+            else if rel.endsWith ".ogg" then "audio/ogg"
+            else if rel.endsWith ".mp3" then "audio/mpeg"
+            else if rel.endsWith ".wav" then "audio/wav"
             else "application/octet-stream"
           return {
             status := 200,

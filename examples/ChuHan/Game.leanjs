@@ -44,6 +44,16 @@ extern js "(id) => { try { const cur = JSON.parse(localStorage.getItem('chuhan-e
 extern js "() => { try { return JSON.parse(localStorage.getItem('chuhan-endings') || '{}'); } catch (_) { return {}; } }" lsAllEndings
 extern js "(obj, k) => Object.prototype.hasOwnProperty.call(obj, k) ? 1 : 0" hasKey
 
+-- ── Audio bridge ───────────────────────────────────────────────────
+-- Two crossfading <audio> tags managed by chuhanAudio in page.html.
+-- audioPlay is idempotent: passing the same id back-to-back is a no-op,
+-- so we can safely call it on every scene render without restarting
+-- the track. id "" stops playback.
+extern js "(id) => { try { window.chuhanAudio && window.chuhanAudio.play(id); } catch (_) {} }" audioPlay
+extern js "(id) => { try { window.chuhanAudio && window.chuhanAudio.sfx(id); } catch (_) {} }" audioSfx
+extern js "() => { try { window.chuhanAudio && window.chuhanAudio.toggleMute(); } catch (_) {} }" audioToggleMute
+extern js "() => { try { return window.chuhanAudio && window.chuhanAudio.muted() ? 1 : 0; } catch (_) { return 0; } }" audioIsMuted
+
 -- ── i18n helper ─────────────────────────────────────────────────────
 -- A localised string is `{ja: "…", en: "…"}`. `tr` picks the requested
 -- language and falls back to `ja` when the target is empty.
@@ -3261,6 +3271,9 @@ def update(msg, state) :=
                         char: "", sceneId: "", beat: 0,
                         stats: initStats, flags: {},
                         battle: initBattle, endingId: "", toast: "" , mini: state.mini, llm: state.llm}
+  | "toggleMute" => (
+    let _ := audioToggleMute();
+    state )
   | _ => state
 
 -- ── View ────────────────────────────────────────────────────────────
@@ -3327,6 +3340,9 @@ def renderHud(state) :=
     "</b></span><span class='yr'>BCE ", jstr(0 - s.year),
     "</span>", renderLang(state),
     renderSaveMenu(state),
+    "<button class='menu-btn' data-msg='{“tag“:“toggleMute“}' title='音声 ON/OFF'>",
+    (if audioIsMuted() == 1 then "🔇" else "🔊"),
+    "</button>",
     "<button class='menu-btn' data-msg='{“tag“:“backToSelect“}'>選択へ</button></div>"
   ])
 
@@ -3839,7 +3855,46 @@ def viewGallery(state) :=
   ])
 
 -- Top-level view
-def view(state) :=
+-- Pick a BGM id from a scene's background. Empty string = no music.
+def bgmForBg(bg) :=
+  if bg == "bg-pei" then "village"
+  else if bg == "bg-house" then "village"
+  else if bg == "bg-pavilion" then "village"
+  else if bg == "bg-court" then "court"
+  else if bg == "bg-palace" then "court"
+  else if bg == "bg-banquet" then "court"
+  else if bg == "bg-altar" then "court"
+  else if bg == "bg-camp" then "camp"
+  else if bg == "bg-tent" then "camp"
+  else if bg == "bg-battlefield" then "battle"
+  else if bg == "bg-burning" then "battle"
+  else if bg == "bg-jielo" then "battle"
+  else if bg == "bg-yingyang" then "battle"
+  else if bg == "bg-mountain" then "journey"
+  else if bg == "bg-river" then "journey"
+  else if bg == "bg-night" then "journey"
+  else if bg == "bg-gorge" then "grief"
+  else if bg == "bg-pengcheng" then "grief"
+  else "village"
+
+-- BGM for the current state — phase has priority over scene bg.
+def bgmForPhase(state) :=
+  if state.phase == "title" then "title"
+  else if state.phase == "select" then "title"
+  else if state.phase == "gallery" then "title"
+  else if state.phase == "ending" then "ending"
+  else if state.phase == "battle" then "battle"
+  else if state.phase == "minigame" then "camp"
+  else if state.phase == "llm_chat" then "village"
+  else if state.phase == "scene" then
+    let scene := sceneOf(state.sceneId);
+    if arrLen(scene) > 0 then
+      let beat := if state.beat < arrLen(scene) then state.beat else 0;
+      bgmForBg(arrGet(scene, beat).bg)
+    else "village"
+  else ""
+
+def viewByPhase(state) :=
   match state.phase with
   | "title"    => viewTitle(state)
   | "select"   => viewSelect(state)
@@ -3850,6 +3905,10 @@ def view(state) :=
   | "llm_chat" => viewLlmChat(state)
   | "gallery"  => viewGallery(state)
   | _ => viewTitle(state)
+
+def view(state) :=
+  let _ := audioPlay(bgmForPhase(state));
+  viewByPhase(state)
 
 -- Smoke entry point so the LeanJs runner can verify the program
 -- compiles and the initial render works without DOM.
