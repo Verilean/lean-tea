@@ -66,9 +66,78 @@ private def findAssetRefs (s : String) : List String := Id.run do
       out := out.push name
   return out.toList
 
-def auditAssets (sources : List String) (assetDir : String)
+/-- Pull every quoted string out of a chunk until the matching `)` of the
+call we're parsing. Char-by-char walk, depth-tracked. LeanJs has no
+string escapes so a `"` always terminates a string. -/
+private def quotedArgsUntilClose (chunk : List Char) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut depth : Nat := 1
+  let mut cs := chunk
+  while depth > 0 && !cs.isEmpty do
+    match cs with
+    | '(' :: rest => depth := depth + 1; cs := rest
+    | ')' :: rest => depth := depth - 1; cs := rest
+    | '"' :: rest =>
+      let (body, after) := rest.span (· != '"')
+      out := out.push body.asString
+      cs := match after with | _ :: t => t | [] => []
+    | _ :: rest => cs := rest
+    | [] => cs := []
+  return out
+
+/-- True if a string is a CSS hex literal like `#5a5a5a`. -/
+private def looksLikeHexColor (s : String) : Bool :=
+  let chars := s.toList
+  match chars with
+  | '#' :: rest =>
+    rest.length ≤ 9 && rest.all (fun c => c.isDigit ||
+      (c ≥ 'a' && c ≤ 'f') || (c ≥ 'A' && c ≤ 'F'))
+  | _ => false
+
+/-- Find every speaker referenced in `say(bg, who, …)`, `think(bg, who, …)`,
+or `duo(bg, who, color, who2, …)`. The second quoted arg is the speaker;
+for `duo`, the third quoted arg is the second speaker. `narr(bg, sayJa,
+sayEn)` is intentionally excluded — its second quoted string is narration,
+not a name. -/
+private def findSpeakers (src : String) : List String := Id.run do
+  let mut speakers : Std.HashSet String := {}
+  let openers : List (String × Bool) := [("say(", false), ("think(", false), ("duo(", true)]
+  for (tok, alsoSecond) in openers do
+    for part in (src.splitOn tok).tail! do
+      let argsAll := quotedArgsUntilClose part.toList
+      -- Drop hex-colour literals so duo's inline `"#5a5a5a"` colour
+      -- arg doesn't masquerade as a speaker.
+      let args := argsAll.filter (fun s => !looksLikeHexColor s)
+      if h : 1 < args.size then
+        let s := args[1]
+        if !s.isEmpty then speakers := speakers.insert s
+      if alsoSecond && args.size > 2 then
+        let s := args[2]!
+        if !s.isEmpty then speakers := speakers.insert s
+  return speakers.toList
+
+/-- Names the LeanJs source explicitly maps to a portrait. Matches every
+`name == "X"` literal in `spriteAssetForName` and friends. -/
+private def findCoveredSpeakers (src : String) : List String := Id.run do
+  let parts := src.splitOn "name == \""
+  let mut covered : Std.HashSet String := {}
+  for part in parts.tail! do
+    let n := part.takeWhile (· != '"') |>.toString
+    if !n.isEmpty then covered := covered.insert n
+  return covered.toList
+
+/-- Generic role names that intentionally don't get a portrait (narrator
+stand-ins, anonymous extras). The audit should not flag these. -/
+private def genericRoles : List String := [
+  "元囚人", "屠殺の若者", "部下", "武人たち", "老婆", "亭長",
+  "漂母", "民衆", "兵士", "役人", "商人", "童", "侍女",
+  ""
+]
+
+def auditAssets (gameSrc : String) (pageSrc : String) (assetDir : String)
     (manifestPath : String) : IO Unit := do
-  let refs := sources.foldl (fun acc s => acc ++ findAssetRefs s) []
+  -- 1) Asset existence: every /assets/X.ext in the sources resolves on disk.
+  let refs := findAssetRefs gameSrc ++ findAssetRefs pageSrc
   let unique := refs.foldl
     (fun (seen, out) n => if seen.contains n then (seen, out)
                           else (seen.insert n, out.push n))
@@ -80,21 +149,37 @@ def auditAssets (sources : List String) (assetDir : String)
     if !(← System.FilePath.pathExists path) then
       missing := missing.push name
   let missingSorted := missing.qsort (· < ·)
-  if missingSorted.isEmpty then
-    -- Nothing missing — drop a stale manifest file if one exists.
+  -- 2) Speaker coverage: every speaker in say/think/duo has either a
+  --    portrait mapping or is on the generic-role allowlist.
+  let speakers := findSpeakers gameSrc
+  let covered := findCoveredSpeakers gameSrc
+  let coveredSet : Std.HashSet String := covered.foldl (·.insert ·) {}
+  let genericSet : Std.HashSet String := genericRoles.foldl (·.insert ·) {}
+  let uncovered := speakers.filter (fun s =>
+    !coveredSet.contains s && !genericSet.contains s)
+  let uncoveredSorted := uncovered.toArray.qsort (· < ·)
+  -- 3) Report
+  let hasIssues := !missingSorted.isEmpty || !uncoveredSorted.isEmpty
+  if !hasIssues then
     if ← System.FilePath.pathExists manifestPath then
       IO.FS.writeFile manifestPath
-        "# All referenced assets present as of last server boot.\n"
+        "# All referenced assets present and all speakers covered as of last boot.\n"
   else
-    IO.eprintln s!"chuhan: ⚠ {missingSorted.size} missing asset(s) (checked {unique.size} reference(s))"
-    for m in missingSorted do
-      IO.eprintln s!"  MISSING_ASSET: {m}"
-    let body := String.intercalate "\n" missingSorted.toList
+    if !missingSorted.isEmpty then
+      IO.eprintln s!"chuhan: ⚠ {missingSorted.size} missing asset(s) (checked {unique.size} reference(s))"
+      for m in missingSorted do IO.eprintln s!"  MISSING_ASSET: {m}"
+    if !uncoveredSorted.isEmpty then
+      IO.eprintln s!"chuhan: ⚠ {uncoveredSorted.size} speaker(s) with no portrait mapping"
+      for s in uncoveredSorted do IO.eprintln s!"  MISSING_PORTRAIT: {s}"
+    let missLines := missingSorted.toList.map (fun n => "MISSING_ASSET: " ++ n)
+    let speakerLines := uncoveredSorted.toList.map (fun n => "MISSING_PORTRAIT: " ++ n)
     IO.FS.writeFile manifestPath <|
       "# Auto-generated by chuhan_serve startup audit.\n" ++
-      "# Each line: an /assets/<NAME> referenced in code but missing on disk.\n" ++
+      "# MISSING_ASSET: a /assets/<NAME> referenced in code but absent on disk.\n" ++
+      "# MISSING_PORTRAIT: a named speaker (say/think/duo) with no entry in\n" ++
+      "#                   spriteAssetForName and not on the generic-role allowlist.\n" ++
       "# Regenerate by restarting the server.\n\n" ++
-      body ++ "\n"
+      String.intercalate "\n" (missLines ++ speakerLines) ++ "\n"
 
 abbrev GameProvider := IO (String × Bool)
 
@@ -322,7 +407,7 @@ def serveMain (args : List String) : IO Unit := do
   /- Asset audit: anything missing is loud (stderr + manifest file). -/
   let gameSrc ← ChuHan.loadSource
   let pageSrc ← IO.FS.readFile "examples/ChuHan/page.html"
-  auditAssets [gameSrc, pageSrc] "examples/ChuHan/assets"
+  auditAssets gameSrc pageSrc "examples/ChuHan/assets"
               "examples/ChuHan/MISSING_ASSETS.txt"
   /- Use `serveConcurrent` because /api/ask can block on the LLM for
      several seconds; while it's blocked the user may still navigate
@@ -330,5 +415,47 @@ def serveMain (args : List String) : IO Unit := do
   serveConcurrent a.port a.host (handler cfg pageProv gameProv)
 
 end ChuHanServe
+
+/-! ## Compile-time asset check
+
+Runs at Lean elaboration of this module (i.e. during `lake build
+chuhan_serve` whenever Serve.lean is reprocessed). Halts the build with
+a `MISSING_ASSET:` list if the game or page references a `/assets/X.ext`
+file that's absent on disk. The runtime audit in `serveMain` is a
+belt-and-braces catch for when assets disappear *after* the build was
+cached (lake won't reprocess Serve.lean just because someone deleted
+a PNG).
+
+If `examples/ChuHan/Game.leanjs` can't be located (e.g. building from
+a different working directory), we silently skip — the runtime audit
+will then take over. We never want this elab check to false-positive
+on people who aren't building from the repo root. -/
+private def compileTimeAssetCheck : IO Unit := do
+  let gamePath := "examples/ChuHan/Game.leanjs"
+  let pagePath := "examples/ChuHan/page.html"
+  let assetDir := "examples/ChuHan/assets"
+  unless ← System.FilePath.pathExists gamePath do return ()
+  unless ← System.FilePath.pathExists pagePath do return ()
+  let gameSrc ← IO.FS.readFile gamePath
+  let pageSrc ← IO.FS.readFile pagePath
+  let refs := ChuHanServe.findAssetRefs gameSrc ++ ChuHanServe.findAssetRefs pageSrc
+  let unique := refs.foldl
+    (fun (seen, out) n => if seen.contains n then (seen, out)
+                          else (seen.insert n, out.push n))
+    (({} : Std.HashSet String), (#[] : Array String))
+    |>.snd
+  let mut missing : Array String := #[]
+  for name in unique do
+    let path := assetDir ++ "/" ++ name
+    if !(← System.FilePath.pathExists path) then
+      missing := missing.push name
+  let sorted := missing.qsort (· < ·)
+  if !sorted.isEmpty then
+    let lines := sorted.toList.map (fun m => s!"  MISSING_ASSET: {m}")
+    throw <| IO.userError <|
+      s!"build halted — {sorted.size} missing asset(s) in {assetDir}:\n" ++
+      String.intercalate "\n" lines
+
+#eval compileTimeAssetCheck
 
 def main (args : List String) : IO Unit := ChuHanServe.serveMain args
