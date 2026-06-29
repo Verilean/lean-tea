@@ -3444,6 +3444,7 @@ def spriteAssetForName(name) :=
   else if name == "項伯" then "/assets/char_xiangbo.png"
   else if name == "蒯通" then "/assets/char_kuaitong.png"
   else if name == "黄石公" then "/assets/char_huangshi.png"
+  else if name == "呂公" then "/assets/char_luwen.png"
   else if name == "呂雉" then "/assets/wife_luzhi.png"
   else if name == "虞姫" then "/assets/wife_yuji.png"
   else if name == "漂雲" then "/assets/wife_piaoyun.png"
