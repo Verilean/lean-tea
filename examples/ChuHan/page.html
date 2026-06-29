@@ -828,13 +828,14 @@ function maybeStartRingLoop() {
       const now = performance.now() - ringStartWallMs;
       state = update({tag: 'miniRingTick', now: now}, state);
       // Re-render the jade-ring view inline (cheap — small DOM).
-      const card = stage.querySelector('.mini-card');
+      // NB: the panel class is `.panel-mini` now, not the historical
+      // `.mini-card`. Keep these two in sync with the panel helper.
+      const card = stage.querySelector('.panel-mini');
       if (card) card.outerHTML = (function() {
-        // Cheap re-render: build the wrapper HTML then slice the .mini-card out.
         const fragHtml = view(state);
         const tmp = document.createElement('div');
         tmp.innerHTML = fragHtml;
-        const c = tmp.querySelector('.mini-card');
+        const c = tmp.querySelector('.panel-mini');
         return c ? c.outerHTML : fragHtml;
       })();
       ringRafHandle = requestAnimationFrame(frame);
