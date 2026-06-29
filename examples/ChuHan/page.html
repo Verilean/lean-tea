@@ -556,7 +556,7 @@ window.chuhanAudio = (function () {
   return { play, sfx, toggleMute, muted: () => muted };
 })();
 
-let state = loadSave() || initState();
+let state = loadSave() || initState;
 
 // ─── Test mode: ?scene=xxx (&char=xxx) jumps directly. ────────────
 (function applyUrlOverride() {
