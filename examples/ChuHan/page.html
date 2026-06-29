@@ -141,9 +141,9 @@
     }
     @keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
     .choices {
-      position: absolute; bottom: 200px; left: 50%; transform: translateX(-50%);
+      position: absolute; bottom: 220px; left: 50%; transform: translateX(-50%);
       display: flex; flex-direction: column; gap: 8px; min-width: 480px;
-      pointer-events: none;
+      pointer-events: none; z-index: 5;
     }
     .choice {
       pointer-events: auto;
