@@ -3321,6 +3321,38 @@ def buttonHtml(kind, msg, htmlBody) :=
     htmlBody, "</button>"
   ])
 
+-- ── Panel kit ──────────────────────────────────────────────────────
+-- Bordered container with optional title. Same kind-driven idea as the
+-- button kit: `panel("mini", "顔相鑑定", body)` emits a panel with the
+-- mini-game styling. Empty title skips the <h2>.
+def panel(kind, title, body) :=
+  let head := if title == "" then ""
+              else sjoin(["<h2>", hesc(title), "</h2>"]);
+  sjoin([
+    "<div class='panel panel-", kind, "'>",
+    head, body, "</div>"
+  ])
+
+def panelMod(kind, mod, title, body) :=
+  let head := if title == "" then ""
+              else sjoin(["<h2>", hesc(title), "</h2>"]);
+  sjoin([
+    "<div class='panel panel-", kind, " ", mod, "'>",
+    head, body, "</div>"
+  ])
+
+-- ── Portrait helper ────────────────────────────────────────────────
+-- Image with a gradient caption overlay at the bottom. Used by the
+-- character-select card and (eventually) any sprite that wants the
+-- same treatment.
+def portrait(src, alt, caption) :=
+  sjoin([
+    "<div class='portrait'>",
+    "<img src='", src, "' alt='", hesc(alt), "' loading='lazy'>",
+    "<div class='portrait-name'>", hesc(caption), "</div>",
+    "</div>"
+  ])
+
 def renderLang(state) :=
   let ja := if state.lang == "ja" then " active" else "";
   let en := if state.lang == "en" then " active" else "";
@@ -3439,9 +3471,7 @@ def renderCharCard(state, c) :=
   let ep := if state.lang == "en" then c.epithetEn else c.epithetJa;
   let desc := if state.lang == "en" then c.descEn else c.descJa;
   let body := sjoin([
-    "<div class='char-portrait'>",
-    "<img src='/assets/char_", c.id, ".png' alt='", hesc(nm), "' loading='lazy'>",
-    "<div class='char-portrait-name'>", hesc(nm), "</div></div>",
+    portrait(sjoin(["/assets/char_", c.id, ".png"]), nm, nm),
     "<h3>", hesc(nm), "</h3>",
     "<div class='epithet'>", hesc(ep), "</div>",
     "<div class='desc'>", hesc(desc), "</div>",
@@ -3530,12 +3560,13 @@ def renderDialogueBox(state, step) :=
                      else sjoin(["<div class='dialogue-speaker'>", hesc(speaker), "</div>"]);
   let thinkHtml := if think == "" then ""
                    else sjoin(["<div class='dialogue-inner'>", hesc(think), "</div>"]);
-  sjoin([
-    "<div class='dialogue-box'>", speakerHtml,
+  let body := sjoin([
+    speakerHtml,
     "<div class='dialogue-line'>", hesc(say), "</div>",
     thinkHtml,
-    "<div class='advance-hint'>▼ space / click</div></div>"
-  ])
+    "<div class='advance-hint'>▼ space / click</div>"
+  ]);
+  panel("dialogue", "", body)
 
 def renderChoice(state, c, i) :=
   let label := if state.lang == "en" then (if c.labelEn == "" then c.labelJa else c.labelEn) else c.labelJa;
@@ -3701,12 +3732,14 @@ def viewMiniFaceRead(state) :=
                 button("primary", {tag: "miniFaceDone"}, "続ける ▶"),
                 "</div>"])
     else button("primary", {tag: "miniFaceShow"}, "呂公の前に進む");
+  let body := sjoin([
+    "<p class='mini-hint'>", header, "</p>",
+    eyesRow, mouthRow, poseRow, actionBtn
+  ]);
   sjoin([
     "<div class='scene-bg bg-banquet'>", renderHud(state),
-    "<div class='mini-card'><h2>顔相鑑定</h2>",
-    "<p class='mini-hint'>", header, "</p>",
-    eyesRow, mouthRow, poseRow, actionBtn,
-    "</div></div>"
+    panel("mini", "顔相鑑定", body),
+    "</div>"
   ])
 
 -- 玉玦三度 — Fan Zeng raises the jade ring at Hongmen
@@ -3743,9 +3776,8 @@ def viewMiniJadeRing(state) :=
                 "<div class='mini-status'>", status, "</div>"]);
   sjoin([
     "<div class='scene-bg bg-tent'>", renderHud(state),
-    "<div class='mini-card'><h2>玉玦三度</h2>",
-    body,
-    "</div></div>"
+    panel("mini", "玉玦三度", body),
+    "</div>"
   ])
 
 -- 背水之陣 — Han Xin commands a 3-turn battle
@@ -3808,9 +3840,8 @@ def viewMiniBeishui(state) :=
     ]);
   sjoin([
     "<div class='scene-bg bg-river'>", renderHud(state),
-    "<div class='mini-card mini-card-wide'><h2>背水之陣</h2>",
-    body,
-    "</div></div>"
+    panelMod("mini", "wide", "背水之陣", body),
+    "</div>"
   ])
 
 def viewMinigame(state) :=
@@ -3839,9 +3870,7 @@ def viewLlmChat(state) :=
     then "<div class='chat-pending'>… 考えている</div>" else "";
   let errorHtml := if l.lastError == "" then ""
     else sjoin(["<div class='chat-error'>", hesc(l.lastError), "</div>"]);
-  sjoin([
-    "<div class='scene-bg bg-tent'>", renderHud(state),
-    "<div class='chat-wrap'>",
+  let chatBody := sjoin([
     "<div class='chat-header'><span class='chat-npc-name' style='color:",
     l.npcColor, "'>", hesc(l.npcName), "</span>",
     " と話す ", button("icon", {tag: "llmEnd"}, "終わる ▶"),
@@ -3855,8 +3884,12 @@ def viewLlmChat(state) :=
     "></textarea>",
     "<button class='chat-send' id='chatSend' ", if l.pending then "disabled" else "",
     ">送信</button>",
-    "</div>",
-    "</div></div>"
+    "</div>"
+  ]);
+  sjoin([
+    "<div class='scene-bg bg-tent'>", renderHud(state),
+    panel("chat", "", chatBody),
+    "</div>"
   ])
 
 -- ── Gallery view ─────────────────────────────────────────────────

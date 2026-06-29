@@ -77,7 +77,33 @@
     .btn-char .epithet { color: #c8a96a; font-size: 13px; letter-spacing: 2px; }
     .btn-char .desc { color: #aaa; font-size: 12px; line-height: 1.5; flex: 1; }
     .btn-char .difficulty { color: #ca8a04; font-size: 11px; }
-    .btn-char:hover .char-portrait img { transform: scale(1.04); filter: none; }
+    .btn-char:hover .portrait img { transform: scale(1.04); filter: none; }
+
+    /* ── Panel kit (bordered container, emitted by panel()) ───── */
+    .panel { color: #e7e2d1; }
+    .panel h2 {
+      margin: 0 0 12px; color: #c8a96a; letter-spacing: 6px; font-weight: 400;
+      border-bottom: 1px solid #3a2a1a; padding-bottom: 8px;
+    }
+    .panel-mini {
+      position: absolute; left: 50%; top: 56px; transform: translateX(-50%);
+      width: min(720px, 90vw); padding: 22px 28px;
+      background: rgba(10,10,10,0.92); border: 1px solid #4a3a2a;
+      border-radius: 8px;
+    }
+    .panel-mini.wide { width: min(920px, 95vw); }
+    .panel-chat {
+      position: absolute; left: 50%; top: 56px; transform: translateX(-50%);
+      width: min(720px, 92vw); height: calc(100vh - 96px);
+      background: rgba(10,10,10,0.9); border: 1px solid #4a3a2a; border-radius: 8px;
+      display: flex; flex-direction: column;
+    }
+    .panel-dialogue {
+      position: absolute; bottom: 20px; left: 20px; right: 20px;
+      background: rgba(10,10,10,0.88); border: 1px solid #3a2a1a;
+      border-radius: 8px; padding: 18px 26px;
+      min-height: 160px;
+    }
 
     /* ── Title screen ── */
     .title-bg {
@@ -107,18 +133,18 @@
       flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
       overflow: auto;
     }
-    /* Character portrait (image + name overlay) used inside .btn-char */
-    .char-portrait {
+    /* Portrait: image + gradient name overlay, emitted by portrait() */
+    .portrait {
       position: relative; width: 100%; height: 200px; border-radius: 4px;
       overflow: hidden; background: #0a0805;
       box-shadow: inset 0 -20px 40px rgba(0,0,0,0.4);
     }
-    .char-portrait img {
+    .portrait img {
       width: 100%; height: 100%; object-fit: cover; object-position: center top;
       display: block; transition: transform 400ms ease;
       filter: saturate(0.92) contrast(1.04);
     }
-    .char-portrait-name {
+    .portrait-name {
       position: absolute; left: 0; right: 0; bottom: 0;
       padding: 6px 10px;
       background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.85) 80%);
@@ -165,12 +191,6 @@
       pointer-events: none;
     }
     .sprite { position: relative; }
-    .dialogue-box {
-      position: absolute; bottom: 20px; left: 20px; right: 20px;
-      background: rgba(10,10,10,0.88); border: 1px solid #3a2a1a;
-      border-radius: 8px; padding: 18px 26px;
-      min-height: 160px;
-    }
     .dialogue-speaker {
       color: #c8a96a; font-weight: 600; font-size: 15px; letter-spacing: 4px;
       margin-bottom: 6px;
@@ -263,17 +283,6 @@
     .bg-gorge      { background-image: url(/assets/bg_gorge.png); }
     .bg-night      { background-image: url(/assets/bg_night.png); }
   /* ── Mini-game widgets ── */
-  .mini-card {
-    position: absolute; left: 50%; top: 56px; transform: translateX(-50%);
-    width: min(720px, 90vw); padding: 22px 28px;
-    background: rgba(10,10,10,0.92); border: 1px solid #4a3a2a;
-    border-radius: 8px; color: #e7e2d1;
-  }
-  .mini-card-wide { width: min(920px, 95vw); }
-  .mini-card h2 {
-    margin: 0 0 12px; color: #c8a96a; letter-spacing: 6px; font-weight: 400;
-    border-bottom: 1px solid #3a2a1a; padding-bottom: 8px;
-  }
   .mini-hint { color: #aaa; font-size: 14px; margin: 6px 0 16px; }
   /* face read */
   .facerow { display: flex; align-items: center; gap: 6px; margin: 10px 0; }
@@ -321,12 +330,6 @@
     border: 0; border-top: 1px solid #3a2a1a; margin: 4px 0;
   }
   /* ── LLM chat ── */
-  .chat-wrap {
-    position: absolute; left: 50%; top: 56px; transform: translateX(-50%);
-    width: min(720px, 92vw); height: calc(100vh - 96px);
-    background: rgba(10,10,10,0.9); border: 1px solid #4a3a2a; border-radius: 8px;
-    display: flex; flex-direction: column; color: #e7e2d1;
-  }
   .chat-header {
     padding: 12px 16px; border-bottom: 1px solid #3a2a1a;
     display: flex; align-items: center; gap: 8px; font-size: 14px;
