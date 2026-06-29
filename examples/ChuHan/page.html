@@ -133,6 +133,18 @@
       flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
       overflow: auto;
     }
+    /* Loud placeholder for assets that haven't been drawn yet. Pairs
+       with missingAsset() in Game.leanjs + the asset audit in Serve.lean. */
+    .missing-asset {
+      display: flex; align-items: center; justify-content: center;
+      width: 200px; height: 360px; padding: 16px;
+      background: repeating-linear-gradient(45deg,
+        #ff00ff, #ff00ff 12px, #2a0a2a 12px, #2a0a2a 24px);
+      color: #fff; font-size: 14px; letter-spacing: 2px; text-align: center;
+      border: 2px dashed #ff00ff; border-radius: 4px;
+      text-shadow: 0 0 4px #000;
+    }
+
     /* Portrait: image + gradient name overlay, emitted by portrait() */
     .portrait {
       position: relative; width: 100%; height: 200px; border-radius: 4px;
@@ -642,6 +654,22 @@ function sfxForButton(btn) {
     }
   }
 }
+
+// Image 404 → loud .missing-asset placeholder so the gap is impossible
+// to miss in-game. The server-side asset audit (Serve.lean) also lists
+// these to MISSING_ASSETS.txt at boot.
+stage.addEventListener('error', (e) => {
+  const t = e.target;
+  if (t && t.tagName === 'IMG') {
+    const name = t.getAttribute('alt') || t.getAttribute('src') || 'asset';
+    const div = document.createElement('div');
+    div.className = 'missing-asset';
+    div.dataset.name = name;
+    div.title = 'MISSING_ASSET: ' + name;
+    div.textContent = '? ' + name;
+    t.replaceWith(div);
+  }
+}, true);
 
 // Event delegation — every interactive element has a data-msg attr
 // whose value is a JSON-encoded message we pass to update().

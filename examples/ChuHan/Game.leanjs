@@ -3353,6 +3353,22 @@ def portrait(src, alt, caption) :=
     "</div>"
   ])
 
+-- ── Missing-asset marker ───────────────────────────────────────────
+-- Use when a character / background is referenced in the script but
+-- no image exists yet. Renders a loud magenta placeholder so it can't
+-- be ignored in-game, and the literal string "MISSING_ASSET:" makes
+-- the call site grep-discoverable from anywhere in the tree.
+--
+-- The server's asset audit (Serve.lean) walks the compiled JS for
+-- this marker and writes the full list to examples/ChuHan/MISSING_ASSETS.txt
+-- at boot — so the canonical TODO list is generated, not hand-kept.
+def missingAsset(name) :=
+  sjoin([
+    "<div class='missing-asset' data-name='", hesc(name),
+    "' title='MISSING_ASSET: ", hesc(name), "'>?",
+    hesc(name), "</div>"
+  ])
+
 def renderLang(state) :=
   let ja := if state.lang == "ja" then " active" else "";
   let en := if state.lang == "en" then " active" else "";
@@ -3513,6 +3529,7 @@ def spriteAssetForName(name) :=
   else if name == "漂雲" then "/assets/wife_piaoyun.png"
   else if name == "黒綺" then "/assets/wife_kokuki.png"
   else if name == "妙容" then "/assets/wife_miaorong.png"
+  else if name == "子嬰" then "/assets/char_ziying.png"
   else ""
 
 def renderSprite(name, color, dim) :=
@@ -3528,6 +3545,9 @@ def renderSprite(name, color, dim) :=
       "</div>"
     ])
   else
+    -- 404s get swapped to .missing-asset by a centralised handler in
+    -- page.html (stage-level `error` event capture). The asset audit
+    -- in Serve.lean lists them at server boot too.
     sjoin([
       "<div class='sprite", dimC, "' style='background:none'>",
       "<img class='sprite-img' src='", asset, "' alt='", hesc(name), "'>",
