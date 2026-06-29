@@ -635,6 +635,19 @@ function wireChatHandlers() {
   input.focus();
 }
 
+// Pick an SFX for a message — keeps the UI feedback layer here in JS
+// instead of plumbing audioSfx() calls through every Lean update arm.
+function sfxForMsg(msg, prevPhase) {
+  if (!msg || !window.chuhanAudio) return;
+  const t = msg.tag;
+  if (t === 'advance' || t === 'choose')         window.chuhanAudio.sfx('page');
+  else if (t === 'attack')                       window.chuhanAudio.sfx('clash');
+  else if (t === 'miniFaceGuess')                window.chuhanAudio.sfx('coin');
+  else if (t === 'miniRingThrow')                window.chuhanAudio.sfx('coin');
+  else if (t === 'miniBeishuiCommand')           window.chuhanAudio.sfx('drum');
+  else if (t === 'pickChar' || t === 'startSelect') window.chuhanAudio.sfx('chime');
+}
+
 // Event delegation — every interactive element has a data-msg attr
 // whose value is a JSON-encoded message we pass to update().
 stage.addEventListener('click', (e) => {
@@ -642,7 +655,13 @@ stage.addEventListener('click', (e) => {
   while (t && t !== stage) {
     if (t.dataset && t.dataset.msg) {
       const msg = JSON.parse(t.dataset.msg);
+      const prevPhase = state.phase;
+      sfxForMsg(msg, prevPhase);
       state = update(msg, state);
+      // Chime once when a fresh ending unlocks.
+      if (state.phase === 'ending' && prevPhase !== 'ending') {
+        window.chuhanAudio && window.chuhanAudio.sfx('chime');
+      }
       persist(state);
       render();
       return;
@@ -655,7 +674,12 @@ stage.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault();
+    const prevPhase = state.phase;
+    sfxForMsg({tag: 'advance'}, prevPhase);
     state = update({tag: 'advance'}, state);
+    if (state.phase === 'ending' && prevPhase !== 'ending') {
+      window.chuhanAudio && window.chuhanAudio.sfx('chime');
+    }
     persist(state);
     render();
   } else if (state.phase === 'battle') {
@@ -663,7 +687,10 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 's')  state = update({tag: 'move', dx: 0,  dy: 1}, state);
     if (e.key === 'ArrowLeft' || e.key === 'a')  state = update({tag: 'move', dx: -1, dy: 0}, state);
     if (e.key === 'ArrowRight' || e.key === 'd') state = update({tag: 'move', dx: 1,  dy: 0}, state);
-    if (e.key === 'z' || e.key === 'j')          state = update({tag: 'attack'}, state);
+    if (e.key === 'z' || e.key === 'j') {
+      window.chuhanAudio && window.chuhanAudio.sfx('clash');
+      state = update({tag: 'attack'}, state);
+    }
     persist(state);
     if (state.phase === 'battle') {
       renderBattle();
