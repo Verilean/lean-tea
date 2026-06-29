@@ -11,6 +11,74 @@
                  font-family: 'YuMincho', 'Hiragino Mincho ProN', serif; }
     #stage { position: relative; width: 100vw; height: 100vh; }
 
+    /* ── Button kit ──────────────────────────────────────────────
+       Every interactive control comes from button()/buttonMod()/
+       buttonHtml() in Game.leanjs as `<button class="btn btn-KIND">`.
+       Adding a new control = add a kind here + add an SFX entry in
+       sfxForButton() below. No bespoke per-site classes. */
+    .btn {
+      font: inherit; cursor: pointer; border: 1px solid #4a3a2a;
+      background: transparent; color: #c8a96a; transition: all 150ms;
+      line-height: 1.3;
+    }
+    .btn-primary {
+      padding: 10px 36px; font-size: 16px; letter-spacing: 6px;
+      border-radius: 4px; color: #c8a96a; border-color: #c8a96a;
+      background: transparent;
+    }
+    .btn-primary:hover { background: #c8a96a; color: #0a0a0a; }
+    .btn-icon {
+      padding: 2px 10px; font-size: 11px; color: #888; border-radius: 3px;
+    }
+    .btn-icon:hover, .btn-icon.active { color: #c8a96a; border-color: #c8a96a; }
+    .btn-menu {
+      display: block; width: 100%; padding: 6px 10px; text-align: left;
+      color: #e7e2d1; border: 0; font-size: 12px; border-radius: 3px;
+    }
+    .btn-menu:hover { background: #2a1a14; color: #c8a96a; }
+    .btn-choice {
+      pointer-events: auto;
+      background: rgba(10,10,10,0.92); color: #e7e2d1;
+      border: 1px solid #6a5a4a; border-radius: 4px;
+      padding: 12px 20px; font-size: 15px; text-align: left;
+    }
+    .btn-choice:hover { background: rgba(40,28,18,0.95); border-color: #c8a96a; }
+    .btn-choice .hint { color: #888; font-size: 12px; margin-top: 4px; }
+    .btn-face {
+      flex: 1; background: #1a1410; color: #aaa;
+      border: 1px solid #3a2a1a; border-radius: 4px;
+      padding: 10px 14px; font-size: 14px;
+    }
+    .btn-face:hover { border-color: #c8a96a; color: #e7e2d1; }
+    .btn-face.active { background: #2a1810; border-color: #c8a96a; color: #c8a96a; }
+    .btn-jade {
+      display: block; margin: 16px auto; padding: 16px 40px;
+      background: #2a1810; color: #c8a96a; border: 2px solid #c8a96a;
+      border-radius: 8px; font-size: 18px; font-weight: 700;
+      letter-spacing: 4px;
+    }
+    .btn-jade:hover { background: #3a2018; }
+    .btn-card {
+      background: #1a1410; color: #e7e2d1; border: 1px solid #3a2a1a;
+      border-radius: 6px; padding: 16px 12px; text-align: left;
+      font-size: 14px;
+    }
+    .btn-card:hover { border-color: #c8a96a; background: #221a14; }
+    .btn-card .card-title { font-weight: 600; letter-spacing: 2px; margin-bottom: 6px; }
+    .btn-card .card-hint  { color: #888; font-size: 12px; }
+    .btn-char {
+      background: #1a1410; color: #e7e2d1; border: 1px solid #3a2a1a;
+      border-radius: 6px; padding: 14px; text-align: left; font-size: 14px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .btn-char:hover { border-color: #c8a96a; background: #221a14; }
+    .btn-char.active { border-color: #c8a96a; background: #2a1a14; }
+    .btn-char h3 { margin: 0; font-size: 20px; color: #e7e2d1; letter-spacing: 4px; }
+    .btn-char .epithet { color: #c8a96a; font-size: 13px; letter-spacing: 2px; }
+    .btn-char .desc { color: #aaa; font-size: 12px; line-height: 1.5; flex: 1; }
+    .btn-char .difficulty { color: #ca8a04; font-size: 11px; }
+    .btn-char:hover .char-portrait img { transform: scale(1.04); filter: none; }
+
     /* ── Title screen ── */
     .title-bg {
       position: absolute; inset: 0;
@@ -24,12 +92,6 @@
       transform: translateY(-30px);
     }
     .title-bg .sub { color: #888; letter-spacing: 8px; font-size: 14px; }
-    .title-bg .btn {
-      background: transparent; color: #c8a96a; border: 1px solid #c8a96a;
-      padding: 10px 36px; font: inherit; font-size: 16px; letter-spacing: 6px;
-      cursor: pointer; transition: all 200ms;
-    }
-    .title-bg .btn:hover { background: #c8a96a; color: #0a0a0a; }
 
     /* ── Character select ── */
     .select-bg {
@@ -45,14 +107,7 @@
       flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
       overflow: auto;
     }
-    .char-card {
-      background: #1a1410; border: 1px solid #3a2a1a; border-radius: 6px;
-      padding: 14px; cursor: pointer; display: flex; flex-direction: column;
-      gap: 8px; transition: all 200ms;
-    }
-    .char-card:hover { border-color: #c8a96a; background: #221a14; }
-    .char-card.selected { border-color: #c8a96a; background: #2a1a14; }
-    .char-card.disabled { opacity: 0.45; cursor: not-allowed; }
+    /* Character portrait (image + name overlay) used inside .btn-char */
     .char-portrait {
       position: relative; width: 100%; height: 200px; border-radius: 4px;
       overflow: hidden; background: #0a0805;
@@ -63,7 +118,6 @@
       display: block; transition: transform 400ms ease;
       filter: saturate(0.92) contrast(1.04);
     }
-    .char-card:hover .char-portrait img { transform: scale(1.04); filter: none; }
     .char-portrait-name {
       position: absolute; left: 0; right: 0; bottom: 0;
       padding: 6px 10px;
@@ -72,11 +126,6 @@
       text-shadow: 0 2px 4px rgba(0,0,0,0.9);
       pointer-events: none;
     }
-    .char-card h3 { margin: 0; font-size: 20px; color: #e7e2d1; letter-spacing: 4px; }
-    .char-card .epithet { color: #c8a96a; font-size: 13px; letter-spacing: 2px; }
-    .char-card .desc { color: #aaa; font-size: 12px; line-height: 1.5; flex: 1; }
-    .char-card .stats { display: flex; gap: 12px; font-size: 11px; color: #888; }
-    .char-card .difficulty { color: #ca8a04; font-size: 11px; }
 
     /* ── VN scene ── */
     .scene-bg {
@@ -145,16 +194,6 @@
       display: flex; flex-direction: column; gap: 8px; min-width: 480px;
       pointer-events: none; z-index: 5;
     }
-    .choice {
-      pointer-events: auto;
-      background: rgba(10,10,10,0.92); color: #e7e2d1;
-      border: 1px solid #6a5a4a; border-radius: 4px;
-      padding: 12px 20px; font: inherit; font-size: 15px;
-      cursor: pointer; text-align: left;
-      transition: all 150ms;
-    }
-    .choice:hover { background: rgba(40,28,18,0.95); border-color: #c8a96a; }
-    .choice .hint { color: #888; font-size: 12px; margin-top: 4px; }
 
     /* ── HUD (top bar, persistent) ── */
     .hud {
@@ -168,16 +207,6 @@
     .hud .stat b { color: #e7e2d1; margin-left: 4px; }
     .hud .yr { color: #ca8a04; letter-spacing: 2px; margin-left: auto; }
     .hud .lang { display: flex; gap: 4px; }
-    .hud .lang button {
-      background: transparent; color: #888; border: 1px solid #4a3a2a;
-      padding: 2px 8px; font: inherit; font-size: 11px; cursor: pointer;
-    }
-    .hud .lang button.active { color: #c8a96a; border-color: #c8a96a; }
-    .hud .menu-btn {
-      background: transparent; color: #888; border: 1px solid #4a3a2a;
-      padding: 2px 10px; font: inherit; font-size: 11px; cursor: pointer;
-    }
-    .hud .menu-btn:hover { color: #c8a96a; border-color: #c8a96a; }
 
     /* ── Battle (canvas) ── */
     .battle-bg {
@@ -207,9 +236,6 @@
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       gap: 18px; font-size: 28px; color: #c8a96a; letter-spacing: 8px;
     }
-    .battle-result button { font: inherit; font-size: 14px; letter-spacing: 4px;
-      background: transparent; color: #c8a96a; border: 1px solid #c8a96a;
-      padding: 8px 24px; cursor: pointer; }
 
     /* ── Background palette (placeholder before real art) ── */
     /* Background scenes — photorealistic images via FLUX schnell. */
@@ -252,19 +278,6 @@
   /* face read */
   .facerow { display: flex; align-items: center; gap: 6px; margin: 10px 0; }
   .facelabel { width: 80px; color: #c8a96a; font-size: 13px; letter-spacing: 3px; }
-  .facebtn {
-    flex: 1; background: #1a1410; color: #aaa;
-    border: 1px solid #3a2a1a; border-radius: 4px;
-    padding: 10px 14px; cursor: pointer; font: inherit; font-size: 14px;
-  }
-  .facebtn:hover { border-color: #c8a96a; color: #e7e2d1; }
-  .facebtn.active { background: #2a1810; border-color: #c8a96a; color: #c8a96a; }
-  .mini-submit, .mini-continue {
-    display: block; margin: 18px auto 0; padding: 10px 28px;
-    background: #c8a96a; color: #0a0a0a; border: 0; border-radius: 6px;
-    font: inherit; font-weight: 600; cursor: pointer; letter-spacing: 4px;
-  }
-  .mini-submit:hover, .mini-continue:hover { background: #d9bb7e; }
   /* jade ring */
   .ring-bar {
     position: relative; height: 18px; background: #1a1410;
@@ -279,13 +292,6 @@
     position: absolute; top: -4px; bottom: -4px; width: 3px;
     background: #c8a96a; transform: translateX(-1.5px);
   }
-  .mini-jade {
-    display: block; margin: 16px auto; padding: 16px 40px;
-    background: #2a1810; color: #c8a96a; border: 2px solid #c8a96a;
-    border-radius: 8px; font: inherit; font-size: 18px; font-weight: 700;
-    letter-spacing: 4px; cursor: pointer;
-  }
-  .mini-jade:hover { background: #3a2018; }
   .mini-status { text-align: center; color: #4ade80; font-size: 14px; min-height: 20px; }
   /* beishui */
   .bs-board { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
@@ -296,14 +302,6 @@
   .bs-hp-num { width: 80px; color: #aaa; font-family: ui-monospace, Menlo, monospace; text-align: right; }
   .bs-turn { color: #c8a96a; text-align: center; letter-spacing: 4px; margin: 14px 0 8px; }
   .bs-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 8px 0; }
-  .bs-card {
-    background: #1a1410; color: #e7e2d1; border: 1px solid #3a2a1a;
-    border-radius: 6px; padding: 16px 12px; cursor: pointer; font: inherit;
-    text-align: left;
-  }
-  .bs-card:hover { border-color: #c8a96a; background: #221a14; }
-  .bs-card-title { font-weight: 600; letter-spacing: 2px; margin-bottom: 6px; }
-  .bs-card-hint { color: #888; font-size: 12px; }
   .bs-log { color: #aaa; font-size: 13px; margin: 4px 0; }
   /* mini result */
   .mini-result { text-align: center; padding: 14px 0; }
@@ -313,23 +311,12 @@
   .save-menu {
     position: relative; display: inline-block;
   }
-  .save-menu .save-btn {
-    background: transparent; color: #888; border: 1px solid #4a3a2a;
-    padding: 2px 8px; font: inherit; font-size: 11px; cursor: pointer;
-  }
-  .save-menu .save-btn:hover { color: #c8a96a; border-color: #c8a96a; }
   .save-menu .save-pop {
     display: none; position: absolute; right: 0; top: 22px;
     background: #1a1410; border: 1px solid #3a2a1a; border-radius: 4px;
     padding: 6px; gap: 4px; flex-direction: column; z-index: 100; min-width: 200px;
   }
   .save-menu.open .save-pop { display: flex; }
-  .save-menu .save-pop button {
-    background: transparent; color: #e7e2d1; border: 0; padding: 6px 10px;
-    text-align: left; font: inherit; font-size: 12px; cursor: pointer;
-    border-radius: 3px;
-  }
-  .save-menu .save-pop button:hover { background: #2a1a14; color: #c8a96a; }
   .save-menu .save-pop hr {
     border: 0; border-top: 1px solid #3a2a1a; margin: 4px 0;
   }
@@ -345,12 +332,7 @@
     display: flex; align-items: center; gap: 8px; font-size: 14px;
   }
   .chat-npc-name { font-weight: 600; letter-spacing: 4px; font-size: 16px; }
-  .chat-end {
-    margin-left: auto; background: transparent; color: #c8a96a;
-    border: 1px solid #c8a96a; padding: 4px 14px; border-radius: 4px;
-    cursor: pointer; font: inherit; font-size: 12px; letter-spacing: 2px;
-  }
-  .chat-end:hover { background: #c8a96a; color: #0a0a0a; }
+  .chat-header .btn { margin-left: auto; }
   .chat-history {
     flex: 1; overflow-y: auto; padding: 14px 16px;
     display: flex; flex-direction: column; gap: 10px;
@@ -635,17 +617,27 @@ function wireChatHandlers() {
   input.focus();
 }
 
-// Pick an SFX for a message — keeps the UI feedback layer here in JS
-// instead of plumbing audioSfx() calls through every Lean update arm.
-function sfxForMsg(msg, prevPhase) {
-  if (!msg || !window.chuhanAudio) return;
-  const t = msg.tag;
-  if (t === 'advance' || t === 'choose')         window.chuhanAudio.sfx('page');
-  else if (t === 'attack')                       window.chuhanAudio.sfx('clash');
-  else if (t === 'miniFaceGuess')                window.chuhanAudio.sfx('coin');
-  else if (t === 'miniRingThrow')                window.chuhanAudio.sfx('coin');
-  else if (t === 'miniBeishuiCommand')           window.chuhanAudio.sfx('drum');
-  else if (t === 'pickChar' || t === 'startSelect') window.chuhanAudio.sfx('chime');
+// Pick an SFX from a button's .btn-KIND class. One table, one place to
+// edit; adding a new button kind in Game.leanjs only needs an entry
+// here (and a CSS variant) — no per-msg.tag plumbing.
+const SFX_BY_KIND = {
+  primary: 'chime',
+  icon:    'page',
+  menu:    'page',
+  choice:  'page',
+  face:    'coin',
+  jade:    'drum',
+  card:    'coin',
+  char:    'chime',
+};
+function sfxForButton(btn) {
+  if (!btn || !window.chuhanAudio) return;
+  for (const cls of btn.classList) {
+    if (cls.startsWith('btn-')) {
+      const id = SFX_BY_KIND[cls.slice(4)];
+      if (id) { window.chuhanAudio.sfx(id); return; }
+    }
+  }
 }
 
 // Event delegation — every interactive element has a data-msg attr
@@ -656,7 +648,7 @@ stage.addEventListener('click', (e) => {
     if (t.dataset && t.dataset.msg) {
       const msg = JSON.parse(t.dataset.msg);
       const prevPhase = state.phase;
-      sfxForMsg(msg, prevPhase);
+      sfxForButton(t);
       state = update(msg, state);
       // Chime once when a fresh ending unlocks.
       if (state.phase === 'ending' && prevPhase !== 'ending') {
@@ -675,7 +667,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault();
     const prevPhase = state.phase;
-    sfxForMsg({tag: 'advance'}, prevPhase);
+    window.chuhanAudio && window.chuhanAudio.sfx('page');
     state = update({tag: 'advance'}, state);
     if (state.phase === 'ending' && prevPhase !== 'ending') {
       window.chuhanAudio && window.chuhanAudio.sfx('chime');

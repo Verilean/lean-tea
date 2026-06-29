@@ -3284,22 +3284,58 @@ def update(msg, state) :=
 -- has no escape support), so JSON construction goes through `jstr`.
 def msgAttr(o) := sjoin(["'", jstr(o), "'"])
 
-def renderLang(state) :=
-  let ja := if state.lang == "ja" then "active" else "";
-  let en := if state.lang == "en" then "active" else "";
+-- ── Button kit ─────────────────────────────────────────────────────
+-- Every interactive control in the game goes through one of three
+-- helpers below. The `kind` string maps onto `.btn-<kind>` in page.html
+-- and on the JS side it drives the per-kind SFX table. Adding a new
+-- button means picking a kind — CSS + click + SFX are then all wired
+-- automatically; we never hand-roll a fresh class name + sfx tag pair.
+--
+-- Kinds in use:
+--   primary  — large CTA (START, タイトルへ戻る, 続ける ▶)
+--   icon     — compact icon / menu-bar button (🔊 💾 JA EN 選択へ)
+--   menu     — save-menu list item
+--   choice   — in-scene scenario choice (text + optional hint)
+--   face     — face-reader 3-up grid pick
+--   jade     — single big highlighted action button (玉玦を上げる)
+--   card     — multi-section clickable card (bs-card, char-card)
+--
+-- Use `buttonMod` for `.active` etc. state, `buttonHtml` when the
+-- label needs nested markup (already escaped by the caller).
+
+def button(kind, msg, label) :=
   sjoin([
-    "<div class='lang'><button class='", ja,
-    "' data-msg=", msgAttr({tag: "setLang", lang: "ja"}), ">JA</button><button class='", en,
-    "' data-msg=", msgAttr({tag: "setLang", lang: "en"}), ">EN</button></div>"
+    "<button class='btn btn-", kind, "' data-msg=", msgAttr(msg), ">",
+    hesc(label), "</button>"
+  ])
+
+def buttonMod(kind, mod, msg, label) :=
+  sjoin([
+    "<button class='btn btn-", kind, mod, "' data-msg=", msgAttr(msg), ">",
+    hesc(label), "</button>"
+  ])
+
+def buttonHtml(kind, msg, htmlBody) :=
+  sjoin([
+    "<button class='btn btn-", kind, "' data-msg=", msgAttr(msg), ">",
+    htmlBody, "</button>"
+  ])
+
+def renderLang(state) :=
+  let ja := if state.lang == "ja" then " active" else "";
+  let en := if state.lang == "en" then " active" else "";
+  sjoin([
+    "<div class='lang'>",
+    buttonMod("icon", ja, {tag: "setLang", lang: "ja"}, "JA"),
+    buttonMod("icon", en, {tag: "setLang", lang: "en"}, "EN"),
+    "</div>"
   ])
 
 -- Render the save/load drop-down. The slot labels read live from
 -- localStorage on each render so they always reflect the latest
 -- saves (no manual "refresh" needed).
 def renderSaveMenuItem(action, label) :=
-  sjoin([
-    "<button data-msg=", msgAttr({tag: action}), ">", hesc(label), "</button>"
-  ])
+  button("menu", {tag: action}, label)
 
 def renderSaveMenu(state) :=
   let open := state.flags._saveMenuOpen == true;
@@ -3310,7 +3346,7 @@ def renderSaveMenu(state) :=
   let cp := describeState(lsLoad(lsKeyCheckpoint));
   sjoin([
     "<div class='", openClass, "'>",
-    "<button class='save-btn' data-msg=", msgAttr({tag: "toggleSaveMenu"}), ">💾</button>",
+    button("icon", {tag: "toggleSaveMenu"}, "💾"),
     "<div class='save-pop'>",
     renderSaveMenuItem("saveSlot1", "Slot 1 へ保存"),
     renderSaveMenuItem("saveSlot2", "Slot 2 へ保存"),
@@ -3345,10 +3381,9 @@ def renderHud(state) :=
     "</b></span><span class='yr'>BCE ", jstr(0 - s.year),
     "</span>", renderLang(state),
     renderSaveMenu(state),
-    "<button class='menu-btn' data-msg=", msgAttr({tag: "toggleMute"}), " title='音声 ON/OFF'>",
-    (if audioIsMuted() == 1 then "🔇" else "🔊"),
-    "</button>",
-    "<button class='menu-btn' data-msg=", msgAttr({tag: "backToSelect"}), ">選択へ</button></div>"
+    button("icon", {tag: "toggleMute"}, (if audioIsMuted() == 1 then "🔇" else "🔊")),
+    button("icon", {tag: "backToSelect"}, "選択へ"),
+    "</div>"
   ])
 
 -- All recorded endings with their human titles. The gallery and
@@ -3389,8 +3424,8 @@ def galleryProgress :=
 def viewTitle(state) :=
   sjoin([
     "<div class='title-bg'><h1>楚漢恋歌</h1><div class='sub'>CHU·HAN LOVE SONG</div>",
-    "<button class='btn' data-msg=", msgAttr({tag: "startSelect"}), ">START</button>",
-    "<button class='btn' data-msg=", msgAttr({tag: "openGallery"}), " style='margin-top:8px'>END ギャラリー</button>",
+    button("primary", {tag: "startSelect"}, "START"),
+    button("primary", {tag: "openGallery"}, "END ギャラリー"),
     "<div class='sub' style='font-size:11px;color:#666;margin-top:60px'>",
     "六つの生、六つの死、六つの恋。<br>BCE 209 ─ 195. Six lives. Six loves. Six deaths.<br><br>",
     galleryProgress,
@@ -3399,22 +3434,20 @@ def viewTitle(state) :=
 
 -- Character select grid
 def renderCharCard(state, c) :=
-  let selected := if state.char == c.id then "selected" else "";
+  let mod := if state.char == c.id then " active" else "";
   let nm := if state.lang == "en" then c.nameEn else c.nameJa;
   let ep := if state.lang == "en" then c.epithetEn else c.epithetJa;
   let desc := if state.lang == "en" then c.descEn else c.descJa;
-  sjoin([
-    "<div class='char-card ", selected,
-    "' data-msg=", msgAttr({tag: "pickChar", id: c.id}), "><div class='char-portrait'>",
-    "<img src='/assets/char_", c.id, ".png' alt='", hesc(nm),
-    "' loading='lazy'>",
-    "<div class='char-portrait-name'>", hesc(nm), "</div>",
-    "</div><h3>", hesc(nm),
-    "</h3><div class='epithet'>", hesc(ep),
-    "</div><div class='desc'>", hesc(desc),
-    "</div><div class='difficulty'>難易度: ", hesc(c.difficulty),
-    "</div></div>"
-  ])
+  let body := sjoin([
+    "<div class='char-portrait'>",
+    "<img src='/assets/char_", c.id, ".png' alt='", hesc(nm), "' loading='lazy'>",
+    "<div class='char-portrait-name'>", hesc(nm), "</div></div>",
+    "<h3>", hesc(nm), "</h3>",
+    "<div class='epithet'>", hesc(ep), "</div>",
+    "<div class='desc'>", hesc(desc), "</div>",
+    "<div class='difficulty'>難易度: ", hesc(c.difficulty), "</div>"
+  ]);
+  buttonHtml(sconcat("char", mod), {tag: "pickChar", id: c.id}, body)
 
 def charLoop(state, cs, i, acc) :=
   if i < arrLen(cs) then
@@ -3509,9 +3542,8 @@ def renderChoice(state, c, i) :=
   let hint := if state.lang == "en" then (if c.hintEn == "" then c.hintJa else c.hintEn) else c.hintJa;
   let hintHtml := if hint == "" then ""
                   else sjoin(["<div class='hint'>", hesc(hint), "</div>"]);
-  sjoin([
-    "<button class='choice' data-msg=", msgAttr({tag: "choose", idx: i}), ">", hesc(label), hintHtml, "</button>"
-  ])
+  buttonHtml("choice", {tag: "choose", idx: i},
+             sjoin([hesc(label), hintHtml]))
 
 def choicesLoop(state, cs, i, acc) :=
   if i < arrLen(cs) then
@@ -3610,7 +3642,7 @@ def viewEnding(state) :=
     "BCE 209 ─ 195, 「楚漢恋歌」より。<br>",
     "他のルートを試すこともできます。",
     "</div>",
-    "<button class='btn' data-msg=", msgAttr({tag: "backToSelect"}), ">主人公選択へ戻る</button>",
+    button("primary", {tag: "backToSelect"}, "主人公選択へ戻る"),
     "</div></div>"
   ])
 
@@ -3622,7 +3654,8 @@ def viewBattle(state) :=
     "<canvas id='battleCanvas' width='640' height='400'></canvas>",
     "<div class='battle-hud'><span class='help'>WASD = move, Z = attack, ESC = retreat</span></div>",
     "<div class='battle-result'><div>(battle scaffolding ready — Phase 2)</div>",
-    "<button data-msg=", msgAttr({tag: "backToSelect"}), ">戻る</button></div></div>"
+    button("primary", {tag: "backToSelect"}, "戻る"),
+    "</div></div>"
   ])
 
 -- ── Mini-game views ───────────────────────────────────────────────
@@ -3633,11 +3666,9 @@ def faceLabel(part, v) :=
   else (if v == 0 then "卑屈" else if v == 1 then "普通" else "堂々")
 
 def faceButton(part, v, cur) :=
-  let active := if v == cur then " active" else "";
-  sjoin([
-    "<button class='facebtn", active,
-    "' data-msg=", msgAttr({tag: "miniFace", part: part, value: v}), ">", faceLabel(part, v), "</button>"
-  ])
+  let mod := if v == cur then " active" else "";
+  buttonMod("face", mod, {tag: "miniFace", part: part, value: v},
+            faceLabel(part, v))
 
 def faceRow(part, cur) :=
   sjoin([
@@ -3667,8 +3698,9 @@ def viewMiniFaceRead(state) :=
     then sjoin(["<div class='mini-result'>",
                 "<div class='mini-score'>呂公の評価: ", jstr(m.faceScore), " / 6</div>",
                 "<div class='mini-line'>", hesc(faceResultText(m.faceScore)), "</div>",
-                "<button class='mini-continue' data-msg=", msgAttr({tag: "miniFaceDone"}), ">続ける ▶</button></div>"])
-    else sjoin(["<button class='mini-submit' data-msg=", msgAttr({tag: "miniFaceShow"}), ">呂公の前に進む</button>"]);
+                button("primary", {tag: "miniFaceDone"}, "続ける ▶"),
+                "</div>"])
+    else button("primary", {tag: "miniFaceShow"}, "呂公の前に進む");
   sjoin([
     "<div class='scene-bg bg-banquet'>", renderHud(state),
     "<div class='mini-card'><h2>顔相鑑定</h2>",
@@ -3703,10 +3735,11 @@ def viewMiniJadeRing(state) :=
                      else if m.ringHits >= 1 then "項荘の剣舞に項羽はやや傾く。が、項伯が間に入る。"
                      else "「子犬の輩よ、共に謀るに足らず!」"),
                 "</div>",
-                "<button class='mini-continue' data-msg=", msgAttr({tag: "miniRingDone"}), ">続ける ▶</button></div>"])
+                button("primary", {tag: "miniRingDone"}, "続ける ▶"),
+                "</div>"])
     else sjoin(["<p class='mini-hint'>", roundText, "</p>",
                 progressBar,
-                "<button class='mini-jade' data-msg=", msgAttr({tag: "miniRingClick"}), ">玉玦を上げる</button>",
+                button("jade", {tag: "miniRingClick"}, "玉玦を上げる"),
                 "<div class='mini-status'>", status, "</div>"]);
   sjoin([
     "<div class='scene-bg bg-tent'>", renderHud(state),
@@ -3717,12 +3750,11 @@ def viewMiniJadeRing(state) :=
 
 -- 背水之陣 — Han Xin commands a 3-turn battle
 def bsCard(turn, idx, label, hint) :=
-  sjoin([
-    "<button class='bs-card' data-msg=", msgAttr({tag: "miniBsCard", card: idx}), ">",
-    "<div class='bs-card-title'>", hesc(label), "</div>",
-    "<div class='bs-card-hint'>", hesc(hint), "</div>",
-    "</button>"
-  ])
+  buttonHtml("card", {tag: "miniBsCard", card: idx},
+    sjoin([
+      "<div class='card-title'>", hesc(label), "</div>",
+      "<div class='card-hint'>", hesc(hint), "</div>"
+    ]))
 
 def bsCardsForTurn(turn) :=
   if turn == 0 then sjoin([
@@ -3764,7 +3796,8 @@ def viewMiniBeishui(state) :=
                      else if m.bsScore >= 4 then "辛勝。兵は半ばを失ったが、なんとか趙を破った。"
                      else "敗北。漢軍は退却。韓信、面目を失う。"),
                 "</div>",
-                "<button class='mini-continue' data-msg=", msgAttr({tag: "miniBsDone"}), ">続ける ▶</button></div>"])
+                button("primary", {tag: "miniBsDone"}, "続ける ▶"),
+                "</div>"])
     else sjoin([
       "<div class='bs-board'>",
       bsHpBar("漢 (韓信)", m.bsHanHp, 100), bsHpBar("趙 (陳余)", m.bsZhaoHp, 200),
@@ -3811,7 +3844,8 @@ def viewLlmChat(state) :=
     "<div class='chat-wrap'>",
     "<div class='chat-header'><span class='chat-npc-name' style='color:",
     l.npcColor, "'>", hesc(l.npcName), "</span>",
-    " と話す <button class='chat-end' data-msg=", msgAttr({tag: "llmEnd"}), ">終わる ▶</button></div>",
+    " と話す ", button("icon", {tag: "llmEnd"}, "終わる ▶"),
+    "</div>",
     "<div class='chat-history' id='chatHistory'>",
     bubbles, pendingHtml, errorHtml,
     "</div>",
@@ -3853,7 +3887,7 @@ def viewGallery(state) :=
     "<div class='gallery-list'>",
     galleryLoop(allObj, allEndingIds, 0, ""),
     "</div>",
-    "<button class='btn' data-msg=", msgAttr({tag: "closeGallery"}), ">タイトルへ戻る</button>",
+    button("primary", {tag: "closeGallery"}, "タイトルへ戻る"),
     "</div>"
   ])
 
