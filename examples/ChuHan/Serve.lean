@@ -318,6 +318,101 @@ private def handleAsk (cfg : LeanTea.Llm.Openai.Config) (req : Request) : IO Res
       let body := Json.mkObj [("error", Json.str s!"llm: {e}")]
       return Response.text 500 body.compress
 
+/-! ## /api/resolve handler — TRPG free-text judgement
+
+Body: `{kind, sceneId, char, action}` where `kind` selects the system
+prompt (e.g. "liubang_hongmen_apology") and `action` is the player's
+free-text move. Returns `{outcome: "good"|"ok"|"bad", reasoning}`.
+
+The model is instructed to reply with strict JSON; we strip code-fence
+wrapping if present and parse. On parse failure we fall back to "ok" so
+the player isn't stuck — the manifest log catches malformed verdicts.
+-/
+
+private def resolveSystemPrompt (kind : String) : String :=
+  let base :=
+    "あなたは紀元前 209〜202 年を舞台にした TRPG のゲームマスターです。\
+プレイヤーが書いた行動を読み、その場の状況・人物の性格・史実の重みに照らして、\
+3 段階 (good = うまくいく / ok = 微妙な反応 / bad = 失敗・致命的) で判定してください。\
+\n\n返答は必ず次の JSON 1 行のみ。前後にコードブロックも文章も付けないこと:\
+\n{\"outcome\":\"good|ok|bad\",\"reasoning\":\"理由 (50-150 字)\"}\
+\n\nbad は本当に致命的な選択 (項羽を侮辱する、約束を破る) の時だけ。\
+媚びすぎ・回りくどい・無策などは ok。 史実通りの上手な振る舞いは good。"
+  match kind with
+  | "liubang_hongmen_apology" =>
+    "場面: 鴻門の宴、紀元前 206 年冬。 沛公・劉邦が四十万の楚軍を擁する項羽の前に\
+百騎のみで詫びに来た。 范増は三度、玉玦を上げて殺害を促している。 項羽は\
+若く誇り高いが、武人としての筋を重んじる性格。 媚びには嫌悪、正面からの\
+道理には弱い。 「沛公が項羽の弟分として詫びる」「項羽の武勇を立てる」「秦攻めの\
+功は項羽のものだと認める」あたりが good。 「自分は王たるべき」「項羽より上」「金品で\
+誤魔化す」あたりは bad。\n\n" ++ base
+  | "liubang_xianyang_policy" =>
+    "場面: 咸陽宮、紀元前 207 年 10 月。 秦三世・子嬰が降伏。 劉邦の宣言を\
+関中の民・降伏した秦官・諸将が聞いている。 史実では『約法三章』(殺人=死、\
+傷害・盗み=罰、それ以外の秦の苛法は全廃) を布告して関中の心を掴んだ。 これが good。\
+苛烈な秦法を温存する/宝物に溺れる/後宮に手を出す/民を屠る は bad。\
+中途半端な妥協や独自路線は ok。\n\n" ++ base
+  | _ => base
+
+private def stripJsonCodeFence (s : String) : String :=
+  -- LMStudio sometimes wraps output in ```json ... ``` despite the prompt.
+  let t := s.trim
+  if t.startsWith "```" then
+    let afterOpen := ((t.dropWhile (· != '\n')).drop 1).toString
+    let beforeClose :=
+      if afterOpen.endsWith "```" then afterOpen.dropRight 3 else afterOpen
+    beforeClose.trim
+  else t
+
+private def handleResolve (cfg : LeanTea.Llm.Openai.Config) (req : Request) : IO Response := do
+  match Json.parse (String.fromUTF8! req.body) with
+  | .error e =>
+    return Response.text 400 (Json.mkObj [("error", Json.str s!"bad json: {e}")]).compress
+  | .ok j =>
+    let kind   := jstrField j "kind"
+    let action := jstrField j "action"
+    if action.isEmpty then
+      return Response.text 400 (Json.mkObj [("error", Json.str "empty action")]).compress
+    let sys := resolveSystemPrompt kind
+    let systemMsg : LeanTea.Llm.Openai.Message := { role := "system", content := .inl sys }
+    let userMsg : LeanTea.Llm.Openai.Message := { role := "user", content := .inl action }
+    let model ← do
+      match ← IO.getEnv "LMSTUDIO_MODEL" with
+      | some m => pure m
+      | none   => pure "local-model"
+    let chatReq : LeanTea.Llm.Openai.ChatRequest := {
+      model,
+      messages := [systemMsg, userMsg],
+      temperature := some 0.7,
+      maxTokens := some 300
+    }
+    try
+      let res ← LeanTea.Llm.Openai.chat cfg chatReq
+      let raw := stripJsonCodeFence res.content
+      match Json.parse raw with
+      | .ok j2 =>
+        let outcome := jstrField j2 "outcome"
+        let reasoning := jstrField j2 "reasoning"
+        let cleanOutcome :=
+          if outcome == "good" || outcome == "ok" || outcome == "bad" then outcome
+          else "ok"  -- fall back so the player isn't stuck on a bad verdict shape
+        let body := Json.mkObj [
+          ("outcome", Json.str cleanOutcome),
+          ("reasoning", Json.str (if reasoning.isEmpty then raw else reasoning))
+        ]
+        return Response.text 200 body.compress
+      | .error _ =>
+        -- Couldn't parse JSON — present the raw content as the reasoning
+        -- so the player at least sees what the model said.
+        let body := Json.mkObj [
+          ("outcome", Json.str "ok"),
+          ("reasoning", Json.str s!"(JSON parse failed) {raw}")
+        ]
+        return Response.text 200 body.compress
+    catch e =>
+      let body := Json.mkObj [("error", Json.str s!"llm: {e}")]
+      return Response.text 500 body.compress
+
 /-! ## Handler -/
 
 def handler (cfg : LeanTea.Llm.Openai.Config)
@@ -339,6 +434,7 @@ def handler (cfg : LeanTea.Llm.Openai.Config)
     let (gameJs, _) ← gameProv
     return Response.text 200 gameJs
   | "/api/ask", "POST" => handleAsk cfg req
+  | "/api/resolve", "POST" => handleResolve cfg req
   | "/favicon.ico", _ =>
     return { status := 204, headers := #[], body := .empty }
   | path, _ =>

@@ -171,7 +171,12 @@ record Step where
   -- LLM NPC chat hook. Set npcChat to an id (e.g. "xiaohe") to launch
   -- the chat phase on advance; gotoScene field is reused as
   -- the "after-chat continuation" destination.
-  npcChat  : String        -- "" or NPC id
+  npcChat  : String,       -- "" or NPC id
+  -- TRPG aiResolve hook: when non-empty, advancing the step opens a
+  -- free-text action prompt; the backend LLM judges the player's input
+  -- and routes via aiResolveRouteFor(kind, outcome). The situation
+  -- text shown to the player lives in aiResolveSituationFor(kind).
+  aiResolveKind : String   -- "" or kind id (e.g. "liubang_hongmen_apology")
 
 record Choice where
   labelJa : String, labelEn : String,
@@ -204,7 +209,7 @@ def blankStep :=
     spriteFocus: 0,
     choices: [],
     battle: "", gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: "", aiResolveKind: ""
   }
 
 -- A dialogue beat ----------------------------------------------------
@@ -219,7 +224,7 @@ def say(bg, who, color, sayJa, sayEn) :=
     spriteFocus: 1,
     choices: [],
     battle: "", gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: "", aiResolveKind: ""
   }
 
 -- A dialogue beat with inner monologue --------------------------------
@@ -234,7 +239,7 @@ def think(bg, who, color, sayJa, sayEn, thinkJa, thinkEn) :=
     spriteFocus: 1,
     choices: [],
     battle: "", gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: "", aiResolveKind: ""
   }
 
 -- A two-sprite beat ---------------------------------------------------
@@ -249,7 +254,7 @@ def duo(bg, who, color, who2, color2, focus, sayJa, sayEn) :=
     spriteFocus: focus,
     choices: [],
     battle: "", gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: "", aiResolveKind: ""
   }
 
 -- A narration line (no speaker, no sprite) ---------------------------
@@ -264,7 +269,7 @@ def narr(bg, sayJa, sayEn) :=
     spriteFocus: 0,
     choices: [],
     battle: "", gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: "", aiResolveKind: ""
   }
 
 -- A choice menu -------------------------------------------------------
@@ -279,7 +284,7 @@ def chooseStep(bg, cs) :=
     spriteFocus: 0,
     choices: cs,
     battle: "", gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: "", aiResolveKind: ""
   }
 
 -- Transitions ---------------------------------------------------------
@@ -294,7 +299,7 @@ def goScene(id) :=
     spriteFocus: 0,
     choices: [],
     battle: "", gotoScene: id, ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: "", aiResolveKind: ""
   }
 
 def doBattle(id) :=
@@ -308,7 +313,7 @@ def doBattle(id) :=
     spriteFocus: 0,
     choices: [],
     battle: id, gotoScene: "", ending: "",
-    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: "", aiResolveKind: ""
   }
 
 def endingStep(id) :=
@@ -322,7 +327,7 @@ def endingStep(id) :=
     spriteFocus: 0,
     choices: [],
     battle: "", gotoScene: "", ending: id,
-    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: ""
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "", npcChat: "", aiResolveKind: ""
   }
 
 -- A mini-game step. Advancing INTO this step switches the phase to
@@ -339,7 +344,7 @@ def miniStep(bg, kind, good, ok, bad) :=
     spriteFocus: 0,
     choices: [],
     battle: "", gotoScene: "", ending: "",
-    miniKind: kind, miniGood: good, miniOk: ok, miniBad: bad, npcChat: ""
+    miniKind: kind, miniGood: good, miniOk: ok, miniBad: bad, npcChat: "", aiResolveKind: ""
   }
 
 -- An LLM NPC chat step. On advance, the phase switches to 'llm_chat'
@@ -358,7 +363,26 @@ def npcChatStep(bg, npcId, sceneAfter) :=
     choices: [],
     battle: "", gotoScene: sceneAfter, ending: "",
     miniKind: "", miniGood: "", miniOk: "", miniBad: "",
-    npcChat: npcId
+    npcChat: npcId,
+    aiResolveKind: ""
+  }
+
+-- TRPG free-text resolution step. Player types an action, the LLM judges,
+-- and aiResolveRouteFor(kind, outcome) picks the next scene.
+def aiResolveStep(bg, kind) :=
+  Step {
+    bg: bg,
+    speakerJa: "", speakerEn: "",
+    sayJa: "", sayEn: "",
+    thinkJa: "", thinkEn: "",
+    spriteId: "", spriteName: "", spriteColor: "",
+    spriteId2: "", spriteName2: "", spriteColor2: "",
+    spriteFocus: 0,
+    choices: [],
+    battle: "", gotoScene: "", ending: "",
+    miniKind: "", miniGood: "", miniOk: "", miniBad: "",
+    npcChat: "",
+    aiResolveKind: kind
   }
 
 -- ── Story content ───────────────────────────────────────────────────
@@ -1331,28 +1355,11 @@ def liubangAct2 := [
   narr("bg-tent",
     "樊噲が盾を撞いて闖入。生の豚肉を盾の上で斬って食らい、項羽が「壮士!」と讃えるほどの威風。座は呑まれた。",
     "Fan Kuai bursts in shield-first, sword in the other hand. He carves raw pork on the shield and devours it. Even Xiang Yu mutters “a real warrior“ in admiration. The room is dominated."),
-  chooseStep("bg-tent", [
-    Choice {
-      labelJa: "便所に立つ振りで馬で抜け出す",
-      labelEn: "Excuse yourself for the toilet and ride away",
-      hintJa: "歴史通り。命は助かる。だが「卑怯」の評判が伴う",
-      hintEn: "As history records. You live — but at the cost of a coward rumor",
-      dKarma: 3, dWife: 0, dWifeFear: 0,
-      dTrust: -1, dMinXin: 0,
-      dBu: 0, dZhi: 2, dMei: -2, dZheng: 3,
-      setFlag: "fled_hongmen", gotoScene: ""
-    },
-    Choice {
-      labelJa: "堂々と座を続け、項羽を見据える",
-      labelEn: "Stay at the table, hold Xiang Yu's eyes",
-      hintJa: "誇りは保てる。が、范増の指示で項荘が動き、お主は斬られる",
-      hintEn: "Pride preserved. But Fan Zeng moves Xiang Zhuang and you die on the mat",
-      dKarma: 0, dWife: 0, dWifeFear: 0,
-      dTrust: 0, dMinXin: 0,
-      dBu: 0, dZhi: 0, dMei: 5, dZheng: 0,
-      setFlag: "stayed_hongmen", gotoScene: "liubang_hongmen_died"
-    }
-  ]),
+  aiResolveStep("bg-tent", "liubang_hongmen_apology")
+]
+
+-- Good Hongmen apology: continues to historical post-Hongmen flow.
+def liubangHongmenEscapeGood := [
   narr("bg-mountain",
     "劉邦は無事に陣に戻り、密告者・曹無傷を即座に斬った。項羽は劉邦を「漢王」に封じ、巴・蜀・漢中という辺境に追いやった。咸陽から去る日、張良の進言で桟道を焼き、項羽に「もはや東に出る気は無い」と思わせた。",
     "Liu Bang reaches camp and immediately executes the informant Cao Wushang. Xiang Yu enfeoffs Liu Bang as “King of Han“ and banishes him to the wilds of Ba, Shu, and Hanzhong. On departure, by Zhang Liang's counsel, Liu Bang burns the wooden gallery roads behind him — to make Xiang Yu believe he never intends to come east again."),
@@ -1474,6 +1481,14 @@ def liubangAct2 := [
     "鴻溝を越えた漢軍は楚を追撃。同時に韓信・彭越・黥布の軍を呼び寄せる。垓下――最後の決戦の地が、霧の中に近づいてくる。",
     "The Han army crosses Honggou in pursuit. Han Xin, Peng Yue and Ying Bu are summoned. Gaixia — the field of the final reckoning — appears through the mist."),
   goScene("liubang_act3")
+]
+
+-- Ok Hongmen apology: barely escaped, reputation took a hit.
+def liubangHongmenEscapeOk := [
+  narr("bg-mountain",
+    "間一髪。 樊噲の威風と項伯の剣舞のおかげで命は拾った。 が、座を立つ時、座の誰もがあなたの背中を冷たい眼で見ていた。 「沛公、肝は小さい」――この評判は、後年まで尾を引く。",
+    "By a hair. The intrusion of Fan Kuai and the dance of Xiang Bo saved your life. But every eye at the table watched your back with a chill. “The Duke of Pei has a small belly” — the rumour will follow you for years."),
+  goScene("liubang_hongmen_escape_good")
 ]
 
 def liubangHongmenDied := [
@@ -2627,6 +2642,8 @@ def sceneOf(id) :=
   | "liubang_after_xiaohe_chat" => liubangAfterXiaoheChat
   | "liubang_act2" => liubangAct2
   | "liubang_hongmen_died" => liubangHongmenDied
+  | "liubang_hongmen_escape_good" => liubangHongmenEscapeGood
+  | "liubang_hongmen_escape_ok" => liubangHongmenEscapeOk
   | "liubang_withered_in_hanzhong" => liubangWitheredInHanzhong
   | "liubang_threeway_stub" => liubangThreewayStub
   | "liubang_honggou_keeper_end" => liubangHonggouKeeperEnd
@@ -2838,6 +2855,91 @@ def initLlmFor(npcId, sceneAfter) := Llm {
   history: [], pending: false, sceneAfter: sceneAfter, lastError: ""
 }
 
+-- ── TRPG aiResolve infrastructure ──────────────────────────────────
+-- Each resolve "kind" pairs a situation prompt (shown to the player as
+-- the scene context) with a 3-way outcome → scene routing table that
+-- the LLM's verdict triggers. Keep all kinds defined here so it's one
+-- file to scan when designing alt-history forks.
+
+record Resolve where
+  active : Bool,
+  kind : String,
+  situationJa : String, situationEn : String,
+  -- routing on outcome
+  gotoGood : String,
+  gotoOk : String,
+  gotoBad : String,
+  -- backend round-trip
+  playerText : String,     -- echoed back when the result lands
+  pending : Bool,
+  lastError : String,
+  resultOutcome : String,  -- "" | "good" | "ok" | "bad"
+  resultReasoning : String -- LLM's narration of why
+
+def initResolve := Resolve {
+  active: false, kind: "",
+  situationJa: "", situationEn: "",
+  gotoGood: "", gotoOk: "", gotoBad: "",
+  playerText: "", pending: false, lastError: "",
+  resultOutcome: "", resultReasoning: ""
+}
+
+-- Situation prompt shown to the player as the framing for their free-text
+-- action. The LLM also receives this on the server side so it can judge.
+def aiResolveSituationJa(kind) :=
+  if kind == "liubang_hongmen_apology" then
+    "鴻門。項羽の本陣。 范増の眼は炯々と光り、項荘は剣を抜いて舞っている。\
+あなた (劉邦) は今、項羽の前で詫びを述べねばならない。\
+言葉ひとつで命運が決まる。\
+\n\nどう詫びる? (自由に書いてください — 媚びても、言い訳しても、堂々と構えても可)"
+  else if kind == "liubang_xianyang_policy" then
+    "咸陽宮、子嬰が玉璽を捧げた直後。 関中の民、貴族、降伏した秦の役人が\
+あなた (劉邦) の宣言を待っている。 秦の苛法を全廃するか、\
+温存するか、宝物・後宮をどう扱うか — あなた次第。\
+\n\nどう宣言する? (自由に書いてください)"
+  else ""
+
+def aiResolveSituationEn(kind) :=
+  if kind == "liubang_hongmen_apology" then
+    "Hongmen. Xiang Yu's command tent. Fan Zeng's eyes burn; Xiang Zhuang has drawn his sword and is dancing.\
+You (Liu Bang) must now apologise to Xiang Yu in person.\
+A single sentence will decide your fate.\
+\n\nHow do you apologise? (Write freely — flatter, make excuses, stand proud, anything)"
+  else if kind == "liubang_xianyang_policy" then
+    "The palace at Xianyang, immediately after Ziying offered the imperial seal.\
+The people of Guanzhong, the nobility, and the surrendered Qin officials all wait for your (Liu Bang's) declaration.\
+Will you abolish Qin's harsh laws? Preserve them? Plunder the treasures and harem?\
+\n\nWhat do you declare? (Write freely)"
+  else ""
+
+-- Route to the next scene from an outcome bucket. Kept here so changing
+-- where a fork lands is a one-line edit.
+def aiResolveGotoGood(kind) :=
+  if kind == "liubang_hongmen_apology" then "liubang_hongmen_escape_good"
+  else if kind == "liubang_xianyang_policy" then "liubang_after_xianyang_good"
+  else ""
+
+def aiResolveGotoOk(kind) :=
+  if kind == "liubang_hongmen_apology" then "liubang_hongmen_escape_ok"
+  else if kind == "liubang_xianyang_policy" then "liubang_after_xianyang_ok"
+  else ""
+
+def aiResolveGotoBad(kind) :=
+  if kind == "liubang_hongmen_apology" then "liubang_hongmen_died"
+  else if kind == "liubang_xianyang_policy" then "liubang_after_xianyang_bad"
+  else ""
+
+def initResolveFor(kind) := Resolve {
+  active: true, kind: kind,
+  situationJa: aiResolveSituationJa(kind),
+  situationEn: aiResolveSituationEn(kind),
+  gotoGood: aiResolveGotoGood(kind),
+  gotoOk: aiResolveGotoOk(kind),
+  gotoBad: aiResolveGotoBad(kind),
+  playerText: "", pending: false, lastError: "",
+  resultOutcome: "", resultReasoning: ""
+}
+
 -- State
 def initState := {
   phase: "title",
@@ -2851,7 +2953,8 @@ def initState := {
   mini: initMini,
   endingId: "",
   toast: "",
-  llm: initLlm
+  llm: initLlm,
+  resolve: initResolve
 }
 
 -- ── Helpers for state manipulation ──────────────────────────────────
@@ -2954,19 +3057,19 @@ def update(msg, state) :=
   | "startSelect" => { phase: "select", lang: state.lang,
                        char: "", sceneId: "", beat: 0,
                        stats: state.stats, flags: state.flags,
-                       battle: state.battle, endingId: "", toast: "" , mini: state.mini, llm: state.llm}
+                       battle: state.battle, endingId: "", toast: "" , mini: state.mini, llm: state.llm, resolve: state.resolve}
   | "pickChar" => (
     let cid := msg.id;
     let sid := startSceneFor(cid);
     { phase: "scene", lang: state.lang,
       char: cid, sceneId: sid, beat: 0,
       stats: initStats, flags: {},
-      battle: initBattle, endingId: "", toast: "" , mini: initMini, llm: initLlm})
+      battle: initBattle, endingId: "", toast: "" , mini: initMini, llm: initLlm, resolve: initResolve})
   | "setLang" =>
     { phase: state.phase, lang: msg.lang,
       char: state.char, sceneId: state.sceneId, beat: state.beat,
       stats: state.stats, flags: state.flags,
-      battle: state.battle, endingId: state.endingId, toast: state.toast , mini: state.mini, llm: state.llm}
+      battle: state.battle, endingId: state.endingId, toast: state.toast , mini: state.mini, llm: state.llm, resolve: state.resolve}
   | "advance" => (
     if state.phase != "scene" then state
     else
@@ -2978,7 +3081,7 @@ def update(msg, state) :=
         { phase: "scene", lang: state.lang,
           char: state.char, sceneId: cur.gotoScene, beat: 0,
           stats: state.stats, flags: state.flags,
-          battle: state.battle, endingId: "", toast: state.toast , mini: state.mini, llm: state.llm}
+          battle: state.battle, endingId: "", toast: state.toast , mini: state.mini, llm: state.llm, resolve: state.resolve}
       else
         let nb := state.beat + 1;
         let nxt := stepAt(scene, nb);
@@ -2987,29 +3090,36 @@ def update(msg, state) :=
           { phase: "ending", lang: state.lang,
             char: state.char, sceneId: state.sceneId, beat: nb,
             stats: state.stats, flags: state.flags,
-            battle: state.battle, endingId: nxt.ending, toast: state.toast , mini: state.mini, llm: state.llm})
+            battle: state.battle, endingId: nxt.ending, toast: state.toast , mini: state.mini, llm: state.llm, resolve: state.resolve})
         else if nxt.gotoScene != "" then
           { phase: "scene", lang: state.lang,
             char: state.char, sceneId: nxt.gotoScene, beat: 0,
             stats: state.stats, flags: state.flags,
-            battle: state.battle, endingId: "", toast: state.toast , mini: state.mini, llm: state.llm}
+            battle: state.battle, endingId: "", toast: state.toast , mini: state.mini, llm: state.llm, resolve: state.resolve}
         else if nxt.miniKind != "" then
           { phase: "minigame", lang: state.lang,
             char: state.char, sceneId: state.sceneId, beat: nb,
             stats: state.stats, flags: state.flags,
             battle: state.battle, endingId: state.endingId, toast: state.toast,
-            mini: initMiniFor(nxt.miniKind) , llm: state.llm}
+            mini: initMiniFor(nxt.miniKind) , llm: state.llm, resolve: state.resolve}
         else if nxt.npcChat != "" then
           { phase: "llm_chat", lang: state.lang,
             char: state.char, sceneId: state.sceneId, beat: nb,
             stats: state.stats, flags: state.flags,
             battle: state.battle, endingId: state.endingId, toast: state.toast,
-            mini: state.mini, llm: initLlmFor(nxt.npcChat, nxt.gotoScene) }
+            mini: state.mini, llm: initLlmFor(nxt.npcChat, nxt.gotoScene), resolve: state.resolve }
+        else if nxt.aiResolveKind != "" then
+          { phase: "ai_resolve", lang: state.lang,
+            char: state.char, sceneId: state.sceneId, beat: nb,
+            stats: state.stats, flags: state.flags,
+            battle: state.battle, endingId: state.endingId, toast: state.toast,
+            mini: state.mini, llm: state.llm,
+            resolve: initResolveFor(nxt.aiResolveKind) }
         else
           { phase: state.phase, lang: state.lang,
             char: state.char, sceneId: state.sceneId, beat: nb,
             stats: state.stats, flags: state.flags,
-            battle: state.battle, endingId: state.endingId, toast: state.toast , mini: state.mini, llm: state.llm})
+            battle: state.battle, endingId: state.endingId, toast: state.toast , mini: state.mini, llm: state.llm, resolve: state.resolve})
   | "choose" => (
     let scene := sceneOf(state.sceneId);
     let cur := stepAt(scene, state.beat);
@@ -3022,12 +3132,12 @@ def update(msg, state) :=
         { phase: "scene", lang: state.lang,
           char: state.char, sceneId: c.gotoScene, beat: 0,
           stats: newStats, flags: state.flags,
-          battle: state.battle, endingId: "", toast: c.setFlag , mini: state.mini, llm: state.llm}
+          battle: state.battle, endingId: "", toast: c.setFlag , mini: state.mini, llm: state.llm, resolve: state.resolve}
       else
         { phase: state.phase, lang: state.lang,
           char: state.char, sceneId: state.sceneId, beat: state.beat + 1,
           stats: newStats, flags: state.flags,
-          battle: state.battle, endingId: state.endingId, toast: c.setFlag , mini: state.mini, llm: state.llm}
+          battle: state.battle, endingId: state.endingId, toast: c.setFlag , mini: state.mini, llm: state.llm, resolve: state.resolve}
     else state)
   -- Mini: face_read ─────────────────────────
   | "miniFace" => (
@@ -3051,7 +3161,7 @@ def update(msg, state) :=
     { phase: state.phase, lang: state.lang,
       char: state.char, sceneId: state.sceneId, beat: state.beat,
       stats: state.stats, flags: state.flags, battle: state.battle,
-      endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm})
+      endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm, resolve: state.resolve})
   | "miniFaceShow" => (
     let m := state.mini;
     let sc := faceReadScore(m.faceEyes, m.faceMouth, m.facePose);
@@ -3070,7 +3180,7 @@ def update(msg, state) :=
     { phase: state.phase, lang: state.lang,
       char: state.char, sceneId: state.sceneId, beat: state.beat,
       stats: state.stats, flags: state.flags, battle: state.battle,
-      endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm})
+      endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm, resolve: state.resolve})
   | "miniFaceDone" => (
     let scene := sceneOf(state.sceneId);
     let cur := stepAt(scene, state.beat);
@@ -3078,7 +3188,7 @@ def update(msg, state) :=
     { phase: "scene", lang: state.lang,
       char: state.char, sceneId: nextSceneId, beat: 0,
       stats: state.stats, flags: state.flags, battle: state.battle,
-      endingId: "", toast: "mini:face", mini: initMini , llm: state.llm})
+      endingId: "", toast: "mini:face", mini: initMini , llm: state.llm, resolve: state.resolve})
   -- Mini: jade_ring ─────────────────────────
   | "miniRingTick" => (
     let m := state.mini;
@@ -3104,7 +3214,7 @@ def update(msg, state) :=
         { phase: state.phase, lang: state.lang,
           char: state.char, sceneId: state.sceneId, beat: state.beat,
           stats: state.stats, flags: state.flags, battle: state.battle,
-          endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm}
+          endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm, resolve: state.resolve}
       else
         let newM := Mini {
           kind: m.kind,
@@ -3121,7 +3231,7 @@ def update(msg, state) :=
         { phase: state.phase, lang: state.lang,
           char: state.char, sceneId: state.sceneId, beat: state.beat,
           stats: state.stats, flags: state.flags, battle: state.battle,
-          endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm})
+          endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm, resolve: state.resolve})
   | "miniRingClick" => (
     let m := state.mini;
     if m.ringFinished then state
@@ -3145,7 +3255,7 @@ def update(msg, state) :=
       { phase: state.phase, lang: state.lang,
         char: state.char, sceneId: state.sceneId, beat: state.beat,
         stats: state.stats, flags: state.flags, battle: state.battle,
-        endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm})
+        endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm, resolve: state.resolve})
   | "miniRingDone" => (
     let scene := sceneOf(state.sceneId);
     let cur := stepAt(scene, state.beat);
@@ -3153,7 +3263,7 @@ def update(msg, state) :=
     { phase: "scene", lang: state.lang,
       char: state.char, sceneId: nextSceneId, beat: 0,
       stats: state.stats, flags: state.flags, battle: state.battle,
-      endingId: "", toast: "mini:ring", mini: initMini , llm: state.llm})
+      endingId: "", toast: "mini:ring", mini: initMini , llm: state.llm, resolve: state.resolve})
   -- Mini: beishui ─────────────────────────
   | "miniBsCard" => (
     let m := state.mini;
@@ -3163,7 +3273,7 @@ def update(msg, state) :=
       { phase: state.phase, lang: state.lang,
         char: state.char, sceneId: state.sceneId, beat: state.beat,
         stats: state.stats, flags: state.flags, battle: state.battle,
-        endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm})
+        endingId: state.endingId, toast: state.toast, mini: newM , llm: state.llm, resolve: state.resolve})
   | "miniBsDone" => (
     let scene := sceneOf(state.sceneId);
     let cur := stepAt(scene, state.beat);
@@ -3171,7 +3281,7 @@ def update(msg, state) :=
     { phase: "scene", lang: state.lang,
       char: state.char, sceneId: nextSceneId, beat: 0,
       stats: state.stats, flags: state.flags, battle: state.battle,
-      endingId: "", toast: "mini:bs", mini: initMini , llm: state.llm})
+      endingId: "", toast: "mini:bs", mini: initMini , llm: state.llm, resolve: state.resolve})
   -- Mini: LLM NPC chat ─────────────────────
   | "llmSendUser" => (
     let m := state.llm;
@@ -3187,7 +3297,7 @@ def update(msg, state) :=
       char: state.char, sceneId: state.sceneId, beat: state.beat,
       stats: state.stats, flags: state.flags, battle: state.battle,
       endingId: state.endingId, toast: state.toast, mini: state.mini,
-      llm: newL })
+      llm: newL, resolve: state.resolve })
   | "llmReply" => (
     let m := state.llm;
     let entry := { role: "assistant", text: msg.text };
@@ -3202,7 +3312,7 @@ def update(msg, state) :=
       char: state.char, sceneId: state.sceneId, beat: state.beat,
       stats: state.stats, flags: state.flags, battle: state.battle,
       endingId: state.endingId, toast: state.toast, mini: state.mini,
-      llm: newL })
+      llm: newL, resolve: state.resolve })
   | "llmError" => (
     let m := state.llm;
     let newL := Llm {
@@ -3215,13 +3325,69 @@ def update(msg, state) :=
       char: state.char, sceneId: state.sceneId, beat: state.beat,
       stats: state.stats, flags: state.flags, battle: state.battle,
       endingId: state.endingId, toast: state.toast, mini: state.mini,
-      llm: newL })
+      llm: newL, resolve: state.resolve })
   | "llmEnd" => (
     let after := state.llm.sceneAfter;
     { phase: "scene", lang: state.lang,
       char: state.char, sceneId: after, beat: 0,
       stats: state.stats, flags: state.flags, battle: state.battle,
-      endingId: "", toast: "llm:end", mini: state.mini, llm: initLlm })
+      endingId: "", toast: "llm:end", mini: state.mini, llm: initLlm, resolve: initResolve })
+  -- TRPG aiResolve handlers ───────────────────
+  | "resolveSubmit" => (
+    let r := state.resolve;
+    let newR := Resolve {
+      active: r.active, kind: r.kind,
+      situationJa: r.situationJa, situationEn: r.situationEn,
+      gotoGood: r.gotoGood, gotoOk: r.gotoOk, gotoBad: r.gotoBad,
+      playerText: msg.text, pending: true, lastError: "",
+      resultOutcome: "", resultReasoning: ""
+    };
+    { phase: state.phase, lang: state.lang,
+      char: state.char, sceneId: state.sceneId, beat: state.beat,
+      stats: state.stats, flags: state.flags, battle: state.battle,
+      endingId: state.endingId, toast: state.toast, mini: state.mini,
+      llm: state.llm, resolve: newR })
+  | "resolveResult" => (
+    let r := state.resolve;
+    let newR := Resolve {
+      active: r.active, kind: r.kind,
+      situationJa: r.situationJa, situationEn: r.situationEn,
+      gotoGood: r.gotoGood, gotoOk: r.gotoOk, gotoBad: r.gotoBad,
+      playerText: r.playerText, pending: false, lastError: "",
+      resultOutcome: msg.outcome, resultReasoning: msg.reasoning
+    };
+    { phase: state.phase, lang: state.lang,
+      char: state.char, sceneId: state.sceneId, beat: state.beat,
+      stats: state.stats, flags: state.flags, battle: state.battle,
+      endingId: state.endingId, toast: state.toast, mini: state.mini,
+      llm: state.llm, resolve: newR })
+  | "resolveError" => (
+    let r := state.resolve;
+    let newR := Resolve {
+      active: r.active, kind: r.kind,
+      situationJa: r.situationJa, situationEn: r.situationEn,
+      gotoGood: r.gotoGood, gotoOk: r.gotoOk, gotoBad: r.gotoBad,
+      playerText: r.playerText, pending: false, lastError: msg.text,
+      resultOutcome: "", resultReasoning: ""
+    };
+    { phase: state.phase, lang: state.lang,
+      char: state.char, sceneId: state.sceneId, beat: state.beat,
+      stats: state.stats, flags: state.flags, battle: state.battle,
+      endingId: state.endingId, toast: state.toast, mini: state.mini,
+      llm: state.llm, resolve: newR })
+  | "resolveAdvance" => (
+    let r := state.resolve;
+    let next := if r.resultOutcome == "good" then r.gotoGood
+                else if r.resultOutcome == "ok" then r.gotoOk
+                else if r.resultOutcome == "bad" then r.gotoBad
+                else "";
+    if next == "" then state
+    else
+      { phase: "scene", lang: state.lang,
+        char: state.char, sceneId: next, beat: 0,
+        stats: state.stats, flags: state.flags, battle: state.battle,
+        endingId: "", toast: sjoin(["resolve:", r.resultOutcome]),
+        mini: state.mini, llm: state.llm, resolve: initResolve })
   -- Save / load handlers — direct localStorage via externs.
   -- (LeanJs functions are pure in spirit; the externs do the IO.)
   | "toggleSaveMenu" => (
@@ -3230,7 +3396,7 @@ def update(msg, state) :=
     { phase: state.phase, lang: state.lang,
       char: state.char, sceneId: state.sceneId, beat: state.beat,
       stats: state.stats, flags: newFlags, battle: state.battle,
-      endingId: state.endingId, toast: state.toast, mini: state.mini, llm: state.llm })
+      endingId: state.endingId, toast: state.toast, mini: state.mini, llm: state.llm, resolve: state.resolve })
   | "saveSlot1" => (
     let _ := lsSave(lsKeySlot(1), state);
     state )
@@ -3258,7 +3424,7 @@ def update(msg, state) :=
     { phase: "gallery", lang: state.lang,
       char: state.char, sceneId: "", beat: 0,
       stats: state.stats, flags: state.flags, battle: state.battle,
-      endingId: "", toast: "", mini: state.mini, llm: state.llm })
+      endingId: "", toast: "", mini: state.mini, llm: state.llm, resolve: state.resolve })
   | "closeGallery" => initState
   -- Test mode: jump to any scene from the title (URL ?scene=…)
   | "jumpToScene" => (
@@ -3266,11 +3432,11 @@ def update(msg, state) :=
     { phase: "scene", lang: state.lang,
       char: cid, sceneId: msg.sceneId, beat: 0,
       stats: initStats, flags: {}, battle: initBattle,
-      endingId: "", toast: "", mini: initMini, llm: initLlm })
+      endingId: "", toast: "", mini: initMini, llm: initLlm, resolve: initResolve })
   | "backToSelect" => { phase: "select", lang: state.lang,
                         char: "", sceneId: "", beat: 0,
                         stats: initStats, flags: {},
-                        battle: initBattle, endingId: "", toast: "" , mini: state.mini, llm: state.llm}
+                        battle: initBattle, endingId: "", toast: "" , mini: state.mini, llm: state.llm, resolve: state.resolve}
   | "toggleMute" => (
     let _ := audioToggleMute();
     state )
@@ -3912,6 +4078,52 @@ def viewLlmChat(state) :=
     "</div>"
   ])
 
+-- ── TRPG aiResolve view ──────────────────────────────────────────
+-- Player reads the situation, types their action, hits 送信. After the
+-- LLM responds with {outcome, reasoning} we replace the input with the
+-- verdict + reasoning + a 次へ button (which fires resolveAdvance).
+def viewAiResolve(state) :=
+  let r := state.resolve;
+  let situation := if state.lang == "en" then r.situationEn else r.situationJa;
+  let outcomeLabel := if r.resultOutcome == "good" then "✓ 説得成功"
+                     else if r.resultOutcome == "ok" then "△ 微妙"
+                     else if r.resultOutcome == "bad" then "✗ 失敗"
+                     else "";
+  let outcomeClass := if r.resultOutcome == "good" then "resolve-outcome good"
+                     else if r.resultOutcome == "ok" then "resolve-outcome ok"
+                     else if r.resultOutcome == "bad" then "resolve-outcome bad"
+                     else "";
+  let pendingHtml := if r.pending then "<div class='resolve-pending'>… LLM が判定中</div>" else "";
+  let errorHtml := if r.lastError == "" then ""
+                   else sjoin(["<div class='resolve-error'>", hesc(r.lastError), "</div>"]);
+  let playerEcho := if r.playerText == "" then ""
+                    else sjoin(["<div class='resolve-echo'><b>あなたの行動:</b> ", hesc(r.playerText), "</div>"]);
+  let resultBlock := if r.resultOutcome == "" then ""
+                     else sjoin([
+                       "<div class='", outcomeClass, "'>", outcomeLabel, "</div>",
+                       "<div class='resolve-reasoning'>", hesc(r.resultReasoning), "</div>",
+                       button("primary", {tag: "resolveAdvance"}, "次へ ▶")
+                     ]);
+  let inputBlock := if r.resultOutcome != "" then ""
+                    else sjoin([
+                      "<div class='resolve-input-row'>",
+                      "<textarea id='resolveInput' class='resolve-input' rows='3' placeholder='ここに行動を書く (Enter で送信)' ",
+                      if r.pending then "disabled" else "",
+                      "></textarea>",
+                      "<button class='btn btn-primary' id='resolveSend' ",
+                      if r.pending then "disabled" else "",
+                      ">送信</button></div>"
+                    ]);
+  let body := sjoin([
+    "<div class='resolve-situation'>", hesc(situation), "</div>",
+    playerEcho, pendingHtml, errorHtml, resultBlock, inputBlock
+  ]);
+  sjoin([
+    "<div class='scene-bg bg-tent'>", renderHud(state),
+    panel("mini", "判定", body),
+    "</div>"
+  ])
+
 -- ── Gallery view ─────────────────────────────────────────────────
 def renderEndingRow(allObj, id) :=
   let achieved := hasKey(allObj, id) == 1;
@@ -3976,6 +4188,7 @@ def bgmForPhase(state) :=
   else if state.phase == "battle" then "battle"
   else if state.phase == "minigame" then "camp"
   else if state.phase == "llm_chat" then "village"
+  else if state.phase == "ai_resolve" then "grief"
   else if state.phase == "scene" then
     let scene := sceneOf(state.sceneId);
     if arrLen(scene) > 0 then
@@ -3992,8 +4205,9 @@ def viewByPhase(state) :=
   | "battle"   => viewBattle(state)
   | "ending"   => viewEnding(state)
   | "minigame" => viewMinigame(state)
-  | "llm_chat" => viewLlmChat(state)
-  | "gallery"  => viewGallery(state)
+  | "llm_chat"  => viewLlmChat(state)
+  | "ai_resolve"=> viewAiResolve(state)
+  | "gallery"   => viewGallery(state)
   | _ => viewTitle(state)
 
 def view(state) :=
