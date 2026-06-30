@@ -30,7 +30,7 @@ package «lean-tea» where
   precompileModules := false
 
 lean_lib LeanTea where
-  roots := #[`LeanTea]
+  roots := #[`LeanTea, `LeanTea.Tui]
 
 /-- A small Fay-style Lean-subset → JavaScript compiler. Used by the
     LSpec tests under `examples/Tests/` that exec the emitted JS via
@@ -50,6 +50,7 @@ lean_lib Examples where
     `Tools.LeanJsCompile, `Tools.LeanJsInterp, `Tools.LeanJsRun,
     `Tests.PureSpec,
     `Tests.AuthSpec,
+    `Tests.TuiSpec,
     `AuthIdp.Serve,
     `StateMachine.Order,
     `ChuHan.Game,
@@ -395,6 +396,13 @@ lean_exe doc_ch09 where
 lean_exe leanjs_spec where
   srcDir := "examples"
   root := `Tests.LeanJsSpec
+
+/-- Pure unit tests for the `LeanTea.Tui` widget kit — layout
+    primitives, combinators, elements, and the `Session` test
+    harness that mirrors `App.run` without a real TTY. -/
+lean_exe tui_spec where
+  srcDir := "examples"
+  root := `Tests.TuiSpec
 
 /-- Aggregated LSpec runner for the construction-time security
     primitives (SafeHtml + SafePath + SafeCmd + SafeHeader +
