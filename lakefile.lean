@@ -55,6 +55,8 @@ lean_lib Examples where
     `ChuHan.Game,
     `MetaOrchestrator.Zellij,
     `MetaOrchestrator.Director,
+    `MetaOrchestrator.Config,
+    `MetaOrchestrator.Runtime,
     `MetaOrchestrator.Main
   ]
   /- Private examples (English Learning + game shells under

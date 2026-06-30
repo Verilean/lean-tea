@@ -1,218 +1,172 @@
-import MetaOrchestrator.Zellij
-import MetaOrchestrator.Director
+import MetaOrchestrator.Runtime
+import MetaOrchestrator.Config
 import LeanTea.Cloud.Gemini
 
-/-! # examples/MetaOrchestrator/Main.lean — main loop
+/-! # examples/MetaOrchestrator/Main.lean — controller
 
-Polls the target zellij pane, hashes the visible viewport, and only
-wakes Gemini when:
+Starts every enabled agent from the config file, spawns one polling
+task per agent (each its own zellij-pane watcher + Gemini caller),
+then reads slash commands on stdin to add/remove agents at runtime.
 
-  * the hash has been stable for `--stall-secs` seconds (no output
-    movement, i.e. agent is idle), OR
-  * the user pressed Enter on stdin (manual nudge — useful while
-    iterating on the system prompt).
+This commit is CLI text-mode only — a richer TUI rendering of agent
+state lives in the next commit. The data layer (Config + Runtime) is
+already structured for it: `Runtime.snapshot` returns a snapshot list
+the TUI / web layer just paints.
 
-Each Gemini decision lands as an audit line in `--log FILE` (JSONL).
-Each `Director.Memo` (the structured-for-LLM-replay form) lands as a
-separate JSONL line in `--memo-log FILE`. On startup the loop replays
-the memo log for the current session and continues with that context,
-so a `--resume` (or just restarting with the same `--goal`) picks up
-where Gemini left off.
+## Slash commands
 
-## Session id
+  /list                              — show every agent and its status
+  /add ID PANE GOAL...               — register and start a new agent
+  /stop ID                           — cooperatively stop an agent
+  /start ID                          — re-enable a stopped/disabled agent
+  /remove ID                         — drop the agent from the config
+  /reply ID TEXT...                  — send TEXT to the named pane (use for `awaiting-user`)
+  /save [PATH]                       — write the config to PATH (default: --config path)
+  /load PATH                         — load config from PATH (replaces in-memory config; running agents keep going until /stop)
+  /quit                              — stop everything and exit
 
-Memos are tagged with a session id so the same memo log can serve
-several concurrent / consecutive orchestrators without their memories
-cross-contaminating. By default we derive a stable id from the goal
-text (FNV-1a, first 8 hex). `--session FOO` pins it explicitly when
-you want to fork (same goal, two trial paths).
+## Config file shape
 
-## CLI
-
-  meta_orchestrator \\
-    --pane PANE_ID            # zellij pane id (e.g. terminal_3)
-    --goal "PROJECT GOAL"     # one-liner shipped on every prompt
-    --stall-secs N            # default 30 — how long no-change = idle
-    --poll-secs N             # default 5 — how often to dump-screen
-    --log FILE                # default ./meta_orchestrator.jsonl   (decision audit)
-    --memo-log FILE           # default ./meta_orchestrator.memos.jsonl (resume source)
-    --session ID              # override the auto-derived session id
-    [--fresh]                 # ignore the memo log on startup
-    [--dry-run]               # print decisions instead of writing back -/
+  {
+    "agents": [
+      {"id": "kernel-bwd", "pane": "terminal_18", "goal": "...",
+       "stallSec": 45, "pollSec": 5, "enabled": true},
+      ...
+    ],
+    "logDir": "./logs",
+    "geminiModel": "gemini-2.5-pro"
+  }
+-/
 
 open MetaOrchestrator
 
-private structure Args where
-  pane     : String := ""
-  goal     : String := ""
-  stallSec : Nat := 30
-  pollSec  : Nat := 5
-  log      : String := "meta_orchestrator.jsonl"
-  memoLog  : String := "meta_orchestrator.memos.jsonl"
-  session  : String := ""    -- "" = derive from goal
-  fresh    : Bool := false
-  dryRun   : Bool := false
+private structure CliArgs where
+  configPath : String := "meta_orchestrator.config.json"
 
-private partial def parseArgs : List String → Args → Args
-  | "--pane"       :: v :: rest, a => parseArgs rest { a with pane := v }
-  | "--goal"       :: v :: rest, a => parseArgs rest { a with goal := v }
-  | "--stall-secs" :: v :: rest, a => parseArgs rest { a with stallSec := v.toNat?.getD 30 }
-  | "--poll-secs"  :: v :: rest, a => parseArgs rest { a with pollSec := v.toNat?.getD 5 }
-  | "--log"        :: v :: rest, a => parseArgs rest { a with log := v }
-  | "--memo-log"   :: v :: rest, a => parseArgs rest { a with memoLog := v }
-  | "--session"    :: v :: rest, a => parseArgs rest { a with session := v }
-  | "--fresh"      :: rest,      a => parseArgs rest { a with fresh := true }
-  | "--dry-run"    :: rest,      a => parseArgs rest { a with dryRun := true }
-  | _              :: rest,      a => parseArgs rest a
-  | [],                          a => a
+private partial def parseCli : List String → CliArgs → CliArgs
+  | "--config" :: v :: rest, a => parseCli rest { a with configPath := v }
+  | _ :: rest,               a => parseCli rest a
+  | [],                      a => a
 
-private def isoNow : IO String := do
-  let now ← IO.monoMsNow
-  -- ISO-ish; we don't need wall-clock precision for log correlation.
-  return s!"t+{now}ms"
+/-! ## Slash command dispatch -/
 
-private def logLine (path : String) (j : Lean.Json) : IO Unit := do
-  let line := j.compress ++ "\n"
-  let h ← IO.FS.Handle.mk path .append
-  h.putStr line
-  h.flush
+private def rightpad (s : String) (n : Nat) : String :=
+  if s.length < n then
+    s ++ String.ofList (List.replicate (n - s.length) ' ')
+  else s
 
-private def decisionName : Director.Decision → String
-  | .continue    => "continue"
-  | .instruct _  => "instruct"
-  | .askUser _   => "ask_user"
+private def fmtAgentLine (st : Runtime.AgentState) : String :=
+  let id := rightpad st.agent.id 16
+  let status := rightpad st.status 14
+  let poll := s!"poll={st.pollCount}"
+  let recent := if st.lastDecision.isEmpty then "(no decisions yet)"
+                else (st.lastDecision.take 80).toString
+  s!"{id}  {status}  pane={st.agent.pane}  {poll}  {recent}"
 
-private def decisionText : Director.Decision → String
-  | .continue       => ""
-  | .instruct s     => s
-  | .askUser s      => s
-
-/-- 8 hex chars derived from the FNV-1a hash of `s`. Used as a default
-    session id derived from the goal so identical goals share memos. -/
-private def sessionFromGoal (goal : String) : String :=
-  let h := Zellij.cheapHash goal
-  let hex := Nat.toDigits 16 h.toNat
-  let s := String.mk hex
-  -- right-trim to 8 chars (or left-pad with 0 if shorter)
-  if s.length ≥ 8 then (s.drop (s.length - 8)).toString
-  else String.ofList (List.replicate (8 - s.length) '0') ++ s
-
-/-- Read the memo log, parse one JSON object per line, keep only memos
-    that match `sessionId`, return the last `keep` of them in
-    insertion order (i.e. most recent at the head, which matches the
-    in-memory shape the loop uses). -/
-private def loadMemos (memoLogPath : String) (sessionId : String)
-    (keep : Nat) : IO (List Director.Memo) := do
-  if !(← System.FilePath.pathExists memoLogPath) then return []
-  let contents ← IO.FS.readFile memoLogPath
-  let lines := contents.splitOn "\n" |>.filter (fun l => !l.trim.isEmpty)
-  let mut acc : Array Director.Memo := #[]
-  for line in lines do
-    match Lean.Json.parse line with
-    | .ok j =>
-      match Director.Memo.ofJson? j with
-      | some m =>
-        if m.sessionId == sessionId then acc := acc.push m
-      | none => pure ()
-    | .error _ => pure ()
-  -- Most recent at the head — take the last `keep`, then reverse.
-  let total := acc.size
-  let take := if total > keep then keep else total
-  let recent := acc.toList.drop (total - take)
-  return recent.reverse
-
-/-- Heuristic 1-line summary of "what happened between the previous
-    decision and now". Just compares the pane hash. -/
-private def diffSummary (prevHash : UInt64) (curHash : UInt64) : String :=
-  if prevHash == curHash then "(no change in pane)"
-  else "(pane changed)"
-
-partial def loop (cfg : LeanTea.Cloud.Gemini.Config) (a : Args)
-    (memos : List Director.Memo) (lastHash : UInt64) (stableSec : Nat)
-    (preDecisionHash : UInt64) : IO Unit := do
-  IO.sleep (a.pollSec.toUInt32 * 1000)
-  let dump ← Zellij.dumpScreen a.pane
-  let h := Zellij.cheapHash dump
-  let nextStable :=
-    if h == lastHash then stableSec + a.pollSec
-    else 0
-  if h != lastHash then
-    IO.eprintln s!"[poll] pane changed (stable: 0s)"
-    loop cfg a memos h 0 preDecisionHash
-  else if nextStable < a.stallSec then
-    IO.eprintln s!"[poll] pane stable for {nextStable}s (threshold {a.stallSec}s)"
-    loop cfg a memos h nextStable preDecisionHash
+private def cmdList (rt : Runtime.RuntimeState) : IO Unit := do
+  let snaps ← Runtime.snapshot rt
+  if snaps.isEmpty then
+    IO.println "(no agents registered — try /add)"
   else
-    -- Stalled: backfill the previous memo's afterSummary, then wake the Director.
-    let memosWithSummary :=
-      match memos with
-      | [] => memos
-      | m :: rest =>
-        if m.afterSummary.isEmpty then
-          ({ m with afterSummary := diffSummary preDecisionHash h }) :: rest
-        else memos
-    IO.eprintln s!"[stall] pane stable for {nextStable}s — asking Gemini"
-    let verdict ← try Director.decide cfg a.goal memosWithSummary dump
-                  catch e => do
-                    IO.eprintln s!"[err] Gemini call failed: {e}"
-                    pure { decision := .continue, reasoning := s!"err: {e}" }
-    let actName := decisionName verdict.decision
-    let text := decisionText verdict.decision
-    IO.eprintln s!"[director] {actName}: {verdict.reasoning}"
-    if !text.isEmpty then IO.eprintln s!"           → {text}"
-    let ts ← isoNow
-    -- Decision audit log (free-form, includes reasoning).
-    logLine a.log <| Lean.Json.mkObj [
-      ("sessionId", Lean.Json.str a.session),
-      ("ts", Lean.Json.str ts),
-      ("action", Lean.Json.str actName),
-      ("reasoning", Lean.Json.str verdict.reasoning),
-      ("text", Lean.Json.str text),
-      ("dryRun", Lean.Json.bool a.dryRun)
-    ]
-    -- Memo log (structured, replayable on --resume).
-    let memo : Director.Memo := {
-      sessionId := a.session, ts := ts,
-      action := actName, text := text, afterSummary := ""
-    }
-    logLine a.memoLog memo.toJson
-    let memos' := memo :: (memosWithSummary.take 9)
-    match verdict.decision with
-    | .instruct s =>
-      if a.dryRun then
-        IO.eprintln "[dry] (would write to pane)"
-      else
-        Zellij.submit a.pane s
-      loop cfg a memos' h 0 h
-    | .askUser q =>
-      IO.println s!"\n=== askUser ===\n{q}\n==============="
-      IO.println "Type a reply and press Enter (sent to the agent), or just Enter to skip:"
-      let line := (← (← IO.getStdin).getLine).trim
-      if !line.isEmpty && !a.dryRun then Zellij.submit a.pane line
-      loop cfg a memos' h 0 h
-    | .continue =>
-      loop cfg a memosWithSummary h nextStable preDecisionHash
+    for st in snaps do IO.println (fmtAgentLine st)
+
+private def cmdAdd (rt : Runtime.RuntimeState)
+    (id : String) (pane : String) (goal : String) : IO Unit := do
+  if id.isEmpty || pane.isEmpty || goal.isEmpty then
+    IO.println "usage: /add ID PANE GOAL..."
+    return
+  let agent : Config.ManagedAgent := { id, pane, goal }
+  rt.config.modify (fun c => c.addAgent agent)
+  Runtime.start rt agent
+
+private def cmdStop (rt : Runtime.RuntimeState) (id : String) : IO Unit :=
+  Runtime.stop rt id
+
+private def cmdStart (rt : Runtime.RuntimeState) (id : String) : IO Unit := do
+  let cfg ← rt.config.get
+  match cfg.findAgent? id with
+  | some a => Runtime.start rt { a with enabled := true }
+  | none => IO.println s!"no agent '{id}' in config — try /add first"
+
+private def cmdRemove (rt : Runtime.RuntimeState) (id : String) : IO Unit := do
+  Runtime.stop rt id
+  rt.config.modify (fun c => c.removeAgent id)
+  IO.println s!"[runtime] removed '{id}' from config (running task will exit on next poll)"
+
+private def cmdReply (rt : Runtime.RuntimeState) (id : String) (text : String) : IO Unit :=
+  Runtime.replyToUser rt id text
+
+private def cmdSave (rt : Runtime.RuntimeState) (path? : Option String) : IO Unit := do
+  let path := path?.getD rt.configPath
+  let cfg ← rt.config.get
+  cfg.save path
+  IO.println s!"[runtime] saved config → {path}"
+
+private def cmdLoad (rt : Runtime.RuntimeState) (path : String) : IO Unit := do
+  let loaded ← Config.Config.load path
+  rt.config.modify (fun _ => loaded)
+  IO.println s!"[runtime] loaded config from {path} (use /start ID to spawn agents)"
+
+private def parseSlash (line : String) : Option (String × List String) :=
+  if !line.startsWith "/" then none
+  else
+    let body := (line.drop 1).toString
+    let parts := body.splitOn " " |>.filter (·.length > 0)
+    match parts with
+    | [] => none
+    | cmd :: rest => some (cmd, rest)
+
+private partial def repl (rt : Runtime.RuntimeState) : IO Unit := do
+  IO.print "> "
+  (← IO.getStdout).flush
+  let stdin ← IO.getStdin
+  let line := (← stdin.getLine).trim
+  if line.isEmpty then repl rt
+  else
+    match parseSlash line with
+    | none =>
+      IO.println "(commands start with /; try /list /add /stop /start /remove /reply /save /load /quit)"
+      repl rt
+    | some ("list", _) => cmdList rt; repl rt
+    | some ("add", id :: pane :: goalParts) =>
+      cmdAdd rt id pane (String.intercalate " " goalParts); repl rt
+    | some ("add", _) => IO.println "usage: /add ID PANE GOAL..."; repl rt
+    | some ("stop", [id]) => cmdStop rt id; repl rt
+    | some ("start", [id]) => cmdStart rt id; repl rt
+    | some ("remove", [id]) => cmdRemove rt id; repl rt
+    | some ("reply", id :: textParts) =>
+      cmdReply rt id (String.intercalate " " textParts); repl rt
+    | some ("reply", _) => IO.println "usage: /reply ID TEXT..."; repl rt
+    | some ("save", []) => cmdSave rt none; repl rt
+    | some ("save", [p]) => cmdSave rt (some p); repl rt
+    | some ("load", [p]) => cmdLoad rt p; repl rt
+    | some ("load", _) => IO.println "usage: /load PATH"; repl rt
+    | some ("quit", _) =>
+      let snaps ← Runtime.snapshot rt
+      for st in snaps do Runtime.stop rt st.agent.id
+      cmdSave rt none
+      IO.println "bye"
+    | some (cmd, _) => IO.println s!"unknown command: /{cmd}"; repl rt
 
 def main (argv : List String) : IO Unit := do
-  let mut a := parseArgs argv {}
-  if a.pane.isEmpty then
-    IO.eprintln "usage: meta_orchestrator --pane PANE_ID --goal 'TEXT' [--stall-secs N] [--poll-secs N] [--log FILE] [--memo-log FILE] [--session ID] [--fresh] [--dry-run]"
-    IO.eprintln "  PANE_ID examples: terminal_3, plugin_2, or bare integer."
-    IO.eprintln "  Find ids in zellij with: zellij action dump-layout"
-    return
-  if a.goal.isEmpty then
-    IO.eprintln "meta_orchestrator: --goal is required (the long-term objective shipped to Gemini)"
-    return
-  if a.session.isEmpty then
-    a := { a with session := sessionFromGoal a.goal }
-  let cfg ← LeanTea.Cloud.Gemini.Config.fromEnv!
-  -- Resume memos for this session unless --fresh.
-  let memos ← if a.fresh then pure [] else loadMemos a.memoLog a.session 10
-  -- Banner on stderr so logs land in real-time (stdout is fully buffered
-  -- to a pipe; stderr is line-buffered).
-  IO.eprintln s!"meta_orchestrator: pane={a.pane} session={a.session}"
-  IO.eprintln s!"  goal: {a.goal}"
-  IO.eprintln s!"  poll={a.pollSec}s stall_threshold={a.stallSec}s"
-  IO.eprintln s!"  log={a.log}  memo_log={a.memoLog}  dry_run={a.dryRun}"
-  IO.eprintln s!"  gemini_model={cfg.model}  resumed_memos={memos.length}"
-  loop cfg a memos 0 0 0
+  let cli := parseCli argv {}
+  IO.eprintln s!"meta_orchestrator: loading config from {cli.configPath}"
+  let cfg ← Config.Config.load cli.configPath
+  -- Ensure log dir exists.
+  if !(← System.FilePath.pathExists cfg.logDir) then
+    IO.FS.createDirAll cfg.logDir
+  let geminiCfg ← LeanTea.Cloud.Gemini.Config.fromEnv!
+  let agentsRef ← IO.mkRef ([] : List (String × Runtime.AgentHandle))
+  let configRef ← IO.mkRef cfg
+  let rt : Runtime.RuntimeState := {
+    cfg := { geminiCfg with model := cfg.geminiModel },
+    agents := agentsRef,
+    configPath := cli.configPath,
+    config := configRef
+  }
+  -- Spawn every enabled agent.
+  for agent in cfg.agents do
+    if agent.enabled then Runtime.start rt agent
+  IO.eprintln s!"meta_orchestrator: {cfg.agents.length} agent(s) in config, log_dir={cfg.logDir}"
+  IO.eprintln "type /list, /add, /stop, /start, /remove, /reply, /save, /load, /quit"
+  repl rt
