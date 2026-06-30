@@ -52,7 +52,10 @@ lean_lib Examples where
     `Tests.AuthSpec,
     `AuthIdp.Serve,
     `StateMachine.Order,
-    `ChuHan.Game
+    `ChuHan.Game,
+    `MetaOrchestrator.Zellij,
+    `MetaOrchestrator.Director,
+    `MetaOrchestrator.Main
   ]
   /- Private examples (English Learning + game shells under
      `examples/_private/`) ship third-party content (arXiv quotes,
@@ -674,6 +677,16 @@ lean_exe reversi_serve where
 lean_exe chuhan_serve where
   srcDir := "examples"
   root := `ChuHan.Serve
+
+/-- Gemini-driven PM agent that watches a Claude-Code zellij pane,
+    decides when the agent has stalled, and either issues the next
+    instruction or escalates to the user. Goal text + log path + poll
+    interval are CLI args. See `examples/MetaOrchestrator/Main.lean`
+    for the loop, and `Zellij.lean` / `Director.lean` for the two
+    layers it stands on. -/
+lean_exe meta_orchestrator where
+  srcDir := "examples"
+  root := `MetaOrchestrator.Main
 
 /-! ## Construction-time security primitives
 

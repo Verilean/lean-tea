@@ -1,0 +1,128 @@
+import LeanTea.Cloud.Gemini
+import Lean.Data.Json
+
+/-! # examples/MetaOrchestrator/Director.lean — Gemini as the meta-PM
+
+The Director reads the most recent pane snapshot (+ project goal +
+short history of past instructions) and returns one of:
+
+  * `Continue`  — don't intervene, give the agent more time
+  * `Instruct s` — send the string `s` to the agent as the next prompt
+  * `AskUser s` — surface a question to the human operator
+
+The prompt below pins the model into a strict JSON shape. We
+post-process to forgive code-fence wrapping and obvious shape drift.
+
+## Why not use the OpenAI chat client + function calling
+
+We could, and on a bigger surface we should. For the first cut a
+direct `Gemini.ask` + JSON output keeps the dependency surface flat
+and the prompt iteration loop short. Switching to tool-calls is a
+follow-up once we have stable decision logs to compare against. -/
+
+namespace MetaOrchestrator.Director
+
+open Lean (Json)
+open LeanTea.Cloud.Gemini
+
+/-- One past director decision. Kept short so a long history doesn't
+    blow the context window. We only show the *instruction* text and
+    a 1-line summary of what changed on the pane after it. -/
+structure Memo where
+  ts : String          -- ISO8601 timestamp
+  action : String      -- "continue" | "instruct" | "ask_user"
+  text : String        -- what we said (or "" for continue)
+  afterSummary : String  -- 1-line note of what happened next, "" if unknown
+  deriving Inhabited, Repr
+
+/-- The Director's verdict. The orchestrator dispatches on this. -/
+inductive Decision where
+  | continue
+  | instruct (text : String)
+  | askUser (question : String)
+  deriving Inhabited, Repr
+
+/-- Optional reasoning the model attached to the decision. Used in logs
+    and shown to the user when escalating. -/
+structure Verdict where
+  decision : Decision
+  reasoning : String
+  deriving Inhabited
+
+private def systemPrompt (goal : String) : String :=
+"You are the Project Manager for a long-running coding agent (Claude Code) that is working towards this goal:
+
+  GOAL: " ++ goal ++ "
+
+You will be shown:
+  1. The agent's most recent terminal pane (visible viewport).
+  2. A short history of your past instructions and what changed.
+
+Decide one of three actions:
+  * \"continue\"  — the agent is making progress. Don't interrupt.
+  * \"instruct\"  — the agent is idle, stuck, drifting, or finished a step. Give a SHORT, SPECIFIC next instruction (1-3 sentences).
+  * \"ask_user\"  — you need human input (ambiguous priorities, irreversible action, blocked on credentials).
+
+REPLY WITH STRICT JSON, no code fence, no prose:
+  {\"action\":\"continue|instruct|ask_user\",\"reasoning\":\"why (40-120 chars)\",\"text\":\"the instruction or question (empty when continue)\"}
+
+Bias towards `continue` if there's any sign of recent activity (build output, file edits, new lines). Only `instruct` when you see a clear stall (prompt waiting / idle cursor / completed marker) or a wrong direction. `ask_user` should be rare — only when proceeding would be irreversible or off-goal.
+"
+
+private def memoLine (m : Memo) : String :=
+  let clean := (m.text.replace "\n" " ").trim
+  s!"  [{m.ts}] {m.action}: {clean}\n      → {m.afterSummary}"
+
+private def memosToText (memos : List Memo) : String :=
+  if memos.isEmpty then "(no prior decisions)"
+  else String.intercalate "\n" (memos.map memoLine)
+
+/-- Tail of `s` clipped to roughly the last `n` chars. We slice on
+    character count (not bytes) so multibyte CJK doesn't cause a
+    mid-codepoint cut. The pane dump can be big; the trailing
+    portion is where the useful output lives. -/
+private def tailChars (n : Nat) (s : String) : String :=
+  let chars := s.toList
+  if chars.length ≤ n then s
+  else (chars.drop (chars.length - n)).asString
+
+/-- Trim a JSON code fence (```json … ```) if the model added one. -/
+private def stripFence (s : String) : String :=
+  let t := s.trim
+  if t.startsWith "```" then
+    let afterOpen := ((t.dropWhile (· != '\n')).drop 1).toString
+    let beforeClose :=
+      if afterOpen.endsWith "```" then afterOpen.dropRight 3 else afterOpen
+    beforeClose.trim
+  else t
+
+private def jstrField (j : Json) (k : String) : String :=
+  (j.getObjVal? k).toOption.bind (·.getStr?.toOption) |>.getD ""
+
+/-- Call Gemini and parse a verdict. On any decode trouble we default
+    to `Continue` with the raw response in `reasoning` — the safest
+    no-op for a runaway model. -/
+def decide (cfg : Config) (goal : String) (memos : List Memo)
+    (paneSnapshot : String) : IO Verdict := do
+  let tailPane := tailChars 6000 paneSnapshot
+  let user :=
+    s!"## Recent pane (last ~6 kB)\n\n```\n{tailPane}\n```\n\n## My past decisions\n\n{memosToText memos}\n\n## Now decide"
+  let resp ← ask cfg user {
+    system := some (systemPrompt goal),
+    temperature := some 0.4
+  }
+  let raw := stripFence resp.text
+  match Json.parse raw with
+  | .error _ =>
+    return { decision := .continue, reasoning := s!"(json parse failed) {raw}" }
+  | .ok j =>
+    let action := jstrField j "action"
+    let reasoning := jstrField j "reasoning"
+    let text := jstrField j "text"
+    let dec :=
+      if action == "instruct" && !text.isEmpty then Decision.instruct text
+      else if action == "ask_user" && !text.isEmpty then Decision.askUser text
+      else Decision.continue
+    return { decision := dec, reasoning }
+
+end MetaOrchestrator.Director
