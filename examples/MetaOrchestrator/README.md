@@ -58,8 +58,25 @@ Required env: `GEMINI_API_KEY` (get one at https://aistudio.google.com/apikey).
 | `--goal`       | (required) | long-form objective shipped on every Gemini call |
 | `--stall-secs` | 30 | pane-text hash must be stable for this long to count as "idle" |
 | `--poll-secs`  |  5 | how often to dump-screen |
-| `--log`        | `meta_orchestrator.jsonl` | one JSON record per decision |
+| `--log`        | `meta_orchestrator.jsonl` | one JSON record per decision (free-form audit, with reasoning) |
+| `--memo-log`   | `meta_orchestrator.memos.jsonl` | one JSON record per memo (structured, replayable on resume) |
+| `--session`    | (auto from goal hash) | override the session id; useful for forking the same goal |
+| `--fresh`      | off | ignore the memo log on startup (don't resume) |
 | `--dry-run`    | off | print decisions instead of writing back |
+
+## Resume
+
+By default the orchestrator reads `--memo-log` on startup, filters by
+session id, and seeds Gemini with the last 10 memos for that session.
+Restarting after a crash or after the user-stops-it-for-the-day picks
+up where it left off. Session id auto-derives from `sha-ish(--goal)`
+so identical goals share memory across runs. Pass `--session FOO` to
+fork (same goal, two trial paths) or `--fresh` to start cold.
+
+The previous memo's `afterSummary` is back-filled on each stall —
+right now just `"(pane changed)"` or `"(no change in pane)"` based on
+the hash diff between the previous decision and the current pane.
+A richer summary (last-N-lines of output, error markers) is a follow-up.
 
 ## What's deferred
 

@@ -27,13 +27,43 @@ open LeanTea.Cloud.Gemini
 
 /-- One past director decision. Kept short so a long history doesn't
     blow the context window. We only show the *instruction* text and
-    a 1-line summary of what changed on the pane after it. -/
+    a 1-line summary of what changed on the pane after it. The
+    `sessionId` lets multiple long-running goals share one log file
+    without their memories cross-contaminating. -/
 structure Memo where
-  ts : String          -- ISO8601 timestamp
+  sessionId : String   -- stable per goal (auto-derived or --session)
+  ts : String          -- ISO8601-ish timestamp
   action : String      -- "continue" | "instruct" | "ask_user"
   text : String        -- what we said (or "" for continue)
   afterSummary : String  -- 1-line note of what happened next, "" if unknown
   deriving Inhabited, Repr
+
+/-- Serialise a memo to one JSON object. Used for the persistent
+    memo log (`--memo-log`) so `--resume` can rebuild context. -/
+def Memo.toJson (m : Memo) : Json := Json.mkObj [
+  ("sessionId", Json.str m.sessionId),
+  ("ts", Json.str m.ts),
+  ("action", Json.str m.action),
+  ("text", Json.str m.text),
+  ("afterSummary", Json.str m.afterSummary)
+]
+
+private def jstrField' (j : Json) (k : String) : String :=
+  (j.getObjVal? k).toOption.bind (·.getStr?.toOption) |>.getD ""
+
+/-- Inverse of `Memo.toJson`. Returns `none` on shape mismatch so
+    a partially-written log line at crash time doesn't bring resume
+    down. -/
+def Memo.ofJson? (j : Json) : Option Memo :=
+  let action := jstrField' j "action"
+  if action.isEmpty then none
+  else some {
+    sessionId    := jstrField' j "sessionId",
+    ts           := jstrField' j "ts",
+    action       := action,
+    text         := jstrField' j "text",
+    afterSummary := jstrField' j "afterSummary"
+  }
 
 /-- The Director's verdict. The orchestrator dispatches on this. -/
 inductive Decision where
