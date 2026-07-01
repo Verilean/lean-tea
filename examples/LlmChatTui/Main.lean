@@ -1,55 +1,57 @@
 import LeanTea
+import LeanTea.Tui
 import Lean.Data.Json
 
-/-! # llm_chat_tui — full-screen colored chat with ANSI repaint
+/-! # llm_chat_tui — chat UX built on the LeanTea.Tui widget kit
 
-Renders the chat history as styled bubbles above a `>` prompt;
-repaints the whole screen on every turn so the history scrolls
-naturally and tool calls/results appear in-place. Cooked-mode line
-input (`getLine`) — no raw-mode keystroke handling needed for a
-chat UX.
+Full-screen chat: coloured message bubbles above a `>` prompt,
+whole-screen repaint on every turn. Cooked-mode line input
+(`getLine`) — no raw-mode keystroke handling. Progress hooks paint
+a one-line status under the prompt while the LLM is busy, then a
+full repaint on completion.
 
-The progress hooks paint a one-line status under the prompt while
-the LLM is busy and as tool calls fire, then the screen is
-repainted with the full result on completion.
+## What changed vs. the pre-widget-kit revision
+
+The old file (353 lines) rolled its own ANSI helpers — `dim`,
+`bold`, `cyan`, `saveCursor`, `restoreCursor`, bespoke soft-wrap
++ divider drawing. This one leans on `LeanTea.Tui`: `Style`
+records instead of escape helpers, `vbox` / `hbox` / `text`
+instead of `String.intercalate` layout math, `renderBoxAnsi` as
+the single point that serialises the widget tree to the
+terminal.
+
+Progress hooks still write direct ANSI (save/restore cursor +
+status line) because they fire *during* a blocking LLM turn, when
+we can't repaint the widget tree.
 
 ```
 llm_chat_tui --config llm-chat.json
-``` -/
+```
+-/
 
 open Lean (Json)
 open LeanTea.Llm.McpOrchestrator
+open LeanTea.Tui
 
 namespace LlmChatTui
 
-/-! ## ANSI helpers -/
+/-! ## Style palette — one place to tweak the look. -/
 
-private def esc (s : String) : String := s!"\x1b[{s}"
+private def styleTitle    : Style := { fg := .magenta, bold := true }
+private def styleDim      : Style := { dim := true }
+private def styleUser     : Style := { fg := .cyan, bold := true }
+private def styleAi       : Style := { fg := .green, bold := true }
+private def styleTool     : Style := { fg := .yellow }
+private def styleToolBody : Style := { dim := true }
+private def styleError    : Style := { fg := .red }
+private def stylePrompt   : Style := { bold := true }
+private def styleAttach   : Style := { fg := .blue }
 
-private def clearScreen : String := esc "2J" ++ esc "H"
-private def clearToEnd  : String := esc "0J"
-private def cursorHome  : String := esc "H"
-private def cursorTo (row col : Nat) : String := esc s!"{row};{col}H"
-private def hideCursor  : String := esc "?25l"
-private def showCursor  : String := esc "?25h"
-private def saveCursor  : String := "\x1b7"
-private def restoreCursor : String := "\x1b8"
+/-! ## Soft wrap — split long strings without breaking wide-char escapes.
 
-private def styleReset : String := esc "0m"
-private def dim     (s : String) : String := esc "2m" ++ s ++ styleReset
-private def bold    (s : String) : String := esc "1m" ++ s ++ styleReset
-private def cyan    (s : String) : String := esc "36m" ++ s ++ styleReset
-private def green   (s : String) : String := esc "32m" ++ s ++ styleReset
-private def yellow  (s : String) : String := esc "33m" ++ s ++ styleReset
-private def magenta (s : String) : String := esc "35m" ++ s ++ styleReset
-private def red     (s : String) : String := esc "31m" ++ s ++ styleReset
-private def blue    (s : String) : String := esc "34m" ++ s ++ styleReset
-
-/-! ## Soft wrap to terminal width.
-
-We don't query the TTY width — falling back to 100 columns means
-the display gracefully wraps long lines without splitting in the
-middle of an ANSI escape. -/
+Trivial line-based wrap; we don't try to word-break — a chat UX
+already reads a mix of natural prose and code / URLs, and word
+splits at arbitrary widths look worse than a hard cut. -/
 
 private partial def softWrapLine (width : Nat) (line : String) : List String :=
   if line.length ≤ width then [line]
@@ -61,109 +63,146 @@ private partial def softWrapLine (width : Nat) (line : String) : List String :=
 private def softWrap (width : Nat) (text : String) : List String :=
   text.splitOn "\n" |>.flatMap (softWrapLine width)
 
-/-! ## Bubble rendering -/
-
 private def truncate (s : String) (n : Nat) : String :=
   if s.length ≤ n then s
-  else (s.take n).toString ++ "…"
+  else (s.take (if n == 0 then 0 else n - 1)).toString ++ "…"
 
-private def imgBadge (imgs : Array String) : String :=
+/-! ## Message bubbles as widget rows
+
+Each `ChatMsg` produces a list of `Widget Unit` rows — one per
+displayed line — so the vbox that holds the history can `vbox`
+them all in order. The tag prefix (`you`, `ai`, `  ↳`) is a
+separate coloured widget; continuation lines are indented so the
+prefix column stays visually clean. -/
+
+private def imgBadgeText (imgs : Array String) : String :=
   if imgs.isEmpty then ""
   else
     let kb := (imgs.foldl (fun acc u => acc + u.length * 3 / 4) 0) / 1024
-    blue s!" [📎 {imgs.size} img, {kb} kB]"
+    s!" [📎 {imgs.size} img, {kb} kB]"
 
-private def renderMessage (width : Nat) (m : ChatMsg) : List String :=
+private def messageRows (width : Nat) (m : ChatMsg) : List (Widget Unit) :=
   match m.role with
   | .user =>
-    let head := cyan (bold "you ") ++ imgBadge m.images
     let body := softWrap (width - 4) m.text
+    let badge := imgBadgeText m.images
     match body with
-    | []      => [head]
-    | l :: ls => (head ++ l) :: ls.map (fun x => "    " ++ x)
+    | []      => [text s!"you {badge}" styleUser]
+    | l :: ls =>
+      text s!"you {l}{badge}" styleUser
+        :: ls.map (fun x => text s!"    {x}" {})
   | .assistant =>
     if m.text.isEmpty && !m.toolCalls.isEmpty then
-      [dim "(assistant requested tool calls)"]
+      [text "(assistant requested tool calls)" styleDim]
     else
-      let head := green (bold "ai  ")
       let body := softWrap (width - 4) m.text
       match body with
-      | []      => [head]
-      | l :: ls => (head ++ l) :: ls.map (fun x => "    " ++ x)
+      | []      => [text "ai" styleAi]
+      | l :: ls =>
+        text s!"ai  {l}" styleAi
+          :: ls.map (fun x => text s!"    {x}" {})
   | .tool =>
-    let head := yellow s!"    ↳ {m.toolName}{imgBadge m.images}"
     let preview := truncate (m.text.replace "\n" "↵") (width - 8)
-    [head, dim s!"      {preview}"]
-  | .system =>
-    /- We never push system messages into the visible history. -/
-    []
+    [text s!"    ↳ {m.toolName}{imgBadgeText m.images}" styleTool,
+     text s!"      {preview}" styleToolBody]
+  | .system => []
 
-private def renderToolCalls (calls : Array Json) : List String :=
+private def toolCallRows (calls : Array Json) : List (Widget Unit) :=
   calls.toList.map fun c =>
     let fn := (c.getObjVal? "function").toOption.getD Json.null
     let name := (fn.getObjVal? "name").toOption.bind (·.getStr?.toOption) |>.getD ""
     let argsS := (fn.getObjVal? "arguments").toOption.bind (·.getStr?.toOption) |>.getD "{}"
-    yellow s!"    → {name}({argsS})"
+    text s!"    → {name}({argsS})" styleTool
 
-private def renderHistory (width : Nat) (history : Array ChatMsg) : String :=
-  let lines := history.toList.flatMap fun m =>
-    let toolLines := renderToolCalls m.toolCalls
-    renderMessage width m ++ toolLines
-  String.intercalate "\n" lines
+private def historyView (width : Nat) (history : Array ChatMsg) : Widget Unit :=
+  let rows := history.toList.flatMap fun m =>
+    messageRows width m ++ toolCallRows m.toolCalls
+  vbox rows
 
-/-! ## Screen layout
+/-! ## Full screen -/
 
-```
-┌─────────── llm-chat — model=… ─[3 servers, 14 tools]──┐
-│                                                       │
-│ you  hello                                            │
-│ ai   hi! what can I help with?                        │
-│ you  open example.com                                 │
-│     → chrome::chrome_navigate({"url":"..."})          │
-│   ↳ chrome::chrome_navigate                           │
-│     ok                                                │
-│ ai   Done — page title is "Example Domain".           │
-│                                                       │
-│ > _                                                   │
-└───────────────────────────────────────────────────────┘
-``` -/
+private def bannerLine (model : String) (nServers nTools : Nat) : Widget Unit :=
+  { text s!" llm-chat — model={model} — {nServers} server(s), {nTools} tool(s)" styleTitle
+      with prefHeight := some 1 }
 
-private def banner (modelName : String) (nServers nTools : Nat) : String :=
-  let title := s!" llm-chat — model={modelName} — {nServers} server(s), {nTools} tool(s) "
-  magenta (bold title)
+private def dividerRow (width : Nat) : Widget Unit :=
+  { text (String.ofList (List.replicate width '─')) styleDim
+      with prefHeight := some 1 }
 
-private def divider (width : Nat) : String :=
-  dim (String.ofList (List.replicate width '─'))
+private def statusRow (status : String) : Widget Unit :=
+  { text status styleDim with prefHeight := some 1 }
 
-private def repaint (modelName : String) (nServers nTools : Nat)
-    (history : Array ChatMsg) (status : String := "") (width : Nat := 100)
-    : IO Unit := do
+private def promptRow : Widget Unit :=
+  { text "> " stylePrompt with prefHeight := some 1 }
+
+structure Screen where
+  width      : Nat := 100
+  height     : Nat := 40
+  model      : String
+  nServers   : Nat
+  nTools     : Nat
+  history    : Array ChatMsg
+  status     : String
+
+def screen (s : Screen) : Widget Unit :=
+  vbox [
+    bannerLine s.model s.nServers s.nTools,
+    dividerRow s.width,
+    historyView s.width s.history,
+    dividerRow s.width,
+    statusRow s.status,
+    promptRow
+  ]
+
+/-! ## Repaint & progress-line ANSI
+
+`clearScreen` erases the terminal (which is a scrollback-loss but
+matches the old behaviour), then we ship the widget tree as one
+ANSI blob via `renderBoxAnsi`. The progress line for the LLM/tool
+hooks writes underneath the prompt using save/restore-cursor so
+the user's typed input isn't clobbered mid-turn. -/
+
+private def esc (s : String) : String := s!"\x1b[{s}"
+private def clearScreen : String := esc "2J" ++ esc "H"
+private def clearToEnd  : String := esc "0J"
+private def saveCursor  : String := "\x1b7"
+private def restoreCursor : String := "\x1b8"
+
+private def paint (s : Screen) : IO Unit := do
+  let box := (screen s).render s.width s.height false
   let stdout ← IO.getStdout
   stdout.putStr clearScreen
-  stdout.putStrLn (banner modelName nServers nTools)
-  stdout.putStrLn (divider width)
-  stdout.putStrLn (renderHistory width history)
-  stdout.putStrLn ""
-  stdout.putStrLn (divider width)
-  unless status.isEmpty do stdout.putStrLn (dim status)
-  stdout.putStr (bold "> ")
+  stdout.putStr (renderBoxAnsi box)
   stdout.flush
 
-/-! ## Progress hooks — write a sticky status line via cursor save/restore -/
+private def styleAnsi (st : Style) : String := Id.run do
+  -- Small helper for the progress line, which doesn't go through
+  -- the widget tree. Assembles the SGR sequence for `st.fg` +
+  -- optional dim/bold. Reset with esc "0m".
+  let mut out := esc "0m"
+  out := out ++ (
+    match st.fg with
+    | .cyan    => esc "36m"
+    | .green   => esc "32m"
+    | .yellow  => esc "33m"
+    | .red     => esc "31m"
+    | .blue    => esc "34m"
+    | .magenta => esc "35m"
+    | _        => "")
+  if st.bold then out := out ++ esc "1m"
+  if st.dim  then out := out ++ esc "2m"
+  return out
 
 private def writeStatus (s : String) : IO Unit := do
   let stdout ← IO.getStdout
   stdout.putStr saveCursor
   stdout.putStr "\n"
   stdout.putStr clearToEnd
-  stdout.putStr (dim s)
+  stdout.putStr (styleAnsi styleDim ++ s ++ esc "0m")
   stdout.putStr restoreCursor
   stdout.flush
 
-/-- Synchronous y/n/a/d prompt on the TUI's input stream. We
-    repaint the bottom of the screen with the question, then
-    `getLine` from stdin (cooked mode — the user just types one
-    letter + Enter). -/
+/-- Synchronous y/n/a/d prompt on the TUI's input stream. -/
 private def askDecision (name : String) (args : Json) : IO UserDecision := do
   let stdin ← IO.getStdin
   let stdout ← IO.getStdout
@@ -173,8 +212,11 @@ private def askDecision (name : String) (args : Json) : IO UserDecision := do
     stdout.putStr saveCursor
     stdout.putStr "\n"
     stdout.putStr clearToEnd
-    stdout.putStrLn (yellow s!"⚠ approve `{name}({preview})`?")
-    stdout.putStr (bold "  [y allow once / n deny once / a always allow / d always deny] > ")
+    stdout.putStr (styleAnsi styleTool)
+    stdout.putStrLn s!"⚠ approve `{name}({preview})`?"
+    stdout.putStr (styleAnsi stylePrompt)
+    stdout.putStr "  [y allow once / n deny once / a always allow / d always deny] > "
+    stdout.putStr (esc "0m")
     stdout.putStr restoreCursor
     stdout.flush
     let line ← stdin.getLine
@@ -207,7 +249,6 @@ private partial def parseArgs (xs : List String) (a : Args) : Args :=
   | _ :: rest               => parseArgs rest a
   | []                      => a
 
-/-- Guess image mime from extension. -/
 private def guessImageMime (path : String) : String :=
   let lc := path.toLower
   if      lc.endsWith ".png"  then "image/png"
@@ -236,9 +277,12 @@ def main (rawArgs : List String) : IO Unit := do
   let mut history : Array ChatMsg := #[]
   let mut activeId : String := ""
   let mut pendingImages : Array String := #[]
-  let mut status := dim "commands: /attach  /clear-attach  /clear  /sessions  \
-/save  /load  /new  /policy  /policy-rm <n>  /quit"
-  repaint o.model nServers nTools history status
+  let mut screenState : Screen := {
+    model := o.model, nServers := nServers, nTools := nTools,
+    history := history,
+    status := "commands: /attach  /clear-attach  /clear  /sessions  /save  /load  /new  /policy  /policy-rm <n>  /quit"
+  }
+  paint screenState
   let mut loop := true
   while loop do
     let line ← stdin.getLine
@@ -246,33 +290,31 @@ def main (rawArgs : List String) : IO Unit := do
       loop := false
     else
       let user := line.trimAscii.toString
-      if user.isEmpty then
-        pure ()
-      else if user == "/quit" then
-        loop := false
+      if user.isEmpty then pure ()
+      else if user == "/quit" then loop := false
       else if user == "/clear" then
         history := #[]
-        status := dim "(history cleared)"
-        repaint o.model nServers nTools history status
+        screenState := { screenState with history := history, status := "(history cleared)" }
+        paint screenState
       else if user == "/clear-attach" then
         pendingImages := #[]
-        status := dim "(attachments cleared)"
-        repaint o.model nServers nTools history status
+        screenState := { screenState with status := "(attachments cleared)" }
+        paint screenState
       else if user == "/sessions" then
         let summaries ← LeanTea.Llm.ChatStore.list storeDir
         let lines := summaries.toList.map fun s =>
           let mark := if s.id == activeId then "*" else " "
           s!"{mark} {s.id} ({s.count} msgs) {s.name}"
         let joined := if lines.isEmpty then "(no saved sessions)"
-                      else String.intercalate "\n" lines
-        status := dim joined
-        repaint o.model nServers nTools history status
+                      else String.intercalate " · " lines
+        screenState := { screenState with status := joined }
+        paint screenState
       else if user == "/new" then
         history := #[]
         activeId := ""
         pendingImages := #[]
-        status := dim "(new session)"
-        repaint o.model nServers nTools history status
+        screenState := { screenState with history := history, status := "(new session)" }
+        paint screenState
       else if user.startsWith "/save" then
         let nameArg := (user.drop "/save".length).trimAscii.toString
         let session : LeanTea.Llm.ChatStore.Session ←
@@ -285,43 +327,44 @@ def main (rawArgs : List String) : IO Unit := do
         let saved ← LeanTea.Llm.ChatStore.save storeDir
           { session with messages := history }
         activeId := saved.id
-        status := dim s!"(saved {saved.id} `{saved.name}`)"
-        repaint o.model nServers nTools history status
+        screenState := { screenState with status := s!"(saved {saved.id} `{saved.name}`)" }
+        paint screenState
       else if user.startsWith "/load " then
         let id := (user.drop "/load ".length).trimAscii.toString
         match ← LeanTea.Llm.ChatStore.load storeDir id with
         | none =>
-          status := red s!"no such session: {id}"
-          repaint o.model nServers nTools history status
+          screenState := { screenState with status := s!"no such session: {id}" }
+          paint screenState
         | some s =>
           history := s.messages
           activeId := s.id
-          status := dim s!"(loaded {s.id} `{s.name}`)"
-          repaint o.model nServers nTools history status
+          screenState := { screenState with history := history,
+                                             status := s!"(loaded {s.id} `{s.name}`)" }
+          paint screenState
       else if user == "/policy" then
         let rules ← policy.get
         let lines := rules.toArray.zipIdx.toList.map fun (r, i) =>
-          s!"  [{i}] {r.action}  {r.pattern}"
+          s!"[{i}] {r.action} {r.pattern}"
         let joined := if lines.isEmpty then "(no policy rules)"
-                      else String.intercalate "\n" lines
-        status := dim joined
-        repaint o.model nServers nTools history status
+                      else String.intercalate " · " lines
+        screenState := { screenState with status := joined }
+        paint screenState
       else if user.startsWith "/policy-rm " then
         let n := (user.drop "/policy-rm ".length).trimAscii.toString.toNat?.getD 0
         policy.deleteAt n
-        status := dim s!"(removed policy rule {n})"
-        repaint o.model nServers nTools history status
+        screenState := { screenState with status := s!"(removed policy rule {n})" }
+        paint screenState
       else if user.startsWith "/attach " then
         let path := (user.drop "/attach ".length).trimAscii.toString
         try
           let url ← imageToDataUrl path
           pendingImages := pendingImages.push url
-          status := blue s!"📎 attached {path} ({(url.length * 3 / 4 / 1024)} kB) — \
-{pendingImages.size} pending"
-          repaint o.model nServers nTools history status
+          screenState := { screenState with
+            status := s!"📎 attached {path} ({url.length * 3 / 4 / 1024} kB) — {pendingImages.size} pending" }
+          paint screenState
         catch e =>
-          status := red s!"attach failed: {e}"
-          repaint o.model nServers nTools history status
+          screenState := { screenState with status := s!"attach failed: {e}" }
+          paint screenState
       else
         try
           let newMsgs ← o.runTurnFull history user pendingImages tuiHooks policyCfg
@@ -339,14 +382,17 @@ def main (rawArgs : List String) : IO Unit := do
             }
           let saved ← LeanTea.Llm.ChatStore.save storeDir session
           activeId := saved.id
-          status := dim s!"session {saved.id}"
-          repaint o.model nServers nTools history status
+          screenState := { screenState with history := history,
+                                             status := s!"session {saved.id}" }
+          paint screenState
         catch e =>
-          repaint o.model nServers nTools history (red s!"error: {e}")
+          screenState := { screenState with status := s!"error: {e}" }
+          paint screenState
   o.shutdown
   let stdout ← IO.getStdout
   stdout.putStrLn ""
-  stdout.putStrLn (dim "(bye)")
+  stdout.putStr (styleAnsi styleDim ++ "(bye)" ++ esc "0m")
+  stdout.putStrLn ""
 
 end LlmChatTui
 
