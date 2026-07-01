@@ -109,7 +109,12 @@ def Session.close (s : Session) : IO Unit := do
   /- Best-effort `close` request; ignore failure since the process
      may already be on its way out. -/
   try
-    s.child.stdin.putStr "{\"id\":0,\"method\":\"close\",\"params\":{}}\n"
+    let closeMsg := Lean.Json.mkObj [
+      ("id",     Lean.Json.num 0),
+      ("method", Lean.Json.str "close"),
+      ("params", Lean.Json.mkObj [])
+    ]
+    s.child.stdin.putStr (closeMsg.compress ++ "\n")
     s.child.stdin.flush
   catch _ => pure ()
   /- Force EOF on the bridge's stdin. -/

@@ -30,6 +30,7 @@ verification. -/
 
 open LeanTea LeanTea.Rpc
 open LeanTea.Js LeanTea.Js.E LeanTea.Js.S
+open Lean (Json)
 
 namespace Ch04
 
@@ -54,7 +55,7 @@ def endpoints : List Endpoint := [ping, double]
 /-! ## 2. Server handlers — they receive params in declaration order -/
 
 def handlePing : Handler := fun _ =>
-  return "{\"ok\":true}"
+  return (Json.mkObj [("ok", Json.bool true)]).compress
 
 def handleDouble : Handler := fun ps => do
   let n : Int := (ps[0]?.bind String.toInt?).getD 0

@@ -698,7 +698,7 @@ private def handleDeleteSession (ctx : Ctx) (id : String) : IO Response := do
   let _ ← LeanTea.Llm.ChatStore.delete ctx.storeDir id
   let m ← ctx.cache.get
   ctx.cache.set (m.erase id)
-  return Response.text 200 "{\"ok\":true}"
+  return Response.json 200 (Json.mkObj [("ok", Json.bool true)])
 
 private def parseImages (j : Json) : Array String :=
   match (j.getObjVal? "images").toOption.bind (·.getArr?.toOption) with
@@ -774,7 +774,7 @@ private def handleDecision (ctx : Ctx) (req : Request) : IO Response := do
         return Response.text 400 body.compress
       | some d =>
         pc.decision.set (some d)
-        return Response.text 200 "{\"ok\":true}"
+        return Response.json 200 (Json.mkObj [("ok", Json.bool true)])
 
 private def policyListJson (ctx : Ctx) : IO Json := do
   let rules ← ctx.policy.get
@@ -788,7 +788,7 @@ private def policyListJson (ctx : Ctx) : IO Json := do
 
 private def handlePolicyDelete (ctx : Ctx) (idx : Nat) : IO Response := do
   ctx.policy.deleteAt idx
-  return Response.text 200 "{\"ok\":true}"
+  return Response.json 200 (Json.mkObj [("ok", Json.bool true)])
 
 /-! ## Routing
 

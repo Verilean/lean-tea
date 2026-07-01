@@ -1,5 +1,9 @@
 import Std.Async.TCP
 import Std.Net
+import Lean.Data.Json
+import Lean.Data.Json.FromToJson
+
+open Lean (Json ToJson toJson)
 
 /-! # Minimal HTTP/1.1 server using `Std.Internal.Async.TCP`
 
@@ -52,6 +56,33 @@ def Response.html (status : Nat) (body : String) (extra : Array (String × Strin
 def Response.notFound : Response := .text 404 "not found\n"
 def Response.badRequest : Response := .text 400 "bad request\n"
 def Response.serverError (msg : String) : Response := .text 500 (msg ++ "\n")
+
+/-- Ship a `Lean.Json` value as `application/json`. Prefer this over
+    hand-building JSON strings so escaping, brace balancing, and
+    control-character handling stay the codec's problem, not the
+    handler author's. -/
+def Response.json (status : Nat) (body : Json) : Response := {
+  status,
+  headers := #[("content-type", "application/json; charset=utf-8")],
+  body := body.compress.toUTF8
+}
+
+/-- Same as `Response.json` but takes any `ToJson α` value. Handlers
+    that already have a Lean structure for the reply shape (typical
+    when using `deriving ToJson`) can skip the `toJson` call and let
+    the compiler pick it up:
+
+    ```lean
+    structure Ok where ok : Bool deriving Lean.ToJson
+    return Response.jsonObj 200 { ok := true : Ok }
+    ``` -/
+def Response.jsonObj [ToJson α] (status : Nat) (v : α) : Response :=
+  Response.json status (toJson v)
+
+/-- Convenience for `{"error": "…"}` responses — the single most common
+    JSON shape hand-written across handlers today. -/
+def Response.jsonError (status : Nat) (msg : String) : Response :=
+  Response.json status (Json.mkObj [("error", Json.str msg)])
 
 /-! ## Header injection guard
 

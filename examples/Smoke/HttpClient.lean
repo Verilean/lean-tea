@@ -1,4 +1,5 @@
 import LeanTea
+import Lean.Data.Json
 
 /-! Smoke test for `LeanTea.Net.HttpClient` against a live HTTP target.
 
@@ -9,12 +10,13 @@ checks the status code and that the response contains a known field.
 Run after `./.lake/build/bin/browser_mcp_serve --port 8009 &` is up. -/
 
 open LeanTea.Net.HttpClient
+open Lean (Json)
 
 def main : IO Unit := do
   let url := (← IO.getEnv "MCP_URL").getD "http://127.0.0.1:8009/mcp"
   IO.println s!"== probing {url} =="
 
-  let body := "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"
+  let body := (Json.mkObj [("jsonrpc", Json.str "2.0"), ("id", Json.num 1), ("method", Json.str "tools/list")]).compress
   let respText ← postJsonText url body
   IO.println s!"got {respText.length} bytes back"
   let isOk := respText.startsWith "{\"id\":1" || respText.startsWith "{\"jsonrpc\":\"2.0\""

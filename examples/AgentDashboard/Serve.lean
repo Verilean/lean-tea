@@ -188,22 +188,22 @@ private def handleLive (ctx : Ctx) : IO Response := do
 
 private def handleControl (ctx : Ctx) (req : Request) : IO Response := do
   match Json.parse (String.fromUTF8! req.body) with
-  | .error e => return Response.text 400 (Json.mkObj [("error", Json.str s!"bad json: {e}")]).compress
+  | .error e => return Response.json 400 Json.mkObj [("error", Json.str s!"bad json: {e}")]
   | .ok j =>
     let action := (j.getObjVal? "action").toOption.bind (·.getStr?.toOption) |>.getD ""
     match action with
-    | "pause"  => ctx.cfg.paused.set true;  return Response.text 200 "{\"ok\":true}"
-    | "resume" => ctx.cfg.paused.set false; return Response.text 200 "{\"ok\":true}"
-    | "abort"  => ctx.cfg.aborted.set true; return Response.text 200 "{\"ok\":true}"
+    | "pause"  => ctx.cfg.paused.set true;  return Response.json 200 (Json.mkObj [("ok", Json.bool true)])
+    | "resume" => ctx.cfg.paused.set false; return Response.json 200 (Json.mkObj [("ok", Json.bool true)])
+    | "abort"  => ctx.cfg.aborted.set true; return Response.json 200 (Json.mkObj [("ok", Json.bool true)])
     | "reset-stats" =>
       ctx.state.modify (fun s => { s with stats := ∅, cumReward := 0.0, history := #[] })
       saveAllStats ctx.storeDir ∅
-      return Response.text 200 "{\"ok\":true}"
-    | _ => return Response.text 400 (Json.mkObj [("error", Json.str s!"unknown action: {action}")]).compress
+      return Response.json 200 (Json.mkObj [("ok", Json.bool true)])
+    | _ => return Response.json 400 Json.mkObj [("error", Json.str s!"unknown action: {action}")]
 
 private def handleToggle (ctx : Ctx) (req : Request) : IO Response := do
   match Json.parse (String.fromUTF8! req.body) with
-  | .error e => return Response.text 400 (Json.mkObj [("error", Json.str s!"bad json: {e}")]).compress
+  | .error e => return Response.json 400 Json.mkObj [("error", Json.str s!"bad json: {e}")]
   | .ok j =>
     let id := (j.getObjVal? "id").toOption.bind (·.getStr?.toOption) |>.getD ""
     let enabled :=
@@ -217,7 +217,7 @@ private def handleToggle (ctx : Ctx) (req : Request) : IO Response := do
     | some pb =>
       let pb' := { pb with enabled }
       pb'.save ctx.storeDir
-      return Response.text 200 "{\"ok\":true}"
+      return Response.json 200 (Json.mkObj [("ok", Json.bool true)])
 
 /-! ## Inline HTML page -/
 
