@@ -28,6 +28,7 @@ import LeanTea.Net.Desktop
 import LeanTea.Net.Memcached
 import LeanTea.Net.Valkey
 import LeanTea.Cloud.S3
+import LeanTea.Cloud.Gemini
 import LeanTea.Auth
 import LeanTea.Js
 import LeanTea.Css
@@ -40,9 +41,13 @@ import LeanTea.WebSpec
 import LeanTea.Template
 import LeanTea.Markdown
 import LeanTea.Llm.Openai
+import LeanTea.Llm.McpOrchestrator
+import LeanTea.Llm.ChatStore
 import LeanTea.Browser
 import LeanTea.Agent.Memory
 import LeanTea.Agent.Script
+import LeanTea.Agent.Playbook
+import LeanTea.Agent.Conductor
 import LeanTea.Crypto.Base64
 import LeanTea.Crypto.Sha256
 import LeanTea.Crypto.Hmac

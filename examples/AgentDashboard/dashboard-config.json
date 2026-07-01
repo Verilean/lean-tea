@@ -1,0 +1,14 @@
+{
+  "model": "(unused — the dashboard doesn't talk to an LLM)",
+  "baseUrl": "http://127.0.0.1:11211/v1",
+  "system": "(unused)",
+  "servers": [
+    {
+      "name": "browser",
+      "bin": "./.lake/build/bin/browser_mcp_serve",
+      "args": []
+    }
+  ],
+  "observerJs": "window.__screen || 'unknown'",
+  "tickMs": 500
+}

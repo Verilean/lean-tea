@@ -1,0 +1,21 @@
+{
+  "id": "big_quest",
+  "name": "big quest",
+  "description": "Click Big Quest. +10 reward, costs 3 energy, blocks for 1.5s on the battle screen.",
+  "pre": {"whenScreen": "hub"},
+  "estReward": 10.0,
+  "maxBurst": 3,
+  "timeoutMs": 6000,
+  "enabled": true,
+  "script": {
+    "name": "big_quest",
+    "description": "click big quest",
+    "steps": [
+      {"act": "click_xy", "x": 240, "y": 256, "note": "Big Quest button"},
+      {"act": "wait",     "ms": 1700, "note": "wait for battle screen to clear"},
+      {"act": "tool_call", "tool": "browser__browser_evaluate",
+                           "args": {"expression": "({reward: 10})"},
+                           "note": "report 10 coins"}
+    ]
+  }
+}

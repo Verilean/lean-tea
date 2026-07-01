@@ -1,0 +1,17 @@
+{
+  "model": "google/gemma-4-e4b",
+  "baseUrl": "http://127.0.0.1:11211/v1",
+  "system": "You are a helpful assistant with access to MCP tools. When the user asks you to do something, decide whether a tool call is needed before calling one. Reply in the user's language. Keep replies concise.",
+  "servers": [
+    {
+      "name": "chrome",
+      "bin": "./.lake/build/bin/chrome_cdp_mcp_serve",
+      "args": []
+    },
+    {
+      "name": "gemini",
+      "bin": "./.lake/build/bin/gemini_mcp_serve",
+      "args": ["--workspace", "."]
+    }
+  ]
+}

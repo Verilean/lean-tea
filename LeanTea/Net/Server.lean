@@ -60,6 +60,19 @@ partial def serveLoop (server : Socket.Server) (handler : Handler) : IO Unit := 
   handleConn handler client
   serveLoop server handler
 
+/-- Concurrent variant: each accepted connection is handled in its
+    own `IO.asTask` so a long-running handler doesn't stall the rest
+    of the server. Use this for apps where one request can block
+    waiting on another (e.g. a chat UI that asks the user to approve
+    a tool call via a separate API endpoint). The single-threaded
+    `serveLoop` above is otherwise preferable — simpler lifetimes,
+    no task-spawn overhead. -/
+partial def serveLoopConcurrent (server : Socket.Server) (handler : Handler)
+    : IO Unit := do
+  let client ← (server.accept).block
+  let _ ← IO.asTask (handleConn handler client)
+  serveLoopConcurrent server handler
+
 /-- Parse a dotted IPv4 string ("127.0.0.1") into a `Std.Net.IPv4Addr`.
     Returns `0.0.0.0` if parsing fails. -/
 def parseIPv4 (s : String) : IPv4Addr :=
@@ -67,6 +80,21 @@ def parseIPv4 (s : String) : IPv4Addr :=
   match (s.splitOn ".").map (·.toNat?.getD 0) with
   | [a, b, c, d] => ⟨#v[a.toUInt8, b.toUInt8, c.toUInt8, d.toUInt8]⟩
   | _ => zero
+
+/-- Same as `serve`, but accept loop hands each connection to a
+    concurrent task. Use when a handler can block on a user / external
+    event that has to be resolved via another HTTP request. -/
+def serveConcurrent (port : UInt16 := 8001) (host : String := "0.0.0.0")
+    (handler : Handler) : IO Unit := do
+  let server ← Socket.Server.mk
+  let addr : SocketAddress := .v4 {
+    addr := parseIPv4 host,
+    port := port
+  }
+  server.bind addr
+  server.listen 64
+  IO.eprintln s!"serving (concurrent) on http://{host}:{port}/"
+  serveLoopConcurrent server handler
 
 def serve (port : UInt16 := 8001) (host : String := "0.0.0.0")
     (handler : Handler) : IO Unit := do

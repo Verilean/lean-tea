@@ -1,0 +1,8 @@
+{
+  "rules": [
+    {"pattern": "coder__coder_read_file", "action": "allow"},
+    {"pattern": "coder__coder_list_dir",  "action": "allow"},
+    {"pattern": "coder__coder_glob",      "action": "allow"},
+    {"pattern": "coder__coder_grep",      "action": "allow"}
+  ]
+}

@@ -30,7 +30,7 @@ package «lean-tea» where
   precompileModules := false
 
 lean_lib LeanTea where
-  roots := #[`LeanTea]
+  roots := #[`LeanTea, `LeanTea.Tui]
 
 /-- A small Fay-style Lean-subset → JavaScript compiler. Used by the
     LSpec tests under `examples/Tests/` that exec the emitted JS via
@@ -50,6 +50,7 @@ lean_lib Examples where
     `Tools.LeanJsCompile, `Tools.LeanJsInterp, `Tools.LeanJsRun,
     `Tests.PureSpec,
     `Tests.AuthSpec,
+    `Tests.TuiSpec,
     `AuthIdp.Serve,
     `StateMachine.Order
   ]
@@ -390,6 +391,13 @@ lean_exe leanjs_spec where
   srcDir := "examples"
   root := `Tests.LeanJsSpec
 
+/-- Pure unit tests for the `LeanTea.Tui` widget kit — layout
+    primitives, combinators, elements, and the `Session` test
+    harness that mirrors `App.run` without a real TTY. -/
+lean_exe tui_spec where
+  srcDir := "examples"
+  root := `Tests.TuiSpec
+
 /-- Aggregated LSpec runner for the construction-time security
     primitives (SafeHtml + SafePath + SafeCmd + SafeHeader +
     SafeRedirect). One binary, one CI step, ~60 LSpec assertions. -/
@@ -476,6 +484,14 @@ lean_exe openai_smoke where
   srcDir := "examples"
   root := `Smoke.Openai
 
+/-- Gemini API wire-up smoke. Skips quietly when `GEMINI_API_KEY` is
+    unset (CI default). Otherwise runs one `ask` against
+    `gemini-2.5-flash-lite` (cheapest) and one `reviewMany` over two
+    repo files. Override the model via `GEMINI_SMOKE_MODEL`. -/
+lean_exe gemini_smoke where
+  srcDir := "examples"
+  root := `Smoke.Gemini
+
 /-- End-to-end demo: drive Chromium via Playwright, screenshot a page,
     feed it to a vision model. Requires the Node bridge under
     `tools/browser-bridge/` (`npm install` + `npx playwright install
@@ -527,6 +543,60 @@ lean_exe chrome_cdp_mcp_serve where
 lean_exe tmux_mcp_serve where
   srcDir := "examples"
   root := `TmuxMcp.Serve
+
+/-- MCP server giving code-editing agents the standard file-system +
+    shell toolkit, every operation workspace-bound via
+    `LeanTea.Net.SafePath`. Seven tools: `coder_read_file`,
+    `coder_list_dir`, `coder_glob`, `coder_grep` (read-only — safe
+    to allow globally) and `coder_write_file`, `coder_edit_file`,
+    `coder_run` (mutating — best left to the policy `ask` gate).
+    Pair with `llm_chat_web` + `LeanTea.Llm.Policy` for a
+    Claude-Code-style approve-before-write flow. -/
+lean_exe coder_mcp_serve where
+  srcDir := "examples"
+  root := `CoderMcp.Serve
+
+/-- Visual control / telemetry for a `LeanTea.Agent.Conductor`. Boots
+    the MCP orchestrator + a conductor loop in `IO.asTask`, exposes
+    `live` / `playbooks` / `rewards` tabs with bandit stats + pause /
+    resume / abort controls. Pair with `browser_mcp_serve` + a tiny
+    JSON-based playbook collection to play a browser game. -/
+lean_exe agent_dashboard_serve where
+  srcDir := "examples"
+  root := `AgentDashboard.Serve
+
+/-- MCP server fronting the Google Gemini API. Five tools:
+    `gemini_ask`, `gemini_chat`, `gemini_review_files` (long-context
+    multi-file holistic review — exploits Pro's 2M-token window),
+    `gemini_review_diff` (git-diff focused review), `gemini_list_models`.
+    Default model `gemini-2.5-pro`, override per-call. The API key
+    is read from `GEMINI_API_KEY` (see ai.google.dev for issuance).
+    `--workspace DIR` scopes the file-reading tools through
+    `LeanTea.Net.SafePath` so a buggy client can't read outside it. -/
+lean_exe gemini_mcp_serve where
+  srcDir := "examples"
+  root := `GeminiMcp.Serve
+
+/-! ## LLM chat demos — three UI shells over `LeanTea.Llm.McpOrchestrator`
+
+All three share the same `--config FILE.json` shape and the same
+orchestrator core. Use whichever fits your context:
+
+  * `llm_chat_cli` — stdin/stdout REPL, ANSI colours, scripts cleanly.
+  * `llm_chat_tui` — full-screen styled chat with ANSI repaint.
+  * `llm_chat_web` — single-page browser UI; talk from any device. -/
+
+lean_exe llm_chat_cli where
+  srcDir := "examples"
+  root := `LlmChatCli.Main
+
+lean_exe llm_chat_tui where
+  srcDir := "examples"
+  root := `LlmChatTui.Main
+
+lean_exe llm_chat_web where
+  srcDir := "examples"
+  root := `LlmChatWeb.Serve
 
 /-- MCP server backed by OS-level mouse / screenshot (Quartz on
     macOS today). Same JSON-RPC shape as `browser_mcp_serve` but
@@ -600,6 +670,19 @@ lean_exe gpu_serve where
 lean_exe reversi_serve where
   srcDir := "examples"
   root := `Reversi.Serve
+
+/- Downstream projects previously bundled here now live in their own
+   repos so lean-tea stays a library core + a compact examples set:
+
+     * 楚漢恋歌 (Chu-Han Love Song) — a six-route narrative game
+       ⟶  https://github.com/Verilean/lean-tea-chuhan
+
+     * meta_orchestrator — Gemini/LMStudio PM watching Claude-Code
+       zellij panes and nudging them on stall
+       ⟶  https://github.com/Verilean/lean-tea-meta
+
+   Both pull this repo in as a `require` from git, so the library
+   changes here still ship immediately when they `lake update`. -/
 
 /-! ## Construction-time security primitives
 
