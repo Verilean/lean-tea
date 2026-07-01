@@ -30,6 +30,10 @@ structure Request where
   query   : String        -- raw query string, no `?`
   headers : Array (String × String)   -- header names are lowercased
   body    : ByteArray
+  /-- HTTP version as given on the request line, e.g. `"HTTP/1.1"`.
+      `parseRequest` sets it; older callers using `Request.mk` get
+      the empty string, treated as HTTP/1.0 by the keep-alive code. -/
+  version : String := ""
   deriving Inhabited
 
 structure Response where
@@ -237,15 +241,15 @@ def splitHeaders (raw : ByteArray) : Option (String × ByteArray) := do
   let rest := baSlice raw (h + 4) (raw.size - (h + 4))
   return (headersStr, rest)
 
-private def parseRequestLine (line : String) : Option (String × String × String) := do
+private def parseRequestLine (line : String) : Option (String × String × String × String) := do
   let parts := line.splitOn " "
   match parts with
-  | [m, target, _] =>
+  | [m, target, v] =>
     -- split path and query
     match target.splitOn "?" with
-    | [p]    => some (m, p, "")
-    | [p, q] => some (m, p, q)
-    | p :: rest => some (m, p, String.intercalate "?" rest)
+    | [p]    => some (m, p, "", v)
+    | [p, q] => some (m, p, q, v)
+    | p :: rest => some (m, p, String.intercalate "?" rest, v)
     | _ => none
   | _ => none
 
@@ -265,12 +269,13 @@ def parseRequest (raw : ByteArray) (body : ByteArray) : Option Request := do
   match lines with
   | [] => none
   | reqLine :: rest =>
-    let (method, path, query) ← parseRequestLine reqLine
+    let (method, path, query, version) ← parseRequestLine reqLine
     let headers := rest.filterMap parseHeaderLine
     some {
       method := method,
       path := path,
       query := query,
+      version := version,
       headers := headers.toArray,
       body := body
     }

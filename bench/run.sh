@@ -61,14 +61,15 @@ for T in $THREADS; do
     sleep 0.1
   done
 
-  # For POST /echo we need a body.
+  # For POST /echo we need a body. `-k` requests HTTP/1.1 keep-alive
+  # so we're measuring per-request cost, not per-TCP-connection cost.
   if [[ "$METHOD" = POST ]]; then
     tmp=$(mktemp)
     printf 'hello' > "$tmp"
-    out=$(ab -q -c "$CONCURRENCY" -n "$REQUESTS" -p "$tmp" -T application/octet-stream "$URL" 2>&1) || true
+    out=$(ab -q -k -c "$CONCURRENCY" -n "$REQUESTS" -p "$tmp" -T application/octet-stream "$URL" 2>&1) || true
     rm -f "$tmp"
   else
-    out=$(ab -q -c "$CONCURRENCY" -n "$REQUESTS" "$URL" 2>&1) || true
+    out=$(ab -q -k -c "$CONCURRENCY" -n "$REQUESTS" "$URL" 2>&1) || true
   fi
 
   # Extract metrics from ab output.
