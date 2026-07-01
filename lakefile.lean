@@ -52,15 +52,7 @@ lean_lib Examples where
     `Tests.AuthSpec,
     `Tests.TuiSpec,
     `AuthIdp.Serve,
-    `StateMachine.Order,
-    `ChuHan.Game,
-    `MetaOrchestrator.Zellij,
-    `MetaOrchestrator.Llm,
-    `MetaOrchestrator.Director,
-    `MetaOrchestrator.Config,
-    `MetaOrchestrator.Runtime,
-    `MetaOrchestrator.Tui,
-    `MetaOrchestrator.Main
+    `StateMachine.Order
   ]
   /- Private examples (English Learning + game shells under
      `examples/_private/`) ship third-party content (arXiv quotes,
@@ -679,26 +671,18 @@ lean_exe reversi_serve where
   srcDir := "examples"
   root := `Reversi.Serve
 
-/-- 楚漢恋歌 (Chu-Han Love Song) — 2D action / RPG / strategy VN set in
-    BCE 209-195 China. Six playable protagonists (Liu Bang, Xiang Yu,
-    Han Xin, Zhang Liang, Xiao He, Fan Zeng), each with their wife
-    arc + historical fate. Two-layer dialogue (outer speech + inner
-    monologue) drives the "charmer / egoist" double face of Liu Bang
-    and the corresponding interior voices of the others. LeanJs +
-    DOM + Canvas 2D. -/
-lean_exe chuhan_serve where
-  srcDir := "examples"
-  root := `ChuHan.Serve
+/- Downstream projects previously bundled here now live in their own
+   repos so lean-tea stays a library core + a compact examples set:
 
-/-- Gemini-driven PM agent that watches a Claude-Code zellij pane,
-    decides when the agent has stalled, and either issues the next
-    instruction or escalates to the user. Goal text + log path + poll
-    interval are CLI args. See `examples/MetaOrchestrator/Main.lean`
-    for the loop, and `Zellij.lean` / `Director.lean` for the two
-    layers it stands on. -/
-lean_exe meta_orchestrator where
-  srcDir := "examples"
-  root := `MetaOrchestrator.Main
+     * 楚漢恋歌 (Chu-Han Love Song) — a six-route narrative game
+       ⟶  https://github.com/Verilean/lean-tea-chuhan
+
+     * meta_orchestrator — Gemini/LMStudio PM watching Claude-Code
+       zellij panes and nudging them on stall
+       ⟶  https://github.com/Verilean/lean-tea-meta
+
+   Both pull this repo in as a `require` from git, so the library
+   changes here still ship immediately when they `lake update`. -/
 
 /-! ## Construction-time security primitives
 
