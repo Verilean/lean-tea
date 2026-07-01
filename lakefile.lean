@@ -671,6 +671,14 @@ lean_exe reversi_serve where
   srcDir := "examples"
   root := `Reversi.Serve
 
+/-- Minimal echo/health/json server used by the perf harness in
+    bench/. Not shipped as an app — it exists to answer "how does
+    LeanTea.Net.Server scale as we hand it more cores?". Vary
+    `LEAN_NUM_THREADS` between runs; see bench/run.sh. -/
+lean_exe bench_server where
+  srcDir := "examples"
+  root := `BenchServer.Main
+
 /- Downstream projects previously bundled here now live in their own
    repos so lean-tea stays a library core + a compact examples set:
 
