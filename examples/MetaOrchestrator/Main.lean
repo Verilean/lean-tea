@@ -1,7 +1,9 @@
 import MetaOrchestrator.Runtime
 import MetaOrchestrator.Config
+import MetaOrchestrator.Director
+import MetaOrchestrator.Llm
 import MetaOrchestrator.Tui
-import LeanTea.Cloud.Gemini
+import MetaOrchestrator.Zellij
 
 /-! # examples/MetaOrchestrator/Main.lean — controller
 
@@ -110,6 +112,27 @@ private def cmdLoad (rt : Runtime.RuntimeState) (path : String) : IO Unit := do
   rt.config.modify (fun _ => loaded)
   IO.println s!"[runtime] loaded config from {path} (use /start ID to spawn agents)"
 
+/-- Run a heavy-weight review of one agent via `reviewBackend`. Reads
+    the memo log fresh (not just the in-memory rolling window) so the
+    review sees the whole session. -/
+private def cmdReview (rt : Runtime.RuntimeState) (agentId : String) : IO Unit := do
+  let cfg ← rt.config.get
+  let lst ← rt.agents.get
+  match lst.find? (fun (id, _) => id == agentId) with
+  | none => IO.println s!"[review] no such agent: '{agentId}'"
+  | some (_, h) =>
+    let st ← h.get
+    let memos ← Runtime.loadMemos cfg.logDir agentId 100
+    let dump ← Zellij.dumpScreen st.agent.pane
+    IO.println s!"[review] asking {cfg.reviewBackend.describe} to audit '{agentId}' ({memos.length} memo(s)) …"
+    try
+      let report ← Director.review cfg.reviewBackend st.agent.goal memos dump
+      IO.println "─── review ──────────────────────────────────────────"
+      IO.println report
+      IO.println "─────────────────────────────────────────────────────"
+    catch e =>
+      IO.println s!"[review] failed: {e}"
+
 private def parseSlash (line : String) : Option (String × List String) :=
   if !line.startsWith "/" then none
   else
@@ -140,6 +163,8 @@ private partial def repl (rt : Runtime.RuntimeState) : IO Unit := do
     | some ("reply", id :: textParts) =>
       cmdReply rt id (String.intercalate " " textParts); repl rt
     | some ("reply", _) => IO.println "usage: /reply ID TEXT..."; repl rt
+    | some ("review", [id]) => cmdReview rt id; repl rt
+    | some ("review", _) => IO.println "usage: /review ID"; repl rt
     | some ("save", []) => cmdSave rt none; repl rt
     | some ("save", [p]) => cmdSave rt (some p); repl rt
     | some ("load", [p]) => cmdLoad rt p; repl rt
@@ -158,11 +183,9 @@ def main (argv : List String) : IO Unit := do
   -- Ensure log dir exists.
   if !(← System.FilePath.pathExists cfg.logDir) then
     IO.FS.createDirAll cfg.logDir
-  let geminiCfg ← LeanTea.Cloud.Gemini.Config.fromEnv!
   let agentsRef ← IO.mkRef ([] : List (String × Runtime.AgentHandle))
   let configRef ← IO.mkRef cfg
   let rt : Runtime.RuntimeState := {
-    cfg := { geminiCfg with model := cfg.geminiModel },
     agents := agentsRef,
     configPath := cli.configPath,
     config := configRef
@@ -171,8 +194,10 @@ def main (argv : List String) : IO Unit := do
   for agent in cfg.agents do
     if agent.enabled then Runtime.start rt agent
   IO.eprintln s!"meta_orchestrator: {cfg.agents.length} agent(s) in config, log_dir={cfg.logDir}"
+  IO.eprintln s!"  decide backend: {cfg.decideBackend.describe}"
+  IO.eprintln s!"  review backend: {cfg.reviewBackend.describe}"
   if cli.repl then
-    IO.eprintln "REPL mode (--repl). Slash commands: /list /add /stop /start /remove /reply /save /load /quit"
+    IO.eprintln "REPL mode (--repl). Slash commands: /list /add /stop /start /remove /reply /review /save /load /quit"
     repl rt
   else
     -- Default: full-screen TUI on LeanTea.Tui.

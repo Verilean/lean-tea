@@ -1,4 +1,4 @@
-import LeanTea.Cloud.Gemini
+import MetaOrchestrator.Llm
 import Lean.Data.Json
 
 /-! # examples/MetaOrchestrator/Director.lean — Gemini as the meta-PM
@@ -23,7 +23,7 @@ follow-up once we have stable decision logs to compare against. -/
 namespace MetaOrchestrator.Director
 
 open Lean (Json)
-open LeanTea.Cloud.Gemini
+open MetaOrchestrator.Llm (Backend)
 
 /-- One past director decision. Kept short so a long history doesn't
     blow the context window. We only show the *instruction* text and
@@ -129,19 +129,16 @@ private def stripFence (s : String) : String :=
 private def jstrField (j : Json) (k : String) : String :=
   (j.getObjVal? k).toOption.bind (·.getStr?.toOption) |>.getD ""
 
-/-- Call Gemini and parse a verdict. On any decode trouble we default
-    to `Continue` with the raw response in `reasoning` — the safest
-    no-op for a runaway model. -/
-def decide (cfg : Config) (goal : String) (memos : List Memo)
+/-- Ask the configured decide-backend for a verdict on the pane
+    snapshot. On any decode trouble we default to `Continue` with
+    the raw response in `reasoning` — the safest no-op. -/
+def decide (backend : Backend) (goal : String) (memos : List Memo)
     (paneSnapshot : String) : IO Verdict := do
   let tailPane := tailChars 6000 paneSnapshot
   let user :=
     s!"## Recent pane (last ~6 kB)\n\n```\n{tailPane}\n```\n\n## My past decisions\n\n{memosToText memos}\n\n## Now decide"
-  let resp ← ask cfg user {
-    system := some (systemPrompt goal),
-    temperature := some 0.4
-  }
-  let raw := stripFence resp.text
+  let raw' ← backend.ask (systemPrompt goal) user (temperature := 0.4) (maxTokens := 400)
+  let raw := stripFence raw'
   match Json.parse raw with
   | .error _ =>
     return { decision := .continue, reasoning := s!"(json parse failed) {raw}" }
@@ -154,5 +151,32 @@ def decide (cfg : Config) (goal : String) (memos : List Memo)
       else if action == "ask_user" && !text.isEmpty then Decision.askUser text
       else Decision.continue
     return { decision := dec, reasoning }
+
+/-! ## Review pass — heavy-weight audit on demand
+
+Where `decide` is the polling loop's per-stall cheap classifier,
+`review` is a slower, thorough audit run when the user explicitly
+asks for it (via `/review AGENT_ID`). It reads the whole memo log
+for the session, the recent pane, and asks the review backend for
+a free-form audit — no JSON verdict, no branching, just prose the
+operator can act on. -/
+
+private def reviewSystemPrompt (goal : String) : String :=
+"You are a senior engineer reviewing the work of a coding agent that has been running against this goal:
+
+  GOAL: " ++ goal ++ "
+
+You are shown:
+  1. The agent's most recent terminal pane (visible viewport).
+  2. The full memo log of every past decision the PM (a smaller model) made and how the pane changed after.
+
+Write a REVIEW: what direction the agent is drifting, whether it's actually making progress on the goal, what to redirect it towards. Concise (150-400 words). Cite specific lines / memo entries when calling out concerns. Prioritise the 2-3 most important observations; don't try to cover everything."
+
+def review (backend : Backend) (goal : String) (memos : List Memo)
+    (paneSnapshot : String) : IO String := do
+  let tailPane := tailChars 10000 paneSnapshot
+  let memosBlock := memosToText memos
+  let user := s!"## Full memo log\n\n{memosBlock}\n\n## Recent pane (last ~10 kB)\n\n```\n{tailPane}\n```"
+  backend.ask (reviewSystemPrompt goal) user (temperature := 0.5) (maxTokens := 1200)
 
 end MetaOrchestrator.Director

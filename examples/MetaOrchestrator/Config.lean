@@ -1,3 +1,4 @@
+import MetaOrchestrator.Llm
 import Lean.Data.Json
 
 /-! # examples/MetaOrchestrator/Config.lean — persisted config + runtime state
@@ -36,7 +37,13 @@ structure ManagedAgent where
 structure Config where
   agents      : List ManagedAgent := []
   logDir      : String := "."
-  geminiModel : String := "gemini-2.5-pro"
+  /-- Backend used for the polling loop's per-stall decisions. Cheap
+      + fast is the win here — LMStudio + local Gemma is the default. -/
+  decideBackend : Llm.Backend := Llm.Backend.localLmStudio
+  /-- Backend used for on-demand `/review` calls. Heavy + smart is
+      the win — Gemini 2.5 Pro's 2 M context lets us drop the whole
+      week of decisions + a diff into one prompt. -/
+  reviewBackend : Llm.Backend := Llm.Backend.geminiPro
   deriving Inhabited
 
 /-! ## JSON codec — hand-rolled because the record is small and we want
@@ -79,7 +86,8 @@ def ManagedAgent.ofJson? (j : Json) : Option ManagedAgent :=
 def Config.toJson (c : Config) : Json := Json.mkObj [
   ("agents", Json.arr (c.agents.map ManagedAgent.toJson |>.toArray)),
   ("logDir", Json.str c.logDir),
-  ("geminiModel", Json.str c.geminiModel)
+  ("decideBackend", c.decideBackend.toJson),
+  ("reviewBackend", c.reviewBackend.toJson)
 ]
 
 def Config.ofJson? (j : Json) : Config :=
@@ -87,10 +95,17 @@ def Config.ofJson? (j : Json) : Config :=
     match (j.getObjVal? "agents").toOption.bind (·.getArr?.toOption) with
     | some a => a.toList.filterMap ManagedAgent.ofJson?
     | none => []
+  let decideBackend :=
+    (j.getObjVal? "decideBackend").toOption.bind Llm.Backend.ofJson?
+      |>.getD Llm.Backend.localLmStudio
+  let reviewBackend :=
+    (j.getObjVal? "reviewBackend").toOption.bind Llm.Backend.ofJson?
+      |>.getD Llm.Backend.geminiPro
   {
     agents,
     logDir      := jstr j "logDir" ".",
-    geminiModel := jstr j "geminiModel" "gemini-2.5-pro"
+    decideBackend,
+    reviewBackend
   }
 
 /-! ## File I/O -/

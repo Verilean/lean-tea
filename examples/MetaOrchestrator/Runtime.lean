@@ -1,7 +1,7 @@
 import MetaOrchestrator.Zellij
 import MetaOrchestrator.Director
 import MetaOrchestrator.Config
-import LeanTea.Cloud.Gemini
+import MetaOrchestrator.Llm
 
 /-! # examples/MetaOrchestrator/Runtime.lean — one polling loop per agent
 
@@ -19,8 +19,6 @@ function call; no cross-ref invariants).
 namespace MetaOrchestrator.Runtime
 
 open MetaOrchestrator
-open LeanTea.Cloud.Gemini in
-abbrev GeminiConfig := Config
 
 /-- Per-agent runtime state. Owned by the agent's task, snapshotted
     via `get` by the controller for display. -/
@@ -42,7 +40,6 @@ structure AgentState where
 abbrev AgentHandle := IO.Ref AgentState
 
 structure RuntimeState where
-  cfg        : GeminiConfig
   /-- id ↦ handle. We rebuild this list on /add and /remove. -/
   agents     : IO.Ref (List (String × AgentHandle))
   configPath : String
@@ -131,8 +128,9 @@ partial def loop (rt : RuntimeState) (handle : AgentHandle) : IO Unit := do
       if m.afterSummary.isEmpty then
         ({ m with afterSummary := diffSummary st.preDecisionHash h }) :: rest
       else st.memos
-  handle.modify (fun s => { s with status := "asking-gemini" })
-  let verdict ← try Director.decide rt.cfg st.agent.goal memosWithSummary dump
+  let cfg ← rt.config.get
+  handle.modify (fun s => { s with status := s!"asking-{cfg.decideBackend.describe}" })
+  let verdict ← try Director.decide cfg.decideBackend st.agent.goal memosWithSummary dump
                 catch e => pure {
                   decision := .continue,
                   reasoning := s!"err: {e}"
@@ -140,7 +138,6 @@ partial def loop (rt : RuntimeState) (handle : AgentHandle) : IO Unit := do
   let actName := decisionName verdict.decision
   let text := decisionText verdict.decision
   let ts ← isoNow
-  let cfg ← rt.config.get
   appendJsonl (decisionLogPath cfg.logDir st.agent.id) <| Lean.Json.mkObj [
     ("sessionId", Lean.Json.str st.agent.id),
     ("ts", Lean.Json.str ts),

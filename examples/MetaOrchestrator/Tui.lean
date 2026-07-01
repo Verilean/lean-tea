@@ -1,5 +1,7 @@
 import MetaOrchestrator.Runtime
 import MetaOrchestrator.Config
+import MetaOrchestrator.Director
+import MetaOrchestrator.Zellij
 import LeanTea.Tui
 
 /-! # examples/MetaOrchestrator/Tui.lean — full-screen TUI on LeanTea.Tui
@@ -163,6 +165,25 @@ def dispatchCommand (rt : Runtime.RuntimeState) (line : String) : IO (List Strin
     let msg := String.intercalate " " textParts
     Runtime.replyToUser rt id msg
     return [s!"replied to '{id}': {msg}"]
+  | some ("review", [agentId]) => do
+    let cfg ← rt.config.get
+    let lst ← rt.agents.get
+    match lst.find? (fun (id, _) => id == agentId) with
+    | none => return [s!"[review] no such agent: '{agentId}'"]
+    | some (_, h) =>
+      let st ← h.get
+      let memos ← Runtime.loadMemos cfg.logDir agentId 100
+      let dump ← Zellij.dumpScreen st.agent.pane
+      try
+        let report ← Director.review cfg.reviewBackend st.agent.goal memos dump
+        -- Break the review into one line per sentence so the TUI's
+        -- narrow message area doesn't horizontally overflow.
+        let lines := report.replace "\n" " " |>.splitOn ". "
+                     |>.filter (fun s => !s.trim.isEmpty)
+        return s!"[review {cfg.reviewBackend.describe}] {agentId} ({memos.length} memos):" :: lines
+      catch e =>
+        return [s!"[review] failed: {e}"]
+  | some ("review", _) => return ["usage: /review ID"]
   | some ("save", args) =>
     let path :=
       match args with

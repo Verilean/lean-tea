@@ -61,7 +61,8 @@ Required env: `GEMINI_API_KEY` (get one at https://aistudio.google.com/apikey).
 | `/stop ID`                | cooperatively stop the polling loop (config kept) |
 | `/start ID`               | resume a stopped/disabled agent |
 | `/remove ID`              | drop the agent from the config |
-| `/reply ID TEXT...`       | inject a free-text reply (use when Gemini said `ask_user`) |
+| `/reply ID TEXT...`       | inject a free-text reply (use when the decide backend said `ask_user`) |
+| `/review ID`              | run a heavy-weight audit via `reviewBackend` on that agent |
 | `/save [PATH]`            | persist the config to PATH (default: `--config` path) |
 | `/load PATH`              | replace the in-memory config; running agents keep going until `/stop` |
 | `/quit`                   | stop every agent, save the config, exit |
@@ -76,9 +77,37 @@ Required env: `GEMINI_API_KEY` (get one at https://aistudio.google.com/apikey).
      "stallSec": 30, "pollSec": 5, "enabled": true}
   ],
   "logDir": "./logs",
-  "geminiModel": "gemini-2.5-pro"
+  "decideBackend": {
+    "type": "openaiCompat",
+    "baseUrl": "http://127.0.0.1:11211/v1",
+    "model": "local-model"
+  },
+  "reviewBackend": {
+    "type": "gemini",
+    "model": "gemini-2.5-pro"
+  }
 }
 ```
+
+### Two roles, two backends
+
+`decideBackend` runs on every stall — cheap and fast wins here, so
+the default is LMStudio on port 11211 with whatever local model is
+loaded. Any OpenAI-compatible endpoint works: point `baseUrl` at
+Ollama's `/v1`, groq, OpenAI proper (add `"apiKey": "sk-…"`), etc.
+
+`reviewBackend` runs on `/review AGENT_ID` — an on-demand
+heavy-weight audit that reads the full memo log + a bigger pane
+snapshot and asks for concrete redirection advice. Gemini 2.5 Pro
+is the default because the 2 M context lets us drop all of it in
+one request.
+
+Backend types:
+
+  | type | fields | notes |
+  |---|---|---|
+  | `openaiCompat` | `baseUrl` `model` `apiKey?` | LMStudio, Ollama, groq, OpenAI |
+  | `gemini` | `model` | reads `GEMINI_API_KEY` from env |
 
 The file is hand-editable. Per-agent memo + decision logs live in
 `<logDir>/<agentId>.memos.jsonl` and `<agentId>.decisions.jsonl`.
@@ -88,7 +117,8 @@ The file is hand-editable. Per-agent memo + decision logs live in
 | file | role |
 |---|---|
 | `Zellij.lean`   | `dumpScreen` / `writeChars` / `submit` over the `zellij action` CLI |
-| `Director.lean` | builds the Gemini prompt, parses the verdict JSON |
+| `Llm.lean`      | `Backend` union (openaiCompat / gemini) + `Backend.ask` — one signature both providers satisfy |
+| `Director.lean` | builds the decide + review prompts, parses the verdict JSON |
 | `Config.lean`   | `ManagedAgent` / `Config` records + JSON codec + load/save/add/remove |
 | `Runtime.lean`  | per-agent polling loop (`IO.asTask`), snapshot for the controller |
 | `Tui.lean`      | full-screen TUI on `LeanTea.Tui` — default UI |

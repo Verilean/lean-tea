@@ -55,6 +55,7 @@ lean_lib Examples where
     `StateMachine.Order,
     `ChuHan.Game,
     `MetaOrchestrator.Zellij,
+    `MetaOrchestrator.Llm,
     `MetaOrchestrator.Director,
     `MetaOrchestrator.Config,
     `MetaOrchestrator.Runtime,
