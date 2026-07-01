@@ -58,6 +58,7 @@ lean_lib Examples where
     `MetaOrchestrator.Director,
     `MetaOrchestrator.Config,
     `MetaOrchestrator.Runtime,
+    `MetaOrchestrator.Tui,
     `MetaOrchestrator.Main
   ]
   /- Private examples (English Learning + game shells under

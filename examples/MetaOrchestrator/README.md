@@ -91,13 +91,15 @@ The file is hand-editable. Per-agent memo + decision logs live in
 | `Director.lean` | builds the Gemini prompt, parses the verdict JSON |
 | `Config.lean`   | `ManagedAgent` / `Config` records + JSON codec + load/save/add/remove |
 | `Runtime.lean`  | per-agent polling loop (`IO.asTask`), snapshot for the controller |
-| `Main.lean`     | controller — boots agents from the config, slash-command REPL |
+| `Tui.lean`      | full-screen TUI on `LeanTea.Tui` — default UI |
+| `Main.lean`     | controller — boots agents from the config, then hands off to `Tui.run` (or `--repl` for stdin-only mode) |
 
 ## CLI flags
 
 | flag | default | meaning |
 |---|---|---|
 | `--config PATH` | `meta_orchestrator.config.json` | path to the JSON config file (read on startup, written by `/save`) |
+| `--repl`        | off | disable the TUI, use the stdin slash-command REPL instead |
 
 Per-agent knobs (`stallSec`, `pollSec`, `enabled`) live inside the
 config file — either set them via `/add ID PANE GOAL...` (uses
@@ -120,12 +122,10 @@ A richer summary (last-N-lines of output, error markers) is a follow-up.
 
 ## What's deferred
 
-- **TUI**. The REPL is line-mode today. A `Runtime.snapshot` call
-  already returns the full per-agent state list, so a TUI repaint
-  layer slots in next without touching the runtime.
-- **Web view**. Same `Runtime.snapshot` — a `/web on` slash command
-  that fires up `LeanTea.Net.Server` and serves a JSON status feed
-  + accepts the slash commands as POSTs is the next commit.
+- **Web view**. `Runtime.snapshot` already returns the full agent
+  state; a `/web on` slash command that fires up `LeanTea.Net.Server`
+  and serves a JSON status feed + accepts the slash commands as
+  POSTs is the natural next step.
 - **`Stop`-hook integration**. Polling is universal; a Claude Code
   `Stop` hook would let us call Gemini exactly once per agent turn
   instead of approximating via stall detection. Worth doing once the
@@ -135,3 +135,8 @@ A richer summary (last-N-lines of output, error markers) is a follow-up.
   more sense — `LeanTea.Persist.Query` is the natural fit, the
   current `Director.Memo.toJson` / `ofJson?` codec is the migration
   point.
+- **Live TUI refresh while idle**. Snapshots refresh on every
+  keystroke; between keystrokes the TUI is static. A `SIGWINCH`-driven
+  or timer-driven repaint would show poll-count / status changes
+  without user input. Currently non-blocking reads aren't in the
+  widget kit.

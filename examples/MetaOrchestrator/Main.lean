@@ -1,5 +1,6 @@
 import MetaOrchestrator.Runtime
 import MetaOrchestrator.Config
+import MetaOrchestrator.Tui
 import LeanTea.Cloud.Gemini
 
 /-! # examples/MetaOrchestrator/Main.lean — controller
@@ -42,9 +43,11 @@ open MetaOrchestrator
 
 private structure CliArgs where
   configPath : String := "meta_orchestrator.config.json"
+  repl       : Bool := false      -- stdin REPL instead of the TUI
 
 private partial def parseCli : List String → CliArgs → CliArgs
   | "--config" :: v :: rest, a => parseCli rest { a with configPath := v }
+  | "--repl"   :: rest,      a => parseCli rest { a with repl := true }
   | _ :: rest,               a => parseCli rest a
   | [],                      a => a
 
@@ -168,5 +171,9 @@ def main (argv : List String) : IO Unit := do
   for agent in cfg.agents do
     if agent.enabled then Runtime.start rt agent
   IO.eprintln s!"meta_orchestrator: {cfg.agents.length} agent(s) in config, log_dir={cfg.logDir}"
-  IO.eprintln "type /list, /add, /stop, /start, /remove, /reply, /save, /load, /quit"
-  repl rt
+  if cli.repl then
+    IO.eprintln "REPL mode (--repl). Slash commands: /list /add /stop /start /remove /reply /save /load /quit"
+    repl rt
+  else
+    -- Default: full-screen TUI on LeanTea.Tui.
+    Tui.run rt
