@@ -238,7 +238,8 @@
     .hud .stat { color: #aaa; }
     .hud .stat b { color: #e7e2d1; margin-left: 4px; }
     .hud .yr { color: #ca8a04; letter-spacing: 2px; margin-left: auto; }
-    .hud .lang { display: flex; gap: 4px; }
+    /* The lang toggle is btn-row-inline (2 icon buttons); no extra
+       HUD-scoped rules — the base .btn-row-inline styling handles it. */
 
     /* ── Battle (canvas) ── */
     .battle-bg {
@@ -296,14 +297,43 @@
     .bg-night      { background-image: url(/assets/bg_night.png); }
   /* ── Mini-game widgets ── */
   .mini-hint { color: #aaa; font-size: 14px; margin: 6px 0 16px; }
-  /* face read */
-  .facerow { display: flex; align-items: center; gap: 6px; margin: 10px 0; }
-  .facelabel { width: 80px; color: #c8a96a; font-size: 13px; letter-spacing: 3px; }
-  /* jade ring */
-  .ring-bar {
-    position: relative; height: 18px; background: #1a1410;
-    border: 1px solid #3a2a1a; border-radius: 4px; margin: 22px 0 14px;
+
+  /* ── Button rows (btnRow) ─────────────────────────────────────
+     Kinds: face (flex row w/ leading label column, buttons grow),
+     inline (flex row, no label — HUD JA/EN toggle),
+     menu (vertical stack — save-pop). */
+  .btn-row { display: flex; align-items: center; gap: 6px; }
+  .btn-row-face   { margin: 10px 0; }
+  .btn-row-inline { gap: 4px; }
+  .btn-row-menu   { flex-direction: column; align-items: stretch; gap: 2px; }
+  .btn-row-label {
+    width: 80px; color: #c8a96a; font-size: 13px; letter-spacing: 3px;
+    flex-shrink: 0;
   }
+
+  /* ── Gauges (hpBar / ringBar) ─────────────────────────────────
+     Shared label · track · num row layout with a per-kind fill. */
+  .gauge {
+    display: flex; align-items: center; gap: 10px; font-size: 13px;
+    margin: 6px 0;
+  }
+  .gauge-label {
+    width: 100px; color: #c8a96a; letter-spacing: 2px; flex-shrink: 0;
+  }
+  .gauge-track {
+    flex: 1; height: 14px; background: #1a1410; border: 1px solid #3a2a1a;
+    border-radius: 4px; overflow: hidden; position: relative;
+  }
+  .gauge-fill { height: 100%; }
+  .gauge-num {
+    width: 80px; color: #aaa; text-align: right;
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  /* Per-kind fill colours */
+  .gauge-hp .gauge-fill { background: linear-gradient(90deg, #dc2626, #f59e0b); }
+  /* Ring gauge overrides — no label / num, taller bar, absolute overlays */
+  .gauge-ring { margin: 22px 0 14px; }
+  .gauge-ring .gauge-track { height: 18px; overflow: visible; }
   .ring-window {
     position: absolute; top: 0; bottom: 0;
     background: rgba(76, 175, 80, 0.35);
@@ -313,14 +343,10 @@
     position: absolute; top: -4px; bottom: -4px; width: 3px;
     background: #c8a96a; transform: translateX(-1.5px);
   }
+
   .mini-status { text-align: center; color: #4ade80; font-size: 14px; min-height: 20px; }
-  /* beishui */
+  /* beishui board (still bespoke: card grid + turn label + log) */
   .bs-board { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
-  .bs-hp { display: flex; align-items: center; gap: 10px; font-size: 13px; }
-  .bs-hp-label { width: 100px; color: #c8a96a; letter-spacing: 2px; }
-  .bs-hp-bar { flex: 1; height: 14px; background: #1a1410; border-radius: 4px; overflow: hidden; }
-  .bs-hp-bar > div { height: 100%; background: linear-gradient(90deg, #dc2626, #f59e0b); }
-  .bs-hp-num { width: 80px; color: #aaa; font-family: ui-monospace, Menlo, monospace; text-align: right; }
   .bs-turn { color: #c8a96a; text-align: center; letter-spacing: 4px; margin: 14px 0 8px; }
   .bs-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 8px 0; }
   .bs-log { color: #aaa; font-size: 13px; margin: 4px 0; }

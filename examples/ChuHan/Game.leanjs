@@ -3519,6 +3519,78 @@ def portrait(src, alt, caption) :=
     "</div>"
   ])
 
+-- ── hpBar / progressBar ────────────────────────────────────────────
+-- Horizontal gauge: label · fill · numeric. Kinds:
+--   hp     — red-to-orange gradient, HP-style (beishui)
+--   ring   — dark bar with a green target window + moving cursor
+--            (jade_ring's timing bar; the extras are optional overlays)
+-- Both share the same base .gauge / .gauge-fill markup so a new gauge
+-- variant is just a CSS rule + a new kind value.
+
+def hpBar(kind, label, cur, max) :=
+  let pct := if max == 0 then 0 else cur * 100 / max;
+  sjoin([
+    "<div class='gauge gauge-", kind, "'>",
+    "<span class='gauge-label'>", hesc(label), "</span>",
+    "<div class='gauge-track'><div class='gauge-fill' style='width:",
+      jstr(pct), "%'></div></div>",
+    "<span class='gauge-num'>", jstr(cur), "/", jstr(max), "</span>",
+    "</div>"
+  ])
+
+-- Ring-style progress bar with a hit window and a moving cursor.
+-- Reuses .gauge-track underneath; adds two absolutely-positioned
+-- children for the window band and the cursor line.
+def ringBar(progressPct, windowStartPct, windowWidthPct) :=
+  sjoin([
+    "<div class='gauge gauge-ring'>",
+    "<div class='gauge-track'>",
+    "<div class='ring-window' style='left:", jstr(windowStartPct),
+      "%; width:", jstr(windowWidthPct), "%'></div>",
+    "<div class='ring-cursor' style='left:", jstr(progressPct), "%'></div>",
+    "</div></div>"
+  ])
+
+-- ── btnRow — inline flex row of buttons/controls ───────────────────
+-- Wraps a pre-built HTML body of controls in a labelled flex row.
+-- Same shape as the current facerow / .lang / .save-pop containers,
+-- with one kind system so the row style is consistent.
+--
+-- Kinds:
+--   face  — small flex row with a leading label column ("目つき:"),
+--           child buttons expand to fill (used in 顔相鑑定)
+--   inline— header-bar inline row (JA/EN language toggle)
+--   menu  — vertical stacked menu (save-pop, drops to `display: flex`
+--           in column direction)
+
+def btnRow(kind, label, buttonsHtml) :=
+  let labelSpan := if label == "" then ""
+                   else sjoin(["<span class='btn-row-label'>", hesc(label), "</span>"]);
+  sjoin([
+    "<div class='btn-row btn-row-", kind, "'>",
+    labelSpan, buttonsHtml,
+    "</div>"
+  ])
+
+-- ── dialogue — the speaker + say + think trio ──────────────────────
+-- All VN beats need this triple. Empty speaker or think auto-skip
+-- so the caller doesn't have to conditional it. `hint` is the
+-- pulsing "▼ space / click" bottom-right hint the dialogue box has
+-- traditionally rendered — pass "" to omit.
+
+def dialogue(speaker, say, think, hint) :=
+  let speakerHtml := if speaker == "" then ""
+                     else sjoin(["<div class='dialogue-speaker'>", hesc(speaker), "</div>"]);
+  let thinkHtml := if think == "" then ""
+                   else sjoin(["<div class='dialogue-inner'>", hesc(think), "</div>"]);
+  let hintHtml := if hint == "" then ""
+                  else sjoin(["<div class='advance-hint'>", hesc(hint), "</div>"]);
+  sjoin([
+    speakerHtml,
+    "<div class='dialogue-line'>", hesc(say), "</div>",
+    thinkHtml, hintHtml
+  ])
+
 -- ── Missing-asset marker ───────────────────────────────────────────
 -- Use when a character / background is referenced in the script but
 -- no image exists yet. Renders a loud magenta placeholder so it can't
@@ -3538,12 +3610,10 @@ def missingAsset(name) :=
 def renderLang(state) :=
   let ja := if state.lang == "ja" then " active" else "";
   let en := if state.lang == "en" then " active" else "";
-  sjoin([
-    "<div class='lang'>",
+  btnRow("inline", "", sjoin([
     buttonMod("icon", ja, {tag: "setLang", lang: "ja"}, "JA"),
-    buttonMod("icon", en, {tag: "setLang", lang: "en"}, "EN"),
-    "</div>"
-  ])
+    buttonMod("icon", en, {tag: "setLang", lang: "en"}, "EN")
+  ]))
 
 -- Render the save/load drop-down. The slot labels read live from
 -- localStorage on each render so they always reflect the latest
@@ -3742,17 +3812,7 @@ def renderDialogueBox(state, step) :=
   let say := if state.lang == "en" then (if step.sayEn == "" then step.sayJa else step.sayEn) else step.sayJa;
   let think := if state.lang == "en" then (if step.thinkEn == "" then step.thinkJa else step.thinkEn) else step.thinkJa;
   let speaker := if state.lang == "en" then (if step.speakerEn == "" then step.speakerJa else step.speakerEn) else step.speakerJa;
-  let speakerHtml := if speaker == "" then ""
-                     else sjoin(["<div class='dialogue-speaker'>", hesc(speaker), "</div>"]);
-  let thinkHtml := if think == "" then ""
-                   else sjoin(["<div class='dialogue-inner'>", hesc(think), "</div>"]);
-  let body := sjoin([
-    speakerHtml,
-    "<div class='dialogue-line'>", hesc(say), "</div>",
-    thinkHtml,
-    "<div class='advance-hint'>▼ space / click</div>"
-  ]);
-  panel("dialogue", "", body)
+  panel("dialogue", "", dialogue(speaker, say, think, "▼ space / click"))
 
 def renderChoice(state, c, i) :=
   let label := if state.lang == "en" then (if c.labelEn == "" then c.labelJa else c.labelEn) else c.labelJa;
@@ -3888,11 +3948,9 @@ def faceButton(part, v, cur) :=
             faceLabel(part, v))
 
 def faceRow(part, cur) :=
-  sjoin([
-    "<div class='facerow'><span class='label'>", faceLabel(part, 99), "</span>",
-    faceButton(part, 0, cur), faceButton(part, 1, cur), faceButton(part, 2, cur),
-    "</div>"
-  ])
+  btnRow("face", faceLabel(part, 99), sjoin([
+    faceButton(part, 0, cur), faceButton(part, 1, cur), faceButton(part, 2, cur)
+  ]))
 
 def faceResultText(score) :=
   if score >= 5 then "「龍の相じゃ! 君は天下を取る器じゃ。我が娘・雉を娶ってもらいたい!」"
@@ -3902,15 +3960,12 @@ def faceResultText(score) :=
 def viewMiniFaceRead(state) :=
   let m := state.mini;
   let header := if m.faceShown then "呂公、お主の顔を読み取った――" else "呂公の前に進む。表情を組み立てよ。";
-  let eyesRow := sjoin(["<div class='facerow'><span class='facelabel'>目つき:</span>",
-    faceButton("eyes", 0, m.faceEyes), faceButton("eyes", 1, m.faceEyes), faceButton("eyes", 2, m.faceEyes),
-    "</div>"]);
-  let mouthRow := sjoin(["<div class='facerow'><span class='facelabel'>口元:</span>",
-    faceButton("mouth", 0, m.faceMouth), faceButton("mouth", 1, m.faceMouth), faceButton("mouth", 2, m.faceMouth),
-    "</div>"]);
-  let poseRow := sjoin(["<div class='facerow'><span class='facelabel'>姿勢:</span>",
-    faceButton("pose", 0, m.facePose), faceButton("pose", 1, m.facePose), faceButton("pose", 2, m.facePose),
-    "</div>"]);
+  let eyesRow := btnRow("face", "目つき:", sjoin([
+    faceButton("eyes", 0, m.faceEyes), faceButton("eyes", 1, m.faceEyes), faceButton("eyes", 2, m.faceEyes)]));
+  let mouthRow := btnRow("face", "口元:", sjoin([
+    faceButton("mouth", 0, m.faceMouth), faceButton("mouth", 1, m.faceMouth), faceButton("mouth", 2, m.faceMouth)]));
+  let poseRow := btnRow("face", "姿勢:", sjoin([
+    faceButton("pose", 0, m.facePose), faceButton("pose", 1, m.facePose), faceButton("pose", 2, m.facePose)]));
   let actionBtn := if m.faceShown
     then sjoin(["<div class='mini-result'>",
                 "<div class='mini-score'>呂公の評価: ", jstr(m.faceScore), " / 6</div>",
@@ -3936,12 +3991,7 @@ def viewMiniJadeRing(state) :=
   let progress := if elapsed > ringRoundMs then 100 else elapsed * 100 / ringRoundMs;
   let wStartPct := ringWindowStart * 100 / ringRoundMs;
   let wWidthPct := (ringWindowEnd - ringWindowStart) * 100 / ringRoundMs;
-  let progressBar := sjoin([
-    "<div class='ring-bar'>",
-    "<div class='ring-window' style='left:", jstr(wStartPct), "%; width:", jstr(wWidthPct), "%'></div>",
-    "<div class='ring-cursor' style='left:", jstr(progress), "%'></div>",
-    "</div>"
-  ]);
+  let progressBar := ringBar(progress, wStartPct, wWidthPct);
   let status := if m.ringFinished then ""
                 else if m.ringClickedThisRound then (if inWindow then "命中!" else "外れ……")
                 else if inWindow then "今だ! クリックせよ" else "間 (ま) を見よ";
@@ -3991,14 +4041,6 @@ def bsCardsForTurn(turn) :=
     bsCard(2, 2, "別動隊で趙本陣を奇襲", "(赤旗を立てる)")
   ])
 
-def bsHpBar(label, hp, maxHp) :=
-  let pct := hp * 100 / maxHp;
-  sjoin([
-    "<div class='bs-hp'><span class='bs-hp-label'>", hesc(label), "</span>",
-    "<div class='bs-hp-bar'><div style='width:", jstr(pct), "%'></div></div>",
-    "<span class='bs-hp-num'>", jstr(hp), "/", jstr(maxHp), "</span></div>"
-  ])
-
 def viewMiniBeishui(state) :=
   let m := state.mini;
   let logHtml := sjoin([
@@ -4018,7 +4060,7 @@ def viewMiniBeishui(state) :=
                 "</div>"])
     else sjoin([
       "<div class='bs-board'>",
-      bsHpBar("漢 (韓信)", m.bsHanHp, 100), bsHpBar("趙 (陳余)", m.bsZhaoHp, 200),
+      hpBar("hp", "漢 (韓信)", m.bsHanHp, 100), hpBar("hp", "趙 (陳余)", m.bsZhaoHp, 200),
       "</div>",
       "<div class='bs-turn'>第 ", jstr(m.bsTurn + 1), " ターン / 3</div>",
       "<div class='bs-cards'>", bsCardsForTurn(m.bsTurn), "</div>",
