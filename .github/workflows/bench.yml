@@ -78,106 +78,78 @@ jobs:
           sudo nginx -t
           sudo systemctl restart nginx
 
-      # ---- Warm up + sanity check both endpoints ----
-
-      - name: Start lean-tea reactor server
-        run: |
-          # Backend chosen via env var — same pattern application
-          # code uses through `LeanTea.Net.Backend.fromEnv`.
-          LEANTEA_HTTP_BACKEND=reactor \
-            ./.lake/build/bin/bench_server --port 8090 > /tmp/lean.log 2>&1 &
-          echo $! > /tmp/lean.pid
-          # Wait for the socket to bind.
-          for _ in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:8090/health >/dev/null; then break; fi
-            sleep 0.3
-          done
-          curl -sf http://127.0.0.1:8090/health | grep -q OK
-          curl -sf http://127.0.0.1:9090/health | grep -q OK
-          echo "both endpoints responsive"
-
-      # ---- Actual bench: three routes × two servers ----
+      # ---- Benchmark: 3 lean-tea backends + nginx, 3 routes each ----
       #
-      # 8 wrk threads, 128 keep-alive connections, 15 s per route.
-      # Emits an integer RPS per run. Longer runs give more stable
-      # numbers on the noisy CI runner.
+      # We compare all three lean-tea HTTP backends against nginx so the
+      # chart shows the tradeoffs directly:
+      #   * libuv   — Std.Async.TCP, single accept loop (baseline)
+      #   * fast    — POSIX FFI, thread-per-connection (SO_REUSEPORT)
+      #   * reactor — single kqueue/epoll event loop (default)
+      # 8 wrk threads, 128 keep-alive connections, 10 s per route.
 
-      - name: Run wrk (lean-tea reactor) — /health /json /echo
-        id: bench_lean
+      - name: Run benchmarks (3 backends + nginx)
         run: |
-          set -euo pipefail
-          bench() {
-            local url=$1
-            local script=$2
-            if [ -n "$script" ]; then
-              wrk -t8 -c128 -d15s -s "$script" "$url" 2>&1
-            else
-              wrk -t8 -c128 -d15s "$url" 2>&1
-            fi | awk '/Requests\/sec:/ {print int($2); exit}'
-          }
+          set -uo pipefail
           cat > /tmp/post_echo.lua << 'LUA'
           wrk.method = "POST"
           wrk.body = "hello"
           wrk.headers["Content-Type"] = "application/octet-stream"
           LUA
-          LEAN_HEALTH=$(bench http://127.0.0.1:8090/health "")
-          LEAN_JSON=$(bench http://127.0.0.1:8090/json "")
-          LEAN_ECHO=$(bench http://127.0.0.1:8090/echo /tmp/post_echo.lua)
-          echo "lean_health=$LEAN_HEALTH"  >> $GITHUB_OUTPUT
-          echo "lean_json=$LEAN_JSON"      >> $GITHUB_OUTPUT
-          echo "lean_echo=$LEAN_ECHO"      >> $GITHUB_OUTPUT
-          echo "-- lean-tea reactor --"
-          echo "  /health: $LEAN_HEALTH RPS"
-          echo "  /json:   $LEAN_JSON RPS"
-          echo "  /echo:   $LEAN_ECHO RPS"
 
-      - name: Run wrk (nginx) — /health /json  (no /echo — nginx has no echo)
-        id: bench_nginx
-        run: |
-          set -euo pipefail
-          bench() {
-            wrk -t8 -c128 -d15s "$1" 2>&1 | awk '/Requests\/sec:/ {print int($2); exit}'
+          bench() {   # url [luascript] -> integer RPS on stdout
+            if [ -n "${2:-}" ]; then
+              wrk -t8 -c128 -d10s -s "$2" "$1" 2>/dev/null
+            else
+              wrk -t8 -c128 -d10s "$1" 2>/dev/null
+            fi | awk '/Requests\/sec:/ {print int($2); exit}'
           }
-          NGX_HEALTH=$(bench http://127.0.0.1:9090/health)
-          NGX_JSON=$(bench http://127.0.0.1:9090/json)
-          echo "nginx_health=$NGX_HEALTH" >> $GITHUB_OUTPUT
-          echo "nginx_json=$NGX_JSON"     >> $GITHUB_OUTPUT
-          echo "-- nginx --"
-          echo "  /health: $NGX_HEALTH RPS"
-          echo "  /json:   $NGX_JSON RPS"
 
-      - name: Assemble bench-data JSON for benchmark-action
-        run: |
-          set -euo pipefail
-          # `customBiggerIsBetter` expects a JSON array of
-          # {name, unit, value}. We emit one entry per (server, route)
-          # so github-action-benchmark can chart each independently.
-          # Ratio entries let us also chart parity vs nginx.
-          LH=${{ steps.bench_lean.outputs.lean_health }}
-          LJ=${{ steps.bench_lean.outputs.lean_json }}
-          LE=${{ steps.bench_lean.outputs.lean_echo }}
-          NH=${{ steps.bench_nginx.outputs.nginx_health }}
-          NJ=${{ steps.bench_nginx.outputs.nginx_json }}
-          python3 - <<PYEOF > http-bench-results.json
+          : > /tmp/results.tsv
+          record() { printf '%s\t%s\n' "$1" "${2:-0}" >> /tmp/results.tsv; }
+
+          run_backend() {   # label backend port
+            local label=$1 backend=$2 port=$3
+            LEAN_NUM_THREADS=256 LEANTEA_HTTP_BACKEND="$backend" \
+              ./.lake/build/bin/bench_server --port "$port" > "/tmp/lean_$label.log" 2>&1 &
+            local pid=$!
+            for _ in $(seq 1 40); do
+              curl -sf "http://127.0.0.1:$port/health" >/dev/null && break; sleep 0.3
+            done
+            if ! curl -sf "http://127.0.0.1:$port/health" >/dev/null; then
+              echo "!! $label did not come up"; cat "/tmp/lean_$label.log" || true
+            else
+              record "lean-tea $label /health" "$(bench http://127.0.0.1:$port/health)"
+              record "lean-tea $label /json"   "$(bench http://127.0.0.1:$port/json)"
+              record "lean-tea $label /echo"   "$(bench http://127.0.0.1:$port/echo /tmp/post_echo.lua)"
+            fi
+            kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+          }
+
+          run_backend libuv   libuv   8091
+          run_backend fast    fast    8092
+          run_backend reactor reactor 8090
+
+          # nginx (no /echo endpoint configured)
+          record "nginx /health" "$(bench http://127.0.0.1:9090/health)"
+          record "nginx /json"   "$(bench http://127.0.0.1:9090/json)"
+
+          echo "--- results.tsv ---"; cat /tmp/results.tsv
+
+          # customBiggerIsBetter expects [{name, unit, value}]. Drop any
+          # zero (a backend that failed to bind) so it doesn't poison the
+          # chart / alert history.
+          python3 - > http-bench-results.json <<'PYEOF'
           import json
-          def pct(a, b):
-              # Guard against zero nginx (setup failure); avoid ZeroDivisionError.
-              return int(round(a * 100.0 / b)) if b else 0
-          LH, LJ, LE = int("${LH}"), int("${LJ}"), int("${LE}")
-          NH, NJ     = int("${NH}"), int("${NJ}")
-          data = [
-            {"name": "lean-tea reactor /health", "unit": "RPS", "value": LH},
-            {"name": "lean-tea reactor /json",   "unit": "RPS", "value": LJ},
-            {"name": "lean-tea reactor /echo",   "unit": "RPS", "value": LE},
-            {"name": "nginx /health",            "unit": "RPS", "value": NH},
-            {"name": "nginx /json",              "unit": "RPS", "value": NJ},
-            {"name": "lean-tea/nginx /health %", "unit": "%",   "value": pct(LH, NH)},
-            {"name": "lean-tea/nginx /json %",   "unit": "%",   "value": pct(LJ, NJ)},
-          ]
-          print(json.dumps(data, indent=2))
+          rows = []
+          for line in open('/tmp/results.tsv'):
+              name, _, val = line.rstrip('\n').partition('\t')
+              try: v = int(val)
+              except ValueError: v = 0
+              if v > 0:
+                  rows.append({"name": name, "unit": "RPS", "value": v})
+          print(json.dumps(rows, indent=2))
           PYEOF
-          echo "--- http-bench-results.json ---"
-          cat http-bench-results.json
+          echo "--- http-bench-results.json ---"; cat http-bench-results.json
 
       # ---- Persist + regression-alert ----
       #
@@ -197,7 +169,7 @@ jobs:
         uses: benchmark-action/github-action-benchmark@v1
         if: github.event_name == 'push'
         with:
-          name: HTTP throughput (lean-tea reactor vs nginx)
+          name: HTTP throughput (lean-tea backends vs nginx)
           tool: customBiggerIsBetter
           output-file-path: http-bench-results.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -209,11 +181,12 @@ jobs:
 
       # ---- Teardown ----
 
-      - name: Stop lean-tea server + dump log
+      - name: Dump server logs
         if: always()
         run: |
-          if [ -f /tmp/lean.pid ]; then
-            kill "$(cat /tmp/lean.pid)" 2>/dev/null || true
-          fi
-          echo "--- lean-tea server log ---"
-          cat /tmp/lean.log 2>/dev/null || echo "(no log)"
+          # Each backend is killed inline after its runs; this just
+          # surfaces logs if a backend failed to bind.
+          pkill -f bench_server 2>/dev/null || true
+          for f in /tmp/lean_*.log; do
+            [ -f "$f" ] && { echo "--- $f ---"; cat "$f"; }
+          done || echo "(no logs)"

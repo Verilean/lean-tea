@@ -20,9 +20,10 @@
 </style>
 </head>
 <body>
-<h1>HTTP throughput — lean-tea vs nginx</h1>
+<h1>HTTP throughput — lean-tea backends vs nginx</h1>
 <p class="sub">Grouped by endpoint. Each chart is RPS over time, one line per
-server, measured on the same CI runner in the same job (see
+server (three lean-tea backends — reactor / fast / libuv — plus nginx),
+measured on the same CI runner in the same job (see
 <a href="../">the docs</a> ·
 <a href="https://github.com/Verilean/lean-tea/blob/main/docs/BENCHMARKS.md">methodology</a>).</p>
 <div id="charts"></div>
@@ -34,8 +35,10 @@ server, measured on the same CI runner in the same job (see
 (function () {
   const ENDPOINTS = ["/health", "/json", "/echo"];
   const SERVERS = [
-    { key: "lean-tea reactor", label: "lean-tea", color: "#2563eb" },
-    { key: "nginx",            label: "nginx",    color: "#dc2626" },
+    { key: "lean-tea reactor", label: "lean-tea reactor", color: "#2563eb" },
+    { key: "lean-tea fast",    label: "lean-tea fast",    color: "#16a34a" },
+    { key: "lean-tea libuv",   label: "lean-tea libuv",   color: "#9333ea" },
+    { key: "nginx",            label: "nginx",            color: "#dc2626" },
   ];
 
   const bd = window.BENCHMARK_DATA;
