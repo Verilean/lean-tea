@@ -37,6 +37,7 @@ import LeanTea.Auth
 import LeanTea.Js
 import LeanTea.Css
 import LeanTea.Rpc
+import LeanTea.Rpc.Typed
 import LeanTea.JsonRpc
 import LeanTea.WebGpu
 import LeanTea.LSpec
