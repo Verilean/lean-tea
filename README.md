@@ -9,6 +9,8 @@ Chrome-CDP MCP server, and several other AI-driving MCP servers).
 [![pages](https://github.com/Verilean/lean-tea/actions/workflows/pages.yml/badge.svg)](https://github.com/Verilean/lean-tea/actions/workflows/pages.yml)
 [![Discord](https://img.shields.io/badge/discord-LeanTEA-5865F2?logo=discord&logoColor=white)](https://discord.gg/94Xueve8WD)
 
+📖 **[Read the docs — the LeanTEA book](https://verilean.github.io/lean-tea/)** · [HTTP benchmark trend](https://verilean.github.io/lean-tea/bench/)
+
 Questions, design discussion, and weekly progress threads live in the Discord channel above.
 
 - **Pure Lean** stack: HTTP server, WebSocket client, and SQLite live
