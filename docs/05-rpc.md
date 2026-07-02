@@ -76,6 +76,71 @@ resp.valueX     -- ✗ compile error: SetCellResp.valueX doesn't exist
 endpoint, a server round-trip (200 / 400 / 404), a client that
 type-checks, and a client with a mistyped field that is rejected.
 
+## Workflow: adding a typed endpoint
+
+The whole loop, in the order you write it. `TypedRpcApi.lean` +
+`TypedRpcSpec.lean` under `examples/Tests/` are a copy-pasteable
+skeleton.
+
+**1. Define the wire types once, in their own module** (so both the
+server and the client type-check can `import` the same definition):
+
+```lean
+-- App/Api.lean
+import Lean.Data.Json
+import Lean.Data.Json.FromToJson
+
+structure SetCellReq  where ref : String; formula : String
+  deriving Lean.ToJson, Lean.FromJson
+structure SetCellResp where ok : Bool;   value : String
+  deriving Lean.ToJson, Lean.FromJson
+```
+
+**2. Declare the endpoint.** `reqType` / `respType` are the type names
+as text — the client artifacts are generated *source*, so they need the
+names:
+
+```lean
+def setCell : Endpoint SetCellReq SetCellResp :=
+  { name := "apiSetCell", path := "/api/set",
+    reqType := "SetCellReq", respType := "SetCellResp" }
+```
+
+**3. Server: write the typed handler and mount it.**
+
+```lean
+def handleSetCell (r : SetCellReq) : IO SetCellResp := …
+def app : Handler :=
+  chainWith [ serve setCell handleSetCell ] staticFileHandler
+```
+
+**4. Client JS: splice the generated function into the page shell.**
+
+```lean
+let rpcClient := LeanTea.Js.renderBlock [setCell.clientFn]
+-- page.renderFlat [("rpcClient", rpcClient), …]
+```
+
+**5. Gate the build on the client type-check.** Parse your `.leanjs`
+client, build a prelude that `import`s the types module + lists the
+endpoint stubs, and elaborate:
+
+```lean
+open LeanJs
+def prelude := TypeCheck.mkPrelude ["App.Api"] [setCell.stubDecl]
+
+def checkClient (src : String) : IO Unit := do
+  let prog ← IO.ofExcept (Parser.parseProgramString src)
+  match ← TypeCheck.check prelude prog with
+  | .ok _    => pure ()
+  | .error e => throw (IO.userError s!"client type error:\n{e}")
+```
+
+Run `checkClient` in the `compileGame`-style step your server already
+uses to turn `.leanjs` into JS (see `examples/Reversi/Serve.lean` for
+that shape) — a client that reads a field the response type doesn't
+have now fails the build instead of failing in the browser.
+
 ## Legacy stringly RPC
 
 The older `LeanTea.Rpc` (`Endpoint` with `params : List String`,

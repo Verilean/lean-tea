@@ -21,7 +21,8 @@ already exercised most of this picture without naming it.
 │   Net.Server    : serve port host handler                        │
 │   Net.HttpClient: pure-Lean HTTP/1.1 client                      │
 │   Net.WebSocket : pure-Lean RFC 6455 client                      │
-│   Rpc           : Endpoint + dispatch + clientLib                │
+│   Rpc.Typed     : Endpoint α β — typed server + client + check   │
+│   Rpc           : legacy stringly Endpoint + dispatch + clientLib│
 │   JsonRpc       : JSON-RPC 2.0 envelope                          │
 │   Mcp           : Handler {init, tools, callTool} + transports   │
 │   Auth          : Sessions, OAuth2, SAML, Passkey, CSP           │
@@ -121,16 +122,19 @@ Sheet/Serve.lean ─► uses LeanTea.Net.Server + .Template ─► glue
                                                           ↳ Persist + Mcp
 ```
 
-The Rpc layer is what keeps the Lean and JS sides honest: each
-endpoint declares an `Endpoint` record once, and three artefacts
-read from it:
+The Rpc layer is what keeps the Lean and JS sides honest. In the
+typed layer (`LeanTea.Rpc.Typed`, chapter 5) each route declares one
+`Endpoint α β` and three artefacts read from it:
 
-* the server's router (dispatch by path + method)
-* the typed client lib (auto-generated JS with the right shapes)
-* the JSON discovery document (`/api/_endpoints`)
+* the server handler — typed `α → IO β`, codec-mediated dispatch
+* the JS client (auto-generated `fetch` wrapper, request JSON-serialized)
+* the client type-check — the `.leanjs` client elaborated against the
+  same `α` / `β`, so a field the type lacks is a compile error
 
-When you add an endpoint you touch one record; the surface area on
-the other side updates for free.
+When you add an endpoint you touch one declaration; a mismatch on the
+other side surfaces at compile time. (Sheet, above, still uses the
+older stringly `LeanTea.Rpc.clientLib`; new apps should use the typed
+layer.)
 
 ## How the LeanJs pipeline composes
 
