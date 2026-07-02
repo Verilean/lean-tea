@@ -720,6 +720,14 @@ lean_exe bench_server where
   srcDir := "examples"
   root := `BenchServer.Main
 
+/-- Reference bench: same three routes (/health, /json, /echo) but
+    on top of Lean 4.31's stock `Std.Http.Server`. Used in
+    `docs/BENCHMARKS.md` to show what a Std-only server does under
+    the same wrk load. -/
+lean_exe bench_std_http where
+  srcDir := "examples"
+  root := `BenchStdHttp.Main
+
 /- Downstream projects previously bundled here now live in their own
    repos so lean-tea stays a library core + a compact examples set:
 
