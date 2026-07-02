@@ -55,6 +55,20 @@ jobs:
           ./.lake/build/bin/gen_site
           ls -la docs-site/
 
+      # The bench workflow publishes its history + trend chart to the
+      # `gh-pages` branch under `bench/` (keeping the JSON off main).
+      # Fold that into the deployed site so the live chart is served at
+      # `<pages-url>/bench/`. Non-fatal before the first bench run.
+      - name: Include benchmark chart from gh-pages
+        run: |
+          if git fetch origin gh-pages --depth=1 2>/dev/null; then
+            git archive origin/gh-pages bench 2>/dev/null | tar -x -C docs-site || \
+              echo "no bench/ on gh-pages yet"
+            ls -la docs-site/bench 2>/dev/null || true
+          else
+            echo "gh-pages branch does not exist yet — skipping bench chart"
+          fi
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

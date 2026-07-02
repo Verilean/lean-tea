@@ -18,11 +18,6 @@ name: bench
 on:
   push:
     branches: [main]
-    # The bench job commits to bench-data/. Ignoring that path here
-    # breaks the otherwise-obvious infinite loop of every bench run
-    # pushing a change that triggers another bench run.
-    paths-ignore:
-      - 'bench-data/**'
   workflow_dispatch:
 
 permissions:
@@ -193,32 +188,24 @@ jobs:
       # 80% of the previous best, the step logs a warning. Set
       # `fail-on-alert: true` once the numbers stabilise.
 
-      - name: Store benchmark result (local JSON, tracked in repo)
+      # Publish the history + trend chart to the `gh-pages` branch (NOT
+      # main) under `bench/`. This keeps the JSON out of main's history
+      # — the pages workflow copies `bench/` from gh-pages into the
+      # deployed docs site, so the live chart shows up at
+      # `<pages-url>/bench/`.
+      - name: Publish benchmark to gh-pages
         uses: benchmark-action/github-action-benchmark@v1
         if: github.event_name == 'push'
         with:
           name: HTTP throughput (lean-tea reactor vs nginx)
           tool: customBiggerIsBetter
           output-file-path: http-bench-results.json
-          external-data-json-path: bench-data/http-bench.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: bench
+          auto-push: true
           alert-threshold: "80%"
           fail-on-alert: false
-          auto-push: false
-          # No gh-pages branch — the JSON is committed to main so
-          # anyone reviewing PRs can eyeball the trend.
-
-      - name: Commit updated bench-data
-        if: github.event_name == 'push'
-        run: |
-          if [ -n "$(git status --porcelain bench-data)" ]; then
-            git config user.name  "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add bench-data/http-bench.json
-            git commit -m "bench: append http throughput result [skip ci]"
-            git push
-          else
-            echo "no bench-data change to commit"
-          fi
 
       # ---- Teardown ----
 

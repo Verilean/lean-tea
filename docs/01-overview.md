@@ -18,7 +18,7 @@ That triple is the spine. Around it the framework gives you:
 | HTML | typed Lean (`LeanTea.Html`) | server-side render, dynamic refresh |
 | CSS | typed Lean (`LeanTea.Css.Sheet`) **or** plain `.css` files | both supported |
 | Browser JS | `.leanjs` file **or** typed `LeanTea.Js` DSL | compile to JS, inline in the page |
-| HTTP routes | one `Endpoint` record per route | server router + JSON client + discovery doc, generated |
+| HTTP routes | one typed `Endpoint α β` per route | server handler (`α → IO β`) + JS client, generated, and the client type-checked against the same types |
 | SQLite tables | `Entity` instance per table | typed CRUD via `Repo` |
 | HTML shells | `.html` files with `{{var}}` / `{{#each}}` / `{{#if}}` / `{{#include}}` | hot-reload in `--dev` |
 | MCP servers | `LeanTea.Mcp.Handler` + tool list | stdio + HTTP transports |

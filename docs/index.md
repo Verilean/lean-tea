@@ -11,7 +11,7 @@ ends of the wire, with one mental model: the Elm-style triple
 - **2 · [Frontend (Elm-style)](02-frontend.md)** — `Model / Msg / update / view`, the typed `Html` and `Css` layers, where browser JS lives. Worked example: Reversi.
 - **3 · [Backend (Elm-style)](03-backend.md)** — the stateless API loop, `Handler`, sessions, the typed HTML shell. Worked example: Sheet.
 - **4 · [Persist](04-persist.md)** — typed SQLite tables via `Entity` and `Repo`, manual migrations, the `Store` aggregate.
-- **5 · [RPC](05-rpc.md)** — one `Endpoint` record drives router + JS client + discovery doc.
+- **5 · [RPC](05-rpc.md)** — one typed `Endpoint α β` drives the server handler, the JS client, and a compile-time check of the client against the same request/response types.
 - **6 · [LeanJs](06-leanjs.md)** — the `.leanjs` subset and when to reach for it. Language reference: [`LeanJs/README.md`](../LeanJs/README.md); LeanJs vs JS vs Lean: [`LeanJs/COMPARISON.md`](../LeanJs/COMPARISON.md).
 - **7 · [Template](07-template.md)** — `.html` files with `{{var}}`, `{{#each}}`, `{{#if}}`, `{{#include}}` and hot-reload via `Provider`.
 - **8 · [MCP servers](08-mcp.md)** — the `LeanTea.Mcp` library, stdio + HTTP transports, and how the bundled Chrome-CDP / ComfyUI / Browser / Desktop / Image servers are built.
