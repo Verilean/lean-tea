@@ -1,5 +1,9 @@
 import Std.Async.TCP
 import Std.Net
+import Lean.Data.Json
+import Lean.Data.Json.FromToJson
+
+open Lean (Json ToJson toJson)
 
 /-! # Minimal HTTP/1.1 server using `Std.Internal.Async.TCP`
 
@@ -26,6 +30,10 @@ structure Request where
   query   : String        -- raw query string, no `?`
   headers : Array (String × String)   -- header names are lowercased
   body    : ByteArray
+  /-- HTTP version as given on the request line, e.g. `"HTTP/1.1"`.
+      `parseRequest` sets it; older callers using `Request.mk` get
+      the empty string, treated as HTTP/1.0 by the keep-alive code. -/
+  version : String := ""
   deriving Inhabited
 
 structure Response where
@@ -52,6 +60,33 @@ def Response.html (status : Nat) (body : String) (extra : Array (String × Strin
 def Response.notFound : Response := .text 404 "not found\n"
 def Response.badRequest : Response := .text 400 "bad request\n"
 def Response.serverError (msg : String) : Response := .text 500 (msg ++ "\n")
+
+/-- Ship a `Lean.Json` value as `application/json`. Prefer this over
+    hand-building JSON strings so escaping, brace balancing, and
+    control-character handling stay the codec's problem, not the
+    handler author's. -/
+def Response.json (status : Nat) (body : Json) : Response := {
+  status,
+  headers := #[("content-type", "application/json; charset=utf-8")],
+  body := body.compress.toUTF8
+}
+
+/-- Same as `Response.json` but takes any `ToJson α` value. Handlers
+    that already have a Lean structure for the reply shape (typical
+    when using `deriving ToJson`) can skip the `toJson` call and let
+    the compiler pick it up:
+
+    ```lean
+    structure Ok where ok : Bool deriving Lean.ToJson
+    return Response.jsonObj 200 { ok := true : Ok }
+    ``` -/
+def Response.jsonObj [ToJson α] (status : Nat) (v : α) : Response :=
+  Response.json status (toJson v)
+
+/-- Convenience for `{"error": "…"}` responses — the single most common
+    JSON shape hand-written across handlers today. -/
+def Response.jsonError (status : Nat) (msg : String) : Response :=
+  Response.json status (Json.mkObj [("error", Json.str msg)])
 
 /-! ## Header injection guard
 
@@ -206,15 +241,15 @@ def splitHeaders (raw : ByteArray) : Option (String × ByteArray) := do
   let rest := baSlice raw (h + 4) (raw.size - (h + 4))
   return (headersStr, rest)
 
-private def parseRequestLine (line : String) : Option (String × String × String) := do
+private def parseRequestLine (line : String) : Option (String × String × String × String) := do
   let parts := line.splitOn " "
   match parts with
-  | [m, target, _] =>
+  | [m, target, v] =>
     -- split path and query
     match target.splitOn "?" with
-    | [p]    => some (m, p, "")
-    | [p, q] => some (m, p, q)
-    | p :: rest => some (m, p, String.intercalate "?" rest)
+    | [p]    => some (m, p, "", v)
+    | [p, q] => some (m, p, q, v)
+    | p :: rest => some (m, p, String.intercalate "?" rest, v)
     | _ => none
   | _ => none
 
@@ -234,26 +269,46 @@ def parseRequest (raw : ByteArray) (body : ByteArray) : Option Request := do
   match lines with
   | [] => none
   | reqLine :: rest =>
-    let (method, path, query) ← parseRequestLine reqLine
+    let (method, path, query, version) ← parseRequestLine reqLine
     let headers := rest.filterMap parseHeaderLine
     some {
       method := method,
       path := path,
       query := query,
+      version := version,
       headers := headers.toArray,
       body := body
     }
 
 /-! ## Response serialization -/
 
-def Response.toBytes (r : Response) : ByteArray :=
-  let status := s!"HTTP/1.1 {r.status} {statusText r.status}\r\n"
-  let hdrs := r.headers.foldl
-    (fun acc (k, v) => acc ++ s!"{k}: {v}\r\n") ""
-  let cl := s!"content-length: {r.body.size}\r\n"
-  let close := "connection: close\r\n\r\n"
-  let head := (status ++ hdrs ++ cl ++ close).toUTF8
-  head ++ r.body
+/-- Serialize the response.
+
+    Historical bug worth calling out: this used to append a hardcoded
+    `connection: close` header at the terminator, so responses always
+    carried two `connection:` headers (the annotated `keep-alive` plus
+    the hardcoded `close`). Lenient clients like `ab` happened to still
+    reuse the socket, which is why the keep-alive benchmark improved,
+    but strict clients would drop the connection. Now the terminator
+    is just the empty line — the caller sets connection state via
+    `annotateConnection` in the server loop. -/
+def Response.toBytes (r : Response) : ByteArray := Id.run do
+  -- Build the head as one growing string, one final toUTF8, one ByteArray concat.
+  let mut head : String := ""
+  head := head ++ "HTTP/1.1 "
+  head := head ++ toString r.status
+  head := head ++ " "
+  head := head ++ statusText r.status
+  head := head ++ "\r\n"
+  for (k, v) in r.headers do
+    head := head ++ k
+    head := head ++ ": "
+    head := head ++ v
+    head := head ++ "\r\n"
+  head := head ++ "content-length: "
+  head := head ++ toString r.body.size
+  head := head ++ "\r\n\r\n"
+  return head.toUTF8 ++ r.body
 
 /-! ## Handler type -/
 

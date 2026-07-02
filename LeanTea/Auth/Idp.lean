@@ -156,27 +156,29 @@ private def handleToken (st : State) (req : Request) : IO Response := do
   let now ← nowSec
   match codes.find? (·.code == code) with
   | none =>
-    return Response.text 400 "{\"error\":\"invalid_code\"}\n"
+    return Response.jsonError 400 "invalid_code"
   | some c =>
     if c.clientId != clientId then
-      return Response.text 400 "{\"error\":\"client_id mismatch\"}\n"
+      return Response.jsonError 400 "client_id mismatch"
     if c.expiresAt < now then
-      return Response.text 400 "{\"error\":\"code expired\"}\n"
+      return Response.jsonError 400 "code expired"
     /- PKCE: when `code_challenge` was sent, verifier must match.
        We do the easy case: `plain` PKCE (challenge == verifier).
        The framework's real client uses S256; the IdP fixture only
        needs to *prove the round-trip* end-to-end, not enforce
        hashing — we therefore accept either. -/
     if !c.codeChallenge.isEmpty && codeVerifier.isEmpty then
-      return Response.text 400 "{\"error\":\"code_verifier required\"}\n"
+      return Response.jsonError 400 "code_verifier required"
     /- Burn the code so a replay fails. -/
     st.codes.modify fun xs => xs.filter (·.code != code)
     let access ← randomToken
     st.tokens.modify (⟨access, c.userSub⟩ :: ·)
-    let respBody :=
-      "{\"access_token\":\"" ++ access ++ "\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"scope\":\"openid email profile\"}"
-    let r := Response.text 200 respBody
-    return r.setHeader! "content-type" "application/json"
+    return Response.json 200 <| Lean.Json.mkObj [
+      ("access_token", Lean.Json.str access),
+      ("token_type",   Lean.Json.str "Bearer"),
+      ("expires_in",   Lean.Json.num 3600),
+      ("scope",        Lean.Json.str "openid email profile")
+    ]
 
 /-! ### `/userinfo` — return the profile for the bearer token -/
 
@@ -187,18 +189,22 @@ private def handleUserInfo (st : State) (req : Request) : IO Response := do
   let tokens ← st.tokens.get
   match tokens.find? (·.token == token) with
   | none =>
-    return Response.text 401 "{\"error\":\"invalid_token\"}\n"
+    return Response.jsonError 401 "invalid_token"
   | some t =>
     match st.cfg.clients.findSome? fun c =>
       if c.user.sub == t.userSub then some c.user else none with
     | none   =>
-      return Response.text 500 "{\"error\":\"user vanished\"}\n"
+      return Response.jsonError 500 "user vanished"
     | some u =>
-      let body :=
-        "{\"sub\":\"" ++ u.sub ++ "\",\"email\":\"" ++ u.email ++
-        "\",\"name\":\"" ++ u.name ++ "\",\"picture\":\"" ++ u.picture ++ "\"}"
-      let r := Response.text 200 body
-      return r.setHeader! "content-type" "application/json"
+      -- Structured build: every string field goes through Json.str, so
+      -- a `"` in u.email / u.name (attacker-supplied via CLI or DB
+      -- restore) gets escaped by the codec instead of breaking out.
+      return Response.json 200 <| Lean.Json.mkObj [
+        ("sub",     Lean.Json.str u.sub),
+        ("email",   Lean.Json.str u.email),
+        ("name",    Lean.Json.str u.name),
+        ("picture", Lean.Json.str u.picture)
+      ]
 
 /-- Compose the three endpoints into a single `Handler`. -/
 def handler (st : State) : Handler := fun req =>
