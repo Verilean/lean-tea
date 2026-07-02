@@ -125,9 +125,10 @@ jobs:
             kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
           }
 
-          run_backend libuv   libuv   8091
-          run_backend fast    fast    8092
-          run_backend reactor reactor 8090
+          NPROC=$(nproc)
+          run_backend libuv   libuv              8091
+          run_backend fast    "fast:$NPROC"      8092
+          run_backend reactor "reactor:$NPROC"   8090
 
           # nginx (no /echo endpoint configured)
           record "nginx /health" "$(bench http://127.0.0.1:9090/health)"
