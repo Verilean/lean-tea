@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LeanTEA · HTTP throughput</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 900px;
+         margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  h1 { margin-bottom: .25rem; }
+  .sub { color: #666; margin-top: 0; }
+  .card { border: 1px solid #8883; border-radius: 10px; padding: 1rem 1rem .5rem;
+          margin: 1.25rem 0; }
+  .card h2 { margin: 0 0 .5rem; font-size: 1.1rem; }
+  canvas { width: 100% !important; height: 300px !important; }
+  a { color: #2563eb; }
+  footer { color: #888; font-size: .85rem; margin-top: 2rem; }
+</style>
+</head>
+<body>
+<h1>HTTP throughput — lean-tea vs nginx</h1>
+<p class="sub">Grouped by endpoint. Each chart is RPS over time, one line per
+server, measured on the same CI runner in the same job (see
+<a href="../">the docs</a> ·
+<a href="https://github.com/Verilean/lean-tea/blob/main/docs/BENCHMARKS.md">methodology</a>).</p>
+<div id="charts"></div>
+<footer id="meta"></footer>
+
+<!-- Populated by github-action-benchmark on the gh-pages branch. -->
+<script src="data.js"></script>
+<script>
+(function () {
+  const ENDPOINTS = ["/health", "/json", "/echo"];
+  const SERVERS = [
+    { key: "lean-tea reactor", label: "lean-tea", color: "#2563eb" },
+    { key: "nginx",            label: "nginx",    color: "#dc2626" },
+  ];
+
+  const bd = window.BENCHMARK_DATA;
+  const charts = document.getElementById("charts");
+  if (!bd || !bd.entries) {
+    charts.innerHTML = "<p>No benchmark data yet — the chart appears after the first <code>bench</code> run on <code>main</code>.</p>";
+    return;
+  }
+  // One suite ("HTTP throughput …"); take the first.
+  const suite = Object.keys(bd.entries)[0];
+  const runs = bd.entries[suite] || [];
+  const labels = runs.map(r => new Date(r.date).toLocaleDateString(undefined,
+    { month: "short", day: "numeric" }));
+
+  const valueOf = (run, name) => {
+    const b = (run.benches || []).find(b => b.name === name);
+    return b ? b.value : null;
+  };
+
+  for (const ep of ENDPOINTS) {
+    const card = document.createElement("div");
+    card.className = "card";
+    const h = document.createElement("h2");
+    h.textContent = ep;
+    card.appendChild(h);
+    const cv = document.createElement("canvas");
+    card.appendChild(cv);
+    charts.appendChild(card);
+
+    const datasets = SERVERS.map(s => ({
+      label: s.label,
+      data: runs.map(r => valueOf(r, `${s.key} ${ep}`)),
+      borderColor: s.color,
+      backgroundColor: s.color,
+      spanGaps: true,
+      tension: 0.2,
+      pointRadius: 3,
+    })).filter(d => d.data.some(v => v !== null));  // drop empty (e.g. nginx /echo)
+
+    new Chart(cv, {
+      type: "line",
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: { legend: { position: "bottom" } },
+        scales: { y: { beginAtZero: true, title: { display: true, text: "RPS" } } },
+      },
+    });
+  }
+
+  if (runs.length) {
+    const last = runs[runs.length - 1];
+    const when = new Date(last.date).toLocaleString();
+    const sha = last.commit && last.commit.id ? last.commit.id.slice(0, 7) : "";
+    document.getElementById("meta").textContent =
+      `${runs.length} run(s) · latest ${when}${sha ? " · " + sha : ""}`;
+  }
+})();
+</script>
+</body>
+</html>
