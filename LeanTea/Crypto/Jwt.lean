@@ -195,24 +195,25 @@ def verifyRS256 (token : String) (publicKey : String) (nowSec : Nat)
         let r ← Native.rsaVerifySha256 pem signingInput.toUTF8 sigBytes
         return (r == 1 : Bool)
       else
-        -- Shell-out path: need a file for `openssl dgst -verify`.
-        let keyPath ← if isPem then do
-          let p := s!"/tmp/jwt_key_{nowSec}.pem"
-          IO.FS.writeFile p publicKey; pure p
-        else pure publicKey
-        let sigPath := s!"/tmp/jwt_sig_{nowSec}.bin"
-        let dataPath := s!"/tmp/jwt_data_{nowSec}.txt"
-        IO.FS.writeBinFile sigPath sigBytes
-        IO.FS.writeFile dataPath signingInput
-        let out ← IO.Process.output {
-          cmd := "openssl"
-          args := #["dgst", "-sha256", "-verify", keyPath,
-                    "-signature", sigPath, dataPath] }
-        let _ ← (IO.FS.removeFile sigPath).catchExceptions (fun _ => pure ())
-        let _ ← (IO.FS.removeFile dataPath).catchExceptions (fun _ => pure ())
-        if isPem then
-          let _ ← (IO.FS.removeFile keyPath).catchExceptions (fun _ => pure ())
-        return (out.exitCode == 0 && out.stdout.startsWith "Verified" : Bool))
+        -- Shell-out path: need files for `openssl dgst -verify`. Use a
+        -- unique per-call temp dir (auto-removed) rather than
+        -- `/tmp/jwt_*_{nowSec}` — the epoch-second suffix collides under
+        -- concurrent verifies and invites a symlink pre-creation attack
+        -- (CWE-377/367); the data file also carries the JWT payload.
+        IO.FS.withTempDir fun dir => do
+          let keyPath ← if isPem then do
+            let p := (dir / "key.pem").toString
+            IO.FS.writeFile p publicKey; pure p
+          else pure publicKey
+          let sigPath := (dir / "sig.bin").toString
+          let dataPath := (dir / "data.txt").toString
+          IO.FS.writeBinFile sigPath sigBytes
+          IO.FS.writeFile dataPath signingInput
+          let out ← IO.Process.output {
+            cmd := "openssl"
+            args := #["dgst", "-sha256", "-verify", keyPath,
+                      "-signature", sigPath, dataPath] }
+          return (out.exitCode == 0 && out.stdout.startsWith "Verified" : Bool))
     if !verified then
       return .error "RSA signature verify: mismatch"
     match checkClaims body opts nowSec with
