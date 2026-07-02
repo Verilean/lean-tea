@@ -1,6 +1,7 @@
 import LeanTea
 import LeanJs.Parser
 import LeanJs.TypeCheck
+import Tests.TypedRpcApi
 
 /-! # TypedRpcSpec — end-to-end typed RPC
 
@@ -21,16 +22,9 @@ same way `leanjs_spec` spawns `lean --run`. -/
 open LeanTea.LSpec
 open LeanTea.Rpc.Typed
 
-/-- The one shared definition of the wire types. -/
-structure SetCellReq where
-  ref : String
-  formula : String
-  deriving Lean.ToJson, Lean.FromJson, Repr, Inhabited
-
-structure SetCellResp where
-  ok : Bool
-  value : String
-  deriving Lean.ToJson, Lean.FromJson, Repr, Inhabited
+-- The wire types `SetCellReq` / `SetCellResp` are defined once in
+-- `Tests.TypedRpcApi` and imported here. The client type-check harness
+-- imports the same module, so there is a single definition.
 
 /-- The one endpoint that drives server + client. -/
 def setCell : Endpoint SetCellReq SetCellResp :=
@@ -47,14 +41,10 @@ private def post (path body : String) : LeanTea.Net.Http.Request :=
   { method := "POST", path, query := "", headers := #[],
     body := body.toUTF8, version := "HTTP/1.1" }
 
-/-- Client type-check harness prelude: the shared types + the endpoint
-    stub, all generated so client calls are checked against the server
-    types. -/
+/-- Client type-check harness prelude: `import` the shared types (one
+    definition, no drift) + the generated endpoint stub. -/
 private def checkPrelude : String :=
-  LeanJs.TypeCheck.asyncPreamble ++
-  "structure SetCellReq where\n  ref : String\n  formula : String\n  deriving Inhabited, Repr\n" ++
-  "structure SetCellResp where\n  ok : Bool\n  value : String\n  deriving Inhabited, Repr\n" ++
-  setCell.stubDecl ++ "\n"
+  LeanJs.TypeCheck.mkPrelude ["Tests.TypedRpcApi"] [setCell.stubDecl]
 
 private def clientOk : String :=
   "async def save(r: String, f: String) :=\n" ++

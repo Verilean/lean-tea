@@ -51,6 +51,7 @@ lean_lib Examples where
     `Tests.PureSpec,
     `Tests.AuthSpec,
     `Tests.TuiSpec,
+    `Tests.TypedRpcApi,
     `AuthIdp.Serve,
     `StateMachine.Order
   ]

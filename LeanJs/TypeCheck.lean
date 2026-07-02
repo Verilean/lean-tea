@@ -120,19 +120,45 @@ def check (prelude : String) (p : Program) : IO (Except String Unit) := do
   match emitForCheckProgram p with
   | .error e => return .error s!"emit: {e}"
   | .ok clientSrc =>
+    -- `prelude` must start with any `import` lines (Lean requires them
+    -- first), then `abbrev Async := IO` + the endpoint stubs.
     let full := prelude ++ "\n\n" ++ clientSrc ++ "\n"
     IO.FS.withTempDir fun dir => do
       let path := (dir / "client_check.lean")
       IO.FS.writeFile path full
-      -- Elaborate only (no `--run`): a clean exit means it type-checks.
-      let out ← IO.Process.output { cmd := "lean", args := #[path.toString] }
+      -- `lake env lean <file>` elaborates the file with the project's
+      -- build path set, so `import App.Api` resolves to the real
+      -- server types. A clean exit means it type-checks. We only
+      -- elaborate (no `--run`) — the emitted code is never executed.
+      let out ← IO.Process.output {
+        cmd := "lake", args := #["env", "lean", path.toString] }
       if out.exitCode == 0 then
         return .ok ()
       else
-        return .error out.stdout
+        return .error (if out.stdout.isEmpty then out.stderr else out.stdout)
 
-/-- The standard prelude preamble: the `Async` model every generated
-    stub uses. Callers append their shared types + endpoint stubs. -/
+/-! ## Prelude assembly
+
+The single-source-of-truth version: rather than re-declare the wire
+types as text (which would be a second definition that can drift), the
+prelude `import`s the module where the server's types actually live and
+lists the endpoint stubs. `import` lines must come first, so this
+builds them at the top. -/
+
+/-- Build a type-check prelude from module imports + endpoint stubs.
+    `imports` are module names (e.g. `"App.Api"`) whose `structure`s
+    the client references; `stubs` are `Endpoint.stubDecl` lines
+    (`opaque apiFoo : Req → Async Resp`). -/
+def mkPrelude (imports : List String) (stubs : List String) : String :=
+  let importLines := String.intercalate "\n" (imports.map ("import " ++ ·))
+  importLines ++ "\n\n" ++
+  "-- AUTO-GENERATED type-check harness for a LeanJs client.\n" ++
+  "abbrev Async := IO\n" ++
+  String.intercalate "\n" stubs ++ "\n"
+
+/-- Legacy preamble (inline-types style): just the `Async` model. Kept
+    for callers that supply the shared types as text. Prefer `mkPrelude`
+    with an `import` so there's a single definition of the types. -/
 def asyncPreamble : String :=
   "-- AUTO-GENERATED type-check harness for a LeanJs client.\n" ++
   "abbrev Async := IO\n"
