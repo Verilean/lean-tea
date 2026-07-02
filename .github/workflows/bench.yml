@@ -1,0 +1,232 @@
+# HTTP throughput regression tracker.
+#
+# On every push to main we boot `bench_server --reactor` and a
+# matching nginx side-by-side on the same runner, hit both with wrk,
+# and record RPS for /health, /json, /echo. The numbers are pushed
+# through `benchmark-action/github-action-benchmark` which appends
+# to `bench-data/http-bench.json` and flags regressions past
+# `alert-threshold`.
+#
+# The CI runner (ubuntu-latest, 4 vCPU) will always be slower than
+# a dev laptop; that's fine — the goal is trend tracking, not
+# absolute RPS. Both lean-tea and nginx run under identical
+# conditions on the same runner, so their ratio is meaningful even
+# when the absolute number moves.
+
+name: bench
+
+on:
+  push:
+    branches: [main]
+    # The bench job commits to bench-data/. Ignoring that path here
+    # breaks the otherwise-obvious infinite loop of every bench run
+    # pushing a change that triggers another bench run.
+    paths-ignore:
+      - 'bench-data/**'
+  workflow_dispatch:
+
+permissions:
+  deployments: write
+  contents: write
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  http-bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Elan
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Install Lean toolchain
+        run: elan default $(cat lean-toolchain)
+
+      - name: Install nginx + wrk
+        run: sudo apt-get update && sudo apt-get install -y nginx wrk
+
+      # ---- Build the bench server ----
+
+      - name: Build bench_server
+        run: lake build bench_server
+
+      # ---- Configure nginx to serve payloads matching our routes ----
+
+      - name: Configure nginx (port 9090, /health + /json)
+        run: |
+          sudo tee /etc/nginx/sites-available/leanbench.conf > /dev/null << 'CONF'
+          server {
+            listen 9090 default_server reuseport backlog=1024;
+            access_log off;
+            keepalive_timeout 65;
+            keepalive_requests 10000;
+            location /health {
+              return 200 'OK';
+              default_type text/plain;
+            }
+            location /json {
+              return 200 '{"ok":true,"count":42,"name":"lean-tea","status":"green","note":"bench"}';
+              default_type application/json;
+            }
+          }
+          CONF
+          sudo ln -sf /etc/nginx/sites-available/leanbench.conf /etc/nginx/sites-enabled/leanbench.conf
+          sudo rm -f /etc/nginx/sites-enabled/default
+          sudo nginx -t
+          sudo systemctl restart nginx
+
+      # ---- Warm up + sanity check both endpoints ----
+
+      - name: Start lean-tea reactor server
+        run: |
+          # Backend chosen via env var — same pattern application
+          # code uses through `LeanTea.Net.Backend.fromEnv`.
+          LEANTEA_HTTP_BACKEND=reactor \
+            ./.lake/build/bin/bench_server --port 8090 > /tmp/lean.log 2>&1 &
+          echo $! > /tmp/lean.pid
+          # Wait for the socket to bind.
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8090/health >/dev/null; then break; fi
+            sleep 0.3
+          done
+          curl -sf http://127.0.0.1:8090/health | grep -q OK
+          curl -sf http://127.0.0.1:9090/health | grep -q OK
+          echo "both endpoints responsive"
+
+      # ---- Actual bench: three routes × two servers ----
+      #
+      # 8 wrk threads, 128 keep-alive connections, 15 s per route.
+      # Emits an integer RPS per run. Longer runs give more stable
+      # numbers on the noisy CI runner.
+
+      - name: Run wrk (lean-tea reactor) — /health /json /echo
+        id: bench_lean
+        run: |
+          set -euo pipefail
+          bench() {
+            local url=$1
+            local script=$2
+            if [ -n "$script" ]; then
+              wrk -t8 -c128 -d15s -s "$script" "$url" 2>&1
+            else
+              wrk -t8 -c128 -d15s "$url" 2>&1
+            fi | awk '/Requests\/sec:/ {print int($2); exit}'
+          }
+          cat > /tmp/post_echo.lua << 'LUA'
+          wrk.method = "POST"
+          wrk.body = "hello"
+          wrk.headers["Content-Type"] = "application/octet-stream"
+          LUA
+          LEAN_HEALTH=$(bench http://127.0.0.1:8090/health "")
+          LEAN_JSON=$(bench http://127.0.0.1:8090/json "")
+          LEAN_ECHO=$(bench http://127.0.0.1:8090/echo /tmp/post_echo.lua)
+          echo "lean_health=$LEAN_HEALTH"  >> $GITHUB_OUTPUT
+          echo "lean_json=$LEAN_JSON"      >> $GITHUB_OUTPUT
+          echo "lean_echo=$LEAN_ECHO"      >> $GITHUB_OUTPUT
+          echo "-- lean-tea reactor --"
+          echo "  /health: $LEAN_HEALTH RPS"
+          echo "  /json:   $LEAN_JSON RPS"
+          echo "  /echo:   $LEAN_ECHO RPS"
+
+      - name: Run wrk (nginx) — /health /json  (no /echo — nginx has no echo)
+        id: bench_nginx
+        run: |
+          set -euo pipefail
+          bench() {
+            wrk -t8 -c128 -d15s "$1" 2>&1 | awk '/Requests\/sec:/ {print int($2); exit}'
+          }
+          NGX_HEALTH=$(bench http://127.0.0.1:9090/health)
+          NGX_JSON=$(bench http://127.0.0.1:9090/json)
+          echo "nginx_health=$NGX_HEALTH" >> $GITHUB_OUTPUT
+          echo "nginx_json=$NGX_JSON"     >> $GITHUB_OUTPUT
+          echo "-- nginx --"
+          echo "  /health: $NGX_HEALTH RPS"
+          echo "  /json:   $NGX_JSON RPS"
+
+      - name: Assemble bench-data JSON for benchmark-action
+        run: |
+          set -euo pipefail
+          # `customBiggerIsBetter` expects a JSON array of
+          # {name, unit, value}. We emit one entry per (server, route)
+          # so github-action-benchmark can chart each independently.
+          # Ratio entries let us also chart parity vs nginx.
+          LH=${{ steps.bench_lean.outputs.lean_health }}
+          LJ=${{ steps.bench_lean.outputs.lean_json }}
+          LE=${{ steps.bench_lean.outputs.lean_echo }}
+          NH=${{ steps.bench_nginx.outputs.nginx_health }}
+          NJ=${{ steps.bench_nginx.outputs.nginx_json }}
+          python3 - <<PYEOF > http-bench-results.json
+          import json
+          def pct(a, b):
+              # Guard against zero nginx (setup failure); avoid ZeroDivisionError.
+              return int(round(a * 100.0 / b)) if b else 0
+          LH, LJ, LE = int("${LH}"), int("${LJ}"), int("${LE}")
+          NH, NJ     = int("${NH}"), int("${NJ}")
+          data = [
+            {"name": "lean-tea reactor /health", "unit": "RPS", "value": LH},
+            {"name": "lean-tea reactor /json",   "unit": "RPS", "value": LJ},
+            {"name": "lean-tea reactor /echo",   "unit": "RPS", "value": LE},
+            {"name": "nginx /health",            "unit": "RPS", "value": NH},
+            {"name": "nginx /json",              "unit": "RPS", "value": NJ},
+            {"name": "lean-tea/nginx /health %", "unit": "%",   "value": pct(LH, NH)},
+            {"name": "lean-tea/nginx /json %",   "unit": "%",   "value": pct(LJ, NJ)},
+          ]
+          print(json.dumps(data, indent=2))
+          PYEOF
+          echo "--- http-bench-results.json ---"
+          cat http-bench-results.json
+
+      # ---- Persist + regression-alert ----
+      #
+      # `benchmark-action/github-action-benchmark@v1` with
+      # `external-data-json-path` appends this run's entries to a
+      # local JSON file and compares each against history.
+      # `alert-threshold: 80%` means: if the current RPS drops below
+      # 80% of the previous best, the step logs a warning. Set
+      # `fail-on-alert: true` once the numbers stabilise.
+
+      - name: Store benchmark result (local JSON, tracked in repo)
+        uses: benchmark-action/github-action-benchmark@v1
+        if: github.event_name == 'push'
+        with:
+          name: HTTP throughput (lean-tea reactor vs nginx)
+          tool: customBiggerIsBetter
+          output-file-path: http-bench-results.json
+          external-data-json-path: bench-data/http-bench.json
+          alert-threshold: "80%"
+          fail-on-alert: false
+          auto-push: false
+          # No gh-pages branch — the JSON is committed to main so
+          # anyone reviewing PRs can eyeball the trend.
+
+      - name: Commit updated bench-data
+        if: github.event_name == 'push'
+        run: |
+          if [ -n "$(git status --porcelain bench-data)" ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add bench-data/http-bench.json
+            git commit -m "bench: append http throughput result [skip ci]"
+            git push
+          else
+            echo "no bench-data change to commit"
+          fi
+
+      # ---- Teardown ----
+
+      - name: Stop lean-tea server + dump log
+        if: always()
+        run: |
+          if [ -f /tmp/lean.pid ]; then
+            kill "$(cat /tmp/lean.pid)" 2>/dev/null || true
+          fi
+          echo "--- lean-tea server log ---"
+          cat /tmp/lean.log 2>/dev/null || echo "(no log)"

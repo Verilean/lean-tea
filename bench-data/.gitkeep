@@ -1,0 +1,2 @@
+# HTTP throughput history — populated by .github/workflows/bench.yml.
+# benchmark-action/github-action-benchmark writes http-bench.json here.
