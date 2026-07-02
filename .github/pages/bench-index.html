@@ -47,9 +47,16 @@ measured on the same CI runner in the same job (see
     charts.innerHTML = "<p>No benchmark data yet — the chart appears after the first <code>bench</code> run on <code>main</code>.</p>";
     return;
   }
-  // One suite ("HTTP throughput …"); take the first.
-  const suite = Object.keys(bd.entries)[0];
-  const runs = bd.entries[suite] || [];
+  // Pick the suite with the most recent data. github-action-benchmark
+  // keys `entries` by the suite `name`, so renaming the suite (as when
+  // the bench added more backends) leaves a stale suite behind. Taking
+  // the freshest one is robust to that — always show the latest config.
+  let suite = null, newest = -Infinity;
+  for (const [name, rs] of Object.entries(bd.entries)) {
+    const t = rs.length ? rs[rs.length - 1].date : 0;
+    if (t > newest) { newest = t; suite = name; }
+  }
+  const runs = (suite && bd.entries[suite]) || [];
   const labels = runs.map(r => new Date(r.date).toLocaleDateString(undefined,
     { month: "short", day: "numeric" }));
 
