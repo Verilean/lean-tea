@@ -85,6 +85,14 @@ static void buf_free(buf_t *b) {
 /* Per-connection state                                          */
 /* ------------------------------------------------------------ */
 
+/* Request-size limits. Without these a client can pin unbounded memory:
+   a giant Content-Length, or a stream that never sends the header
+   terminator, makes `inbuf` grow until the process is OOM-killed. Both
+   caps are generous for an HTTP/1.1 API server; bump if you proxy large
+   uploads (and add streaming so you don't buffer them whole). */
+#define LEANTEA_MAX_HEADER  (64u * 1024u)          /* 64 KB of headers   */
+#define LEANTEA_MAX_REQUEST (8u * 1024u * 1024u)   /* 8 MB total request */
+
 typedef struct conn_s {
     int fd;
     buf_t inbuf;        /* accumulated recv bytes for the current request */
@@ -92,6 +100,7 @@ typedef struct conn_s {
     size_t out_sent;    /* how many bytes of outbuf we've already written  */
     bool want_close;    /* set once we've decided this is the last request */
     bool writing;       /* whether we're currently mid-write on this fd    */
+    bool closing;       /* marked by conn_close; freed at end of the batch */
 } conn_t;
 
 static conn_t *conn_new(int fd) {
@@ -119,12 +128,23 @@ typedef struct reactor_s {
     lean_object *handler;     /* Lean closure  ByteArray -> IO ByteArray */
     pthread_t    thread;
     atomic_int   stop;
+    /* Deferred-free list. A connection closed mid-batch cannot be freed
+       immediately: the same fd may have another ready event later in the
+       same kevent()/epoll_wait() result array (e.g. READ and WRITE both
+       fired), and dereferencing the freed `conn_t*` there is a
+       use-after-free. Instead conn_close() marks the conn `closing` and
+       parks it here; reactor_reap() frees the list once per batch, after
+       every event has been dispatched. */
+    conn_t     **dead;
+    size_t       dead_len;
+    size_t       dead_cap;
 } reactor_t;
 
 /* Forward decls */
 static void reactor_watch_read (reactor_t *r, int fd, void *udata);
 static void reactor_watch_write(reactor_t *r, int fd, void *udata);
 static void reactor_unwatch    (reactor_t *r, int fd);
+static void conn_free(conn_t *c);
 
 /* ------------------------------------------------------------ */
 /* Utility: non-blocking on a socket                             */
@@ -215,6 +235,11 @@ static long parse_content_length(const uint8_t *buf, size_t hdr_len) {
         while (p < hdr_len && (buf[p] == ' ' || buf[p] == '\t')) p++;
         long v = 0;
         while (p < hdr_len && buf[p] >= '0' && buf[p] <= '9') {
+            /* Saturate instead of overflowing. Signed overflow is UB in
+               C, and an attacker fully controls these digits. Once we're
+               past the request cap the exact value no longer matters —
+               conn_process rejects it. */
+            if (v > (long)LEANTEA_MAX_REQUEST) return (long)LEANTEA_MAX_REQUEST + 1;
             v = v * 10 + (buf[p] - '0');
             p++;
         }
@@ -264,9 +289,28 @@ static lean_obj_res invoke_handler(lean_object *h, const uint8_t *req, size_t re
 /* Per-connection event handling                                 */
 /* ------------------------------------------------------------ */
 
+/* Mark a connection for teardown. Deferred, not immediate — see the
+   `dead` list comment on reactor_t. Idempotent: a conn already closing
+   is left alone (it's already on the dead list). */
 static void conn_close(reactor_t *r, conn_t *c) {
+    if (c->closing) return;
+    c->closing = true;
     reactor_unwatch(r, c->fd);
-    conn_free(c);
+    if (r->dead_len == r->dead_cap) {
+        size_t nc = r->dead_cap ? r->dead_cap * 2 : 16;
+        conn_t **p = (conn_t **)realloc(r->dead, nc * sizeof(conn_t *));
+        if (!p) { conn_free(c); return; }  /* OOM: free now, best effort */
+        r->dead = p; r->dead_cap = nc;
+    }
+    r->dead[r->dead_len++] = c;
+}
+
+/* Free every connection parked by conn_close during this batch. Called
+   once, after all events in a kevent()/epoll_wait() result have been
+   dispatched, so no dangling pointer survives into a later iteration. */
+static void reactor_reap(reactor_t *r) {
+    for (size_t i = 0; i < r->dead_len; i++) conn_free(r->dead[i]);
+    r->dead_len = 0;
 }
 
 /* Try to drain outbuf via non-blocking send.
@@ -297,10 +341,18 @@ static int conn_process(reactor_t *r, conn_t *c) {
     int handled = 0;
     for (;;) {
         ssize_t hdr_end = find_header_end(c->inbuf.data, c->inbuf.len);
-        if (hdr_end < 0) return handled;
+        if (hdr_end < 0) {
+            /* Headers not complete yet. Bound how long we'll wait for the
+               terminator so a client that never sends "\r\n\r\n" can't
+               grow inbuf without limit (slowloris / header flood). */
+            if (c->inbuf.len > LEANTEA_MAX_HEADER) return -1;
+            return handled;
+        }
         long cl = parse_content_length(c->inbuf.data, (size_t)hdr_end);
         if (cl < 0) cl = 0;
         size_t need = (size_t)hdr_end + (size_t)cl;
+        /* Reject an over-large request rather than buffer it whole. */
+        if (need > LEANTEA_MAX_REQUEST) return -1;
         if (c->inbuf.len < need) return handled;
 
         /* We have one full request in [0, need). Invoke Lean. */
@@ -421,10 +473,14 @@ static void reactor_loop(reactor_t *r) {
                 on_accept(r);
             } else if (ud) {
                 conn_t *c = (conn_t *)ud;
+                /* Skip a conn already closed earlier in this batch — its
+                   READ and WRITE events can arrive as separate entries. */
+                if (c->closing) continue;
                 if (evs[i].filter == EVFILT_READ)  on_readable(r, c);
-                if (evs[i].filter == EVFILT_WRITE) on_writable(r, c);
+                if (!c->closing && evs[i].filter == EVFILT_WRITE) on_writable(r, c);
             }
         }
+        reactor_reap(r);
     }
 }
 #endif
@@ -444,10 +500,15 @@ static void reactor_loop(reactor_t *r) {
                 on_accept(r);
             } else {
                 conn_t *c = (conn_t *)ud;
+                /* A conn closed earlier in this batch is on the dead list,
+                   not yet freed — skip it (and guard between the two
+                   dispatches below: on_readable may close it). */
+                if (c->closing) continue;
                 if (evs[i].events & EPOLLIN)  on_readable(r, c);
-                if (evs[i].events & EPOLLOUT) on_writable(r, c);
+                if (!c->closing && (evs[i].events & EPOLLOUT)) on_writable(r, c);
             }
         }
+        reactor_reap(r);
     }
 }
 #endif
@@ -532,6 +593,8 @@ LEAN_EXPORT lean_obj_res lean_reactor_run(uint16_t port,
     reactor_loop(r);
 
     /* Not really reachable in normal ops. */
+    reactor_reap(r);        /* free any conns parked in the final batch */
+    free(r->dead);
     close(r->listen_fd);
     close(r->poll_fd);
     free(r);

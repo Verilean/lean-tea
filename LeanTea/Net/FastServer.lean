@@ -70,6 +70,13 @@ hand; then we split off the current request, keep the tail as
 `leftover` for the next iteration, and call the handler. Same shape
 as `Std.Async.TCP` server, just without the async hop. -/
 
+/-- Header section cap (64 KB) and total-request cap (8 MB). Without
+    these a client can pin unbounded memory — a huge Content-Length, or
+    headers that never terminate — since `acc` grows on every recv. Same
+    limits the reactor's C path enforces. -/
+private def maxHeaderBytes : Nat := 64 * 1024
+private def maxRequestBytes : Nat := 8 * 1024 * 1024
+
 private partial def readOneRequest (fd : UInt32) (acc : ByteArray)
     : IO (Option (ByteArray × ByteArray)) := do
   match splitHeaders acc with
@@ -80,8 +87,10 @@ private partial def readOneRequest (fd : UInt32) (acc : ByteArray)
         let v := (rest.takeWhile (· != '\r')).toString.trim
         v.toNat?.getD 0
       | _ => 0
+    let headBytes := headersStr.toUTF8
+    -- Reject an over-large request rather than buffer it whole.
+    if headBytes.size + 4 + cl > maxRequestBytes then return none
     if bodySoFar.size ≥ cl then
-      let headBytes := headersStr.toUTF8
       let sep : ByteArray := ⟨#[0x0d, 0x0a, 0x0d, 0x0a]⟩
       let headEnd := headBytes.size + sep.size
       let reqEnd := headEnd + cl
@@ -91,6 +100,9 @@ private partial def readOneRequest (fd : UInt32) (acc : ByteArray)
       if chunk.size == 0 then return none
       readOneRequest fd (acc ++ chunk)
   | none =>
+    -- No header terminator yet. Bound the wait so a client that never
+    -- sends "\r\n\r\n" can't grow `acc` without limit (slowloris).
+    if acc.size > maxHeaderBytes then return none
     let chunk ← recvBytes fd 8192
     if chunk.size == 0 then return none
     readOneRequest fd (acc ++ chunk)
