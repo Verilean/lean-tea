@@ -132,12 +132,13 @@ def extractCredential (attestationObj : ByteArray) (rpId : String)
   --   * Hand credPubKey (raw CBOR bytes) to a tiny converter that
   --     emits PEM via `openssl`.
   --
-  -- For demonstration we accept the data as-is and let the caller
-  -- pre-process via a Node-side helper (which most WebAuthn SDKs
-  -- already provide), so this Lean code stays small.
-  IO.FS.writeBinFile "/tmp/passkey_attest.cbor" attestationObj
-  -- Production: shell out to `cose-key-to-pem` or similar.
-  -- Here we surface that the caller must preprocess.
+  -- For demonstration we let the caller pre-process via a Node-side
+  -- helper (which most WebAuthn SDKs already provide), so this Lean
+  -- code stays small. We intentionally do NOT persist `attestationObj`
+  -- to a temp file — it's attacker-controlled and this stub errors out
+  -- regardless, so a write would only be a predictable-path clobber
+  -- vector for no functional gain.
+  let _ := attestationObj
   return .error "Passkey.extractCredential: CBOR/COSE preprocessing required (use a JS helper)."
 
 /-! ## Verify registration -/
@@ -216,20 +217,23 @@ def verifyAuthentication (req : AuthenticateRequest)
                   signedBytes req.signature
         return (r == 1 : Bool)
       else
-        let pkPath  := "/tmp/passkey_pub.pem"
-        let sigPath := "/tmp/passkey_sig.bin"
-        let dataPath := "/tmp/passkey_signed.bin"
-        IO.FS.writeFile pkPath req.stored.publicKeyPem
-        IO.FS.writeBinFile sigPath req.signature
-        IO.FS.writeBinFile dataPath signedBytes
-        let out ← IO.Process.output {
-          cmd := "openssl"
-          args := #["dgst", "-sha256", "-verify", pkPath,
-                    "-signature", sigPath, dataPath] }
-        let _ ← (IO.FS.removeFile pkPath).catchExceptions (fun _ => pure ())
-        let _ ← (IO.FS.removeFile sigPath).catchExceptions (fun _ => pure ())
-        let _ ← (IO.FS.removeFile dataPath).catchExceptions (fun _ => pure ())
-        return (out.exitCode == 0 && out.stdout.startsWith "Verified" : Bool))
+        -- Unique per-call temp dir (auto-removed). The old fixed
+        -- `/tmp/passkey_*` paths let concurrent verifications clobber
+        -- each other's files — so one login could verify against
+        -- another's key/signature — and invited a symlink pre-creation
+        -- attack (CWE-377).
+        IO.FS.withTempDir fun dir => do
+          let pkPath  := (dir / "pub.pem").toString
+          let sigPath := (dir / "sig.bin").toString
+          let dataPath := (dir / "signed.bin").toString
+          IO.FS.writeFile pkPath req.stored.publicKeyPem
+          IO.FS.writeBinFile sigPath req.signature
+          IO.FS.writeBinFile dataPath signedBytes
+          let out ← IO.Process.output {
+            cmd := "openssl"
+            args := #["dgst", "-sha256", "-verify", pkPath,
+                      "-signature", sigPath, dataPath] }
+          return (out.exitCode == 0 && out.stdout.startsWith "Verified" : Bool))
     if !verified then
       return .error "signature verify failed"
     return .ok counter

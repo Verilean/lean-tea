@@ -12,11 +12,11 @@ directory and the `/api/step` endpoint that the english app uses.
 Not a general-purpose web server.
 
 Limitations:
-* connection: close after every response (no keep-alive)
-* request body capped at 1 MB
 * no chunked encoding, no compression
-* request handling is sequential (single-threaded accept loop) — fine
-  for a personal app on localhost. -/
+* request size capped (64 KB headers, 8 MB total) — enforced in each
+  server backend's read loop (`Server`, `FastServer`, `ReactorServer`),
+  not here, so oversize requests are dropped before a `Request` is
+  built. Bump the caps there if you proxy large uploads. -/
 
 namespace LeanTea.Net.Http
 

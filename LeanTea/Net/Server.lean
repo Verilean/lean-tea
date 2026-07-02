@@ -45,6 +45,12 @@ private structure RecvResult where
       segment" common case). -/
   leftover : ByteArray
 
+/-- Header section cap (64 KB) and total-request cap (8 MB). Without
+    these a client can pin unbounded memory (giant Content-Length, or
+    headers that never terminate). Mirrors the FFI backends' limits. -/
+private def maxHeaderBytes : Nat := 64 * 1024
+private def maxRequestBytes : Nat := 8 * 1024 * 1024
+
 private partial def recvUntilRequest (client : Socket.Client) (acc : ByteArray)
     : IO (Option RecvResult) := do
   match splitHeaders acc with
@@ -55,6 +61,7 @@ private partial def recvUntilRequest (client : Socket.Client) (acc : ByteArray)
         let v := (rest.takeWhile (· != '\r')).toString.trim
         v.toNat?.getD 0
       | _ => 0
+    if headersStr.toUTF8.size + 4 + cl > maxRequestBytes then return none
     if bodySoFar.size ≥ cl then
       -- We have this request. Split: headers + first `cl` body bytes → reqBytes;
       -- the rest → leftover for the next iteration.
@@ -71,6 +78,9 @@ private partial def recvUntilRequest (client : Socket.Client) (acc : ByteArray)
       | some b => recvUntilRequest client (acc ++ b)
       | none   => return none  -- EOF mid-request → give up
   | none =>
+    -- Bound the header wait so a client that never sends "\r\n\r\n"
+    -- can't grow `acc` without limit (slowloris).
+    if acc.size > maxHeaderBytes then return none
     let chunk ← (client.recv? 4096).block
     match chunk with
     | some b => recvUntilRequest client (acc ++ b)

@@ -167,4 +167,60 @@ def dispatchAuthorized
       | .error e => return Response.text 403 s!"forbidden: {e}"
   fallback req
 
+/-! ## Making "forgot to protect a route" unrepresentable
+
+`AuthRoute` + `dispatchAuthorized` enforce authorization on the routes
+you *choose* to wrap — but nothing stops an app from routing
+`/admin` through a plain `Handler` that never mentions a `Proof`. The
+mistake isn't a wrong capability; it's a route added with *no*
+capability at all.
+
+`SecureRoute` closes that within a router: every entry must be
+**either** `.needs c` (proof enforced, handler demands `Proof c`) **or**
+`.anyone` (explicitly public). There is no third "unstated" case — you
+can't add a route without picking one, so a forgotten guard is a
+compile-time hole, and a deliberately-open endpoint is a single
+greppable `.anyone`.
+
+This makes protection non-omittable *inside* `dispatchSecure`. It
+can't force an app to build its top-level handler this way — that's a
+convention — but combined with "route everything through
+`dispatchSecure`" it turns the most common authz mistake (an endpoint
+that simply forgot the check) into a visible, reviewable decision. -/
+
+/-- A route that is forced to declare its access level. -/
+inductive SecureRoute where
+  /-- Requires capability `c`. The handler takes `Proof c`, so dropping
+      the proof is a compile error (as with `AuthRoute`). -/
+  | needs   : (c : Capability) → AuthRoute c → SecureRoute
+  /-- Deliberately public. No proof, but the openness is explicit in the
+      source and greppable in review — not an accident of omission. -/
+  | anyone  : (path : String) → (method : String) →
+              (Request → IO Response) → SecureRoute
+
+/-- Build an always-open route with the method defaulting to GET. -/
+def SecureRoute.get (path : String) (h : Request → IO Response) : SecureRoute :=
+  .anyone path "GET" h
+
+/-- Dispatch a `List SecureRoute`. Protected entries run `Proof.issue`
+    and 403 on failure; public entries run directly. Because every
+    element committed to `.needs` or `.anyone` at construction, this
+    router has no unguarded-by-omission path. -/
+def dispatchSecure
+    (auth : AuthStore) (resolveRole : Session → Capability)
+    (routes : List SecureRoute)
+    (fallback : Request → IO Response := fun _ => return Response.notFound)
+    : Request → IO Response := fun req => do
+  for sr in routes do
+    match sr with
+    | .needs c r =>
+      if r.path == req.path && r.method == req.method then
+        match ← Proof.issue auth req c resolveRole with
+        | .ok p    => return ← r.handler p req
+        | .error e => return Response.text 403 s!"forbidden: {e}"
+    | .anyone path method h =>
+      if path == req.path && method == req.method then
+        return ← h req
+  fallback req
+
 end LeanTea.Auth.Proof

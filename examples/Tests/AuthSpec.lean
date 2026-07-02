@@ -192,7 +192,58 @@ def run : IO LSpec := do
   let id2 := buildResponse { assertionId := "_bbb" }
   let parsedId1 := parseResponse id1
   let parsedId2 := parseResponse id2
+  /- 4. Signature-wrapping (XSW) payloads for `checkNoWrapping`. -/
+  let sigFor := fun (id : String) =>
+    s!"<ds:Signature><ds:SignedInfo><ds:Reference URI=\"#{id}\"></ds:Reference>" ++
+    "</ds:SignedInfo></ds:Signature>"
+  -- One assertion, signed, self-referencing → accepted.
+  let signedOk :=
+    (buildResponse { assertionId := "_a1" }).replace
+      "</saml:Assertion>" (sigFor "_a1" ++ "</saml:Assertion>")
+  -- Wrapping: a forged unsigned assertion first, the real signed one
+  -- second. `parseResponse` reads identity from the FIRST — the guard
+  -- must reject on the assertion count (2).
+  let evilAssert :=
+    "<saml:Assertion ID=\"_evil\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\">" ++
+    "<saml:Subject><saml:NameID>attacker@evil.com</saml:NameID></saml:Subject>" ++
+    "</saml:Assertion>"
+  let realAssert :=
+    (buildResponse { assertionId := "_a1", subjectEmail := "alice@example.com" }
+      |>.replace "<samlp:Response xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\">" ""
+      |>.replace "</samlp:Response>" "")
+      |>.replace "</saml:Assertion>" (sigFor "_a1" ++ "</saml:Assertion>")
+  let wrapped :=
+    "<samlp:Response xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\">" ++
+    evilAssert ++ realAssert ++ "</samlp:Response>"
+  -- One assertion but the signature references a different id → reject.
+  let wrongRef :=
+    (buildResponse { assertionId := "_a1" }).replace
+      "</saml:Assertion>" (sigFor "_other" ++ "</saml:Assertion>")
+  -- Unsigned single assertion → reject (no <Signature>).
+  let unsigned := buildResponse { assertionId := "_a1" }
+  let guard := fun (xml : String) =>
+    match parseResponse xml with
+    | .ok a => match LeanTea.Auth.Saml.checkNoWrapping xml a with
+               | .ok _ => true | .error _ => false
+    | .error _ => false
   return group "SAML 2.0 fixture round-trip" [
+    group "signature-wrapping (XSW) guard" [
+      it "single signed self-referencing assertion is accepted"
+        (guard signedOk),
+      it "two-assertion wrapping payload is rejected"
+        (!(guard wrapped)),
+      it "wrapped payload parses to the forged (first) assertion"
+        (match parseResponse wrapped with
+         | .ok a => a.id == "_evil" | .error _ => false),
+      it "signature referencing a different id is rejected"
+        (!(guard wrongRef)),
+      it "unsigned assertion is rejected"
+        (!(guard unsigned)),
+      it "assertionCount sees exactly one in a normal response"
+        (LeanTea.Auth.Saml.assertionCount signedOk == 1),
+      it "assertionCount sees two in a wrapping payload"
+        (LeanTea.Auth.Saml.assertionCount wrapped == 2)
+    ],
     group "default fixture parses cleanly" [
       it "ok return"
         (match parsedOk with | .ok _ => true | .error _ => false),

@@ -26,10 +26,20 @@ namespace LeanTea.Crypto.Password
 
 open LeanTea.Crypto
 
-/-! ## Constants. Iteration count is conservative for our pure-Lean
-    PBKDF2 — production should raise it to 100k+ if hardware allows. -/
+/-! ## Constants
 
-def defaultIterations : Nat := 20000
+`defaultIterations` is the PBKDF2-HMAC-SHA256 work factor. 20 000 was
+too weak (OWASP's 2023 floor is 600 000). We raise the default to
+100 000 — a meaningful strengthening that the pure-Lean PBKDF2 can
+still verify in a login-acceptable time.
+
+For a production deployment that can afford it, pass a higher
+`iterations` to `hash` (the count is stored in the hash string, so
+`verify` and `needsRehash` pick it up automatically) and enable the
+native libcrypto backend (`LEANTEA_CRYPTO=1`) so `PKCS5_PBKDF2_HMAC`
+does the work at OWASP's 600 000 without a pure-Lean CPU cost. -/
+
+def defaultIterations : Nat := 100000
 def saltLen : Nat := 16
 def hashLen : Nat := 32
 
