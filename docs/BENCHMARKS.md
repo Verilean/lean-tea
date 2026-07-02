@@ -227,8 +227,12 @@ of that. Both belong in the framework; pick by workload.
 2. Hits both with `wrk -t8 -c128 -d15s` on `/health` + `/json`
    (plus `/echo` on lean-tea).
 3. Feeds the results to
-   [`benchmark-action/github-action-benchmark`](https://github.com/benchmark-action/github-action-benchmark)
-   which appends to `bench-data/http-bench.json` in the repo.
+   [`benchmark-action/github-action-benchmark`](https://github.com/benchmark-action/github-action-benchmark),
+   which appends to the history and regenerates the trend chart on the
+   **`gh-pages` branch** (under `bench/`) — off `main`, so the JSON
+   never lands in the source history. The pages workflow folds that
+   into the deployed docs site, so the live chart is served at
+   **`<pages-url>/bench/`**.
 4. If any run drops below 80 % of the previous best, the job flags
    the regression (`fail-on-alert: false` for now — flip once the
    trend is boring).
