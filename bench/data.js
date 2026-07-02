@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1782970125326,
+  "lastUpdate": 1782972464064,
   "repoUrl": "https://github.com/Verilean/lean-tea",
   "entries": {
     "HTTP throughput (lean-tea reactor vs nginx)": [
@@ -198,6 +198,85 @@ window.BENCHMARK_DATA = {
           {
             "name": "nginx /json",
             "value": 104302,
+            "unit": "RPS"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "junjihashimoto@users.noreply.github.com",
+            "name": "junji hashimoto",
+            "username": "junjihashimoto"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ee8661150c8a81ca9cdb6c4f11060af1ce5c2859",
+          "message": "Merge pull request #10 from Verilean/fix/bench-chart-suite\n\nfix(bench): chart was showing a stale suite — multi-loop reactor was hidden",
+          "timestamp": "2026-07-02T15:04:27+09:00",
+          "tree_id": "15151d3d6359dc471d56c4f6576f5950d8cbc972",
+          "url": "https://github.com/Verilean/lean-tea/commit/ee8661150c8a81ca9cdb6c4f11060af1ce5c2859"
+        },
+        "date": 1782972463560,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "lean-tea libuv /health",
+            "value": 2820,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /json",
+            "value": 2707,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /echo",
+            "value": 2809,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /health",
+            "value": 88948,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /json",
+            "value": 90237,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /echo",
+            "value": 72227,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /health",
+            "value": 107828,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /json",
+            "value": 107731,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /echo",
+            "value": 85368,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /health",
+            "value": 121377,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /json",
+            "value": 105848,
             "unit": "RPS"
           }
         ]
