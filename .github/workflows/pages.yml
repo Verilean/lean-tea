@@ -55,15 +55,23 @@ jobs:
           ./.lake/build/bin/gen_site
           ls -la docs-site/
 
-      # The bench workflow publishes its history + trend chart to the
-      # `gh-pages` branch under `bench/` (keeping the JSON off main).
-      # Fold that into the deployed site so the live chart is served at
-      # `<pages-url>/bench/`. Non-fatal before the first bench run.
+      # The bench workflow publishes its history to the `gh-pages`
+      # branch under `bench/` (keeping the JSON off main). Fold that into
+      # the deployed site so the live chart is served at
+      # `<pages-url>/bench/`. We keep the action's `data.js` but replace
+      # its generated `index.html` with our own chart, which groups the
+      # series **by endpoint** (lean-tea vs nginx on one graph each) —
+      # the action's default renders one single-line graph per series,
+      # which is hard to compare. Non-fatal before the first bench run.
       - name: Include benchmark chart from gh-pages
         run: |
           if git fetch origin gh-pages --depth=1 2>/dev/null; then
             git archive origin/gh-pages bench 2>/dev/null | tar -x -C docs-site || \
               echo "no bench/ on gh-pages yet"
+            if [ -f docs-site/bench/data.js ]; then
+              cp .github/pages/bench-index.html docs-site/bench/index.html
+              echo "replaced bench chart with per-endpoint view"
+            fi
             ls -la docs-site/bench 2>/dev/null || true
           else
             echo "gh-pages branch does not exist yet — skipping bench chart"
