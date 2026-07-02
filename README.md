@@ -17,8 +17,10 @@ Questions, design discussion, and weekly progress threads live in the Discord ch
   build helpers in `tools/`).
 - **SQLite is vendored** — `c/sqlite3.c` is the amalgamation, linked
   into the binary, so deployment doesn't need `-lsqlite3`.
-- The browser only ever sees plain HTML + one inlined JS file
-  (Web Speech API is the only external browser API used).
+- The browser sees plain HTML + inlined CSS, plus one small runtime
+  JS file served from the same origin (`/runtime.js`). Beyond the
+  standard `fetch` / History / DOM APIs any SPA needs, the Web Speech
+  API is the only domain-specific browser API used.
 - **Matches (slightly beats) tuned nginx** on hello-world / 5-field
   JSON: the `LeanTea.Net.ReactorServer` backend is a
   `c/leantea_reactor.c` non-blocking event loop
@@ -63,7 +65,7 @@ and ports them into Lean 4:
 ## Secure by Construction
 
 LeanTEA's headline property is that whole classes of vulnerabilities
-**can't be expressed in user code that compiles**. **Eight primitives
+**can't be expressed in user code that compiles**. **Nine primitives
 ship today**; one more is planned. The shipped set covers most of
 the IPA 「安全なウェブサイトの作り方」 11 categories and OWASP Top 10
 2021. See [SECURITY.md](SECURITY.md) for the design + threat model,
@@ -80,6 +82,7 @@ and [ROADMAP.md](ROADMAP.md) for sequencing.
 | HTTP header injection | `Response.setHeader` (CR / LF / NUL reject) | IPA §3.6 / A03 | ✅ shipped — [walk](docs/11-secure-by-construction.md#7--responsesetheader--defaultsecurityheaders--header-injection--clickjacking) · [demo](examples/Tests/SecuritySpec.lean) |
 | Clickjacking + MIME sniffing | `Response.defaultSecurityHeaders` (XFO / nosniff / Referrer-Policy / Permissions-Policy) | IPA §3.10 / A05 | ✅ shipped — [walk](docs/11-secure-by-construction.md#7--responsesetheader--defaultsecurityheaders--header-injection--clickjacking) · [demo](examples/Tests/SecuritySpec.lean) |
 | Open redirect | `LeanTea.Net.SafeRedirect` (allow-listed origin + relative-path-only mode + scheme reject + sibling-prefix reject) | IPA §3.9 / A01 | ✅ shipped — [walk](docs/11-secure-by-construction.md#8--saferedirect--open-redirect-that-needs-an-allow-list) · [demo](examples/Tests/SecuritySpec.lean) |
+| CSP typos / misconfiguration | `LeanTea.Net.Csp` (typed `CspSrc` directives — a mistyped source or directive doesn't compile) | IPA §3.5 / A05 | ✅ shipped — [demo](examples/Tests/SecuritySpec.lean) |
 | Invalid state transitions | `OrderState` / `Transition s s'` style proofs | — | 🚧 planned |
 
 ### Snippet — `SafeQuery` rejects string-shaped SQL at compile time
@@ -113,9 +116,15 @@ The proof's `mk` is `private` to the auth module — only `Proof.issue`
 (which checks the session) can mint one. Forgetting the auth check
 is now a build failure, not a CVE.
 
+To close the "added a route but forgot to guard it at all" gap,
+collect routes as a `SecureRoute` list: every entry must be either
+`.needs c` (proof enforced) or `.anyone` (explicitly public). There's
+no unstated third case, so an unguarded endpoint is a visible,
+greppable `.anyone` rather than an accidental omission.
+
 For the full walk-through (capability lattice, dependent
 `Proof (.owner id)`, the `.trusted decl_name%` audit-grep escape, the
-~480-LOC trusted core across all eight primitives), see
+~480-LOC trusted core across the shipped primitives), see
 **[docs/11-secure-by-construction.md](docs/11-secure-by-construction.md)**.
 
 ## Layout
@@ -337,10 +346,11 @@ Tools exposed:
 When wiring this into Claude Desktop / Claude Code, point its MCP
 client at `transport: "http"`, `url: "http://localhost:8002/mcp"`.
 
-## Typed RPC (Servant-style)
+## Shared-endpoint RPC (Servant-inspired)
 
-Both the browser side and the server side read a single source of
-truth (`examples/Sheet/Api.lean`):
+The server and the generated browser client share one `Endpoint`
+declaration (`LeanTea.Rpc`), so a path / method / parameter set is
+written once:
 
 ```lean
 def setCell : Endpoint := {
@@ -350,12 +360,17 @@ def setCell : Endpoint := {
 }
 ```
 
-The server is wired via `Rpc.chainWith SheetRpc.routes (fallback)`
-to dispatch path + method to a typed `Handler : List String → IO String`.
-The browser gets the matching `async function apiSetCell(ref, formula)`
-auto-generated from `Rpc.clientLib SheetRpc.all` and prepended to
-the `<script>` block. Drop an endpoint here and both sides update
-together.
+`Rpc.chainWith routes fallback` dispatches path + method to a
+`Handler`, and `Rpc.clientLib endpoints` auto-generates the matching
+`async function apiSetCell(...)` prepended to the `<script>` block —
+so adding an endpoint updates both sides together.
+
+> **Honest scope.** This is *shared-definition* RPC, not full
+> Servant-level type safety yet: a `Handler` is currently
+> `List String → IO String` (parameters arrive positionally decoded,
+> not as typed fields), so a wrong parameter is a runtime error, not
+> a compile error. A typed `Endpoint α β` with request/response types
+> is on the roadmap — see `LeanTea/Rpc.lean` for the current surface.
 
 ## CSS / JS DSLs
 
