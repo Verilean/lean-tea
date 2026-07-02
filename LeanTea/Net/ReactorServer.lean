@@ -79,9 +79,32 @@ private def wrap (handler : Handler) (raw : ByteArray) : IO ByteArray := do
       { resp with headers := resp.headers.push ("connection", v) }
   return resp.toBytes
 
-/-- Serve `handler` on `port` using the non-blocking reactor. Blocks. -/
-def serve (port : UInt16 := 8001) (handler : Handler) : IO Unit := do
-  IO.eprintln s!"reactor-serving on http://0.0.0.0:{port}/"
-  reactorRun port (wrap handler)
+/-- Serve `handler` on `port` using the non-blocking reactor. Blocks.
+
+    `workers` runs that many independent event loops, each on its own
+    Lean task thread with its own listener socket bound to `port` via
+    `SO_REUSEPORT`; the kernel round-robins incoming connections across
+    them. One loop uses one core, so this is how the reactor scales past
+    a single core (a single loop is CPU-bound on one core under load —
+    that's why one reactor trails a multi-process nginx on a multi-core
+    box). `workers = 1` (the default) keeps the original single-loop
+    behaviour.
+
+    Each loop pins a Lean task worker for the server's lifetime, so
+    `LEAN_NUM_THREADS` must be ≥ `workers` (plus headroom for the
+    handlers) or the extra loops never get scheduled. Pass
+    `workers := numCores` and run with `LEAN_NUM_THREADS` at least that
+    high. -/
+def serve (port : UInt16 := 8001) (workers : Nat := 1) (handler : Handler)
+    : IO Unit := do
+  -- Wrap once and share the callback across every loop.
+  let cb := wrap handler
+  IO.eprintln s!"reactor-serving on http://0.0.0.0:{port}/ (workers={workers})"
+  -- Spawn (workers - 1) loops on background task threads, then run the
+  -- last on this thread so `serve` blocks like the other backends.
+  let tail : Nat := if workers == 0 then 0 else workers - 1
+  for _ in [0:tail] do
+    let _ ← IO.asTask (reactorRun port cb)
+  reactorRun port cb
 
 end LeanTea.Net.ReactorServer

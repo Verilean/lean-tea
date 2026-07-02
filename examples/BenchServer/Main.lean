@@ -49,15 +49,22 @@ private structure Args where
       Zero — the default — keeps the libuv-backed `serveConcurrent`
       so we can bench both from the same binary. -/
   fastWorkers : Nat := 0
-  /-- `--reactor` picks the epoll/kqueue non-blocking reactor server
-      (`LeanTea.Net.ReactorServer`). Single event-loop thread. -/
-  useReactor : Bool := false
+  /-- `--reactor [N]` picks the epoll/kqueue non-blocking reactor server
+      (`LeanTea.Net.ReactorServer`) with N SO_REUSEPORT event loops
+      (default 1). Zero means "not selected". -/
+  reactorWorkers : Nat := 0
 
 private partial def parseArgs : List String → Args → Args
   | "--port" :: v :: rest, a => parseArgs rest { a with port := (v.toNat?.getD 8080).toUInt16 }
   | "--host" :: v :: rest, a => parseArgs rest { a with host := v }
   | "--fast" :: v :: rest, a => parseArgs rest { a with fastWorkers := v.toNat?.getD 1 }
-  | "--reactor" :: rest,   a => parseArgs rest { a with useReactor := true }
+  | "--reactor" :: v :: rest, a =>
+    -- `--reactor N` sets N loops; `--reactor` alone (next arg is another
+    -- flag or absent) defaults to 1.
+    match v.toNat? with
+    | some n => parseArgs rest { a with reactorWorkers := n }
+    | none   => parseArgs (v :: rest) { a with reactorWorkers := 1 }
+  | ["--reactor"],         a => { a with reactorWorkers := 1 }
   | _ :: rest,             a => parseArgs rest a
   | [],                    a => a
 
@@ -69,7 +76,7 @@ def main (argv : List String) : IO Unit := do
   IO.eprintln s!"  LEAN_NUM_THREADS = {nt}"
   -- CLI flags win over env vars — makes ad-hoc perf runs unambiguous.
   let backend : LeanTea.Net.Backend.Backend ←
-    if a.useReactor then pure .reactor
+    if a.reactorWorkers > 0 then pure (.reactor a.reactorWorkers)
     else if a.fastWorkers > 0 then pure (.fast a.fastWorkers)
     else LeanTea.Net.Backend.fromEnv (default := .libuv)
   IO.eprintln s!"  backend = {repr backend}"

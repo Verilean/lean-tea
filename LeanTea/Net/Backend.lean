@@ -57,10 +57,12 @@ inductive Backend where
       connection. Very high throughput; total concurrent-conn count
       capped at `LEAN_NUM_THREADS`. -/
   | fast (workers : Nat)
-  /-- `LeanTea.Net.ReactorServer.serve` — non-blocking kqueue/epoll
-      event loop. Highest throughput on this box (matches nginx) and
-      scales cleanly to 10 k+ idle connections. Default. -/
-  | reactor
+  /-- `LeanTea.Net.ReactorServer.serve` — `workers` non-blocking
+      kqueue/epoll event loops, each with its own `SO_REUSEPORT`
+      listener (so it scales across cores) while still handling 10 k+
+      idle connections per loop. `workers = 1` is the classic single
+      loop. Default. -/
+  | reactor (workers : Nat)
   deriving Repr
 
 /-- Dispatch to the underlying server. `host` is only consumed by
@@ -68,29 +70,31 @@ inductive Backend where
 def serve (b : Backend) (port : UInt16) (host : String) (handler : Handler)
     : IO Unit :=
   match b with
-  | .libuv         => LeanTea.Net.Server.serveConcurrent port host handler
-  | .fast workers  => LeanTea.Net.FastServer.serve port workers handler
-  | .reactor       => LeanTea.Net.ReactorServer.serve port handler
+  | .libuv          => LeanTea.Net.Server.serveConcurrent port host handler
+  | .fast workers   => LeanTea.Net.FastServer.serve port workers handler
+  | .reactor workers => LeanTea.Net.ReactorServer.serve port workers handler
 
-/-- Parse a spec like `libuv` / `fast` / `fast:16` / `reactor` into a
-    `Backend`. Unknown strings return `none` so callers can fall back
-    to a default or fail loudly. -/
+/-- Parse a spec like `libuv` / `fast` / `fast:16` / `reactor` /
+    `reactor:8` into a `Backend`. Bare `reactor` is a single loop;
+    `reactor:N` runs N SO_REUSEPORT loops. Unknown strings return
+    `none` so callers can fall back to a default or fail loudly. -/
 def parse? (s : String) : Option Backend :=
   match s.trim.toLower with
   | "libuv"   => some .libuv
-  | "reactor" => some .reactor
+  | "reactor" => some (.reactor 1)
   | "fast"    => some (.fast 8)
   | other =>
     if other.startsWith "fast:" then
-      let n := (other.drop 5).toNat?.getD 8
-      some (.fast n)
+      some (.fast ((other.drop 5).toNat?.getD 8))
+    else if other.startsWith "reactor:" then
+      some (.reactor ((other.drop 8).toNat?.getD 1))
     else
       none
 
 /-- Read `LEANTEA_HTTP_BACKEND` from the environment and parse it.
     Falls back to `default` (reactor unless overridden) when the var
     is unset or unparseable. -/
-def fromEnv (default : Backend := .reactor) : IO Backend := do
+def fromEnv (default : Backend := .reactor 1) : IO Backend := do
   match ← IO.getEnv "LEANTEA_HTTP_BACKEND" with
   | none   => return default
   | some s =>
