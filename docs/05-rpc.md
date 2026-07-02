@@ -1,79 +1,93 @@
-# 5 · RPC — one declaration drives the wire
+# 5 · RPC — one typed declaration drives the wire
 
-When you have *fifteen* endpoints whose names, parameters, and JSON
-shapes have to agree between Lean and JS, you reach for `Rpc`.
+When you have endpoints whose request and response shapes have to agree
+between the Lean server and the browser client, you reach for
+`LeanTea.Rpc.Typed`. The request and response **types** live in the
+endpoint, and both sides are checked against them — a wrong field is a
+compile error, not a runtime surprise.
 
-`LeanTea.Rpc` is the pattern Sheet uses for its `/api/*` surface.
-**One `Endpoint` record per route**, three artefacts read from it:
+**One `Endpoint α β` per route** drives three artefacts:
 
-1. the **server's router** (which Lean handler runs)
-2. the **typed JS client** (`apiSetCell`, `apiClear`, …)
-3. the **discovery doc** at `/api/_endpoints` (for tooling)
+1. the **server handler** — typed `α → IO β`, no manual decoding
+2. the **browser JS client** (`apiSetCell`, …), generated from the endpoint
+3. the **client type-check** — a `.leanjs` client is elaborated against
+   the same `α` / `β`
 
-When you add a new endpoint you touch *one* place; the other two update
-for free.
+Add or change an endpoint in one place; a mismatch surfaces at compile
+time on whichever side is out of date.
 
 ## Smallest example
 
+Define the wire types once (real Lean structures with derived JSON
+codecs), then the endpoint:
+
 ```lean
-import LeanTea.Rpc
+import LeanTea.Rpc.Typed
+open LeanTea.Rpc.Typed
 
-open LeanTea.Rpc
+structure SetCellReq  where ref : String; formula : String
+  deriving Lean.ToJson, Lean.FromJson
+structure SetCellResp where ok : Bool;   value : String
+  deriving Lean.ToJson, Lean.FromJson
 
--- An endpoint is a record. Args type, return type, handler.
-def setCell : Endpoint (kind : String) × (x y : Int) → IO Nat :=
-  { name    := "set_cell",
-    path    := "/api/set",
-    method  := .get,
-    handler := fun (kind, x, y) => do
-      let id ← store.setCell { kind, x, y, … }
-      return id }
-
-def all : List Endpoint := [setCell, moveCell, clearCell, …]
+def setCell : Endpoint SetCellReq SetCellResp :=
+  { name := "apiSetCell", path := "/api/set",
+    reqType := "SetCellReq", respType := "SetCellResp" }
 ```
 
-Then in your server's handler (`examples/Sheet/Serve.lean`):
+Server — the handler works entirely in typed Lean:
 
 ```lean
-def handler (store : Store) : Handler :=
-  Rpc.chainWith (SheetRpc.routes store) fun req => do
-    -- residual non-API routes go here
-    return Response.notFound
+def handleSetCell (r : SetCellReq) : IO SetCellResp :=
+  return { ok := true, value := s!"{r.ref}={r.formula}" }
+
+def app : Handler := dispatch [ serve setCell handleSetCell ]
 ```
 
-And in the page shell that's served to the browser:
+`serve` decodes the request body to `SetCellReq` via the derived codec
+(a malformed or wrong-shape body → `400`, since the wire carries
+untrusted bytes) and encodes the `SetCellResp` result. The handler only
+ever sees a valid, typed request.
+
+Client JS, generated from the same endpoint:
 
 ```lean
-let rpcClient := (LeanTea.Rpc.clientLib SheetRpc.all).render
+let rpcClient := LeanTea.Js.renderBlock [setCell.clientFn]
+-- async function apiSetCell(req){ … JSON.stringify(req) … r.json() }
 -- splice into page.html via {{rpcClient}}
 ```
 
-The browser now has `await apiSetCell("A1", "42")` available.
-Add a new endpoint to the `all` list and a new `apiX` appears in the
-client by the next reload.
+## Both sides, one type — enforced
 
-## Discovery
+`LeanJs.TypeCheck` type-checks the browser client against the same
+types. LeanJs has no type system of its own, so instead of building
+one, it emits the client to real Lean and lets Lean's elaborator do the
+check (`async`→`do`, `await`→`←`); the shared types are `import`ed, not
+re-declared, so there is a single definition.
 
-`GET /api/_endpoints` returns a JSON document listing every endpoint,
-its path, method, args, and return type. Useful for:
+```text
+let req  := SetCellReq { ref: r, formula: f };
+let resp := await apiSetCell(req);
+resp.value      -- ✓ SetCellResp has `value`
+resp.valueX     -- ✗ compile error: SetCellResp.valueX doesn't exist
+```
 
-- Hooking up an MCP-style tool layer
-- Generating an OpenAPI spec downstream
-- Tooling that wants to know what endpoints exist before calling them
+`examples/Tests/TypedRpcSpec.lean` is the end-to-end proof: one
+endpoint, a server round-trip (200 / 400 / 404), a client that
+type-checks, and a client with a mistyped field that is rejected.
 
-## Type story
+## Legacy stringly RPC
 
-Args are encoded as URL query parameters (for GET) or
-`application/x-www-form-urlencoded` body (for POST). Return values
-come back as JSON in the response body. The client lib handles
-encoding both sides. For now, the supported types are `String`,
-`Int`, `Nat`, `Bool`, plus arrays of those. For richer shapes
-(objects), declare a Lean structure and add a `ToJsExpr` /
-`FromJsExpr` instance.
+The older `LeanTea.Rpc` (`Endpoint` with `params : List String`,
+`Handler := List String → IO String`) still ships for back-compat. It
+generates a client the same way but performs no type-checking — prefer
+`LeanTea.Rpc.Typed` for new code.
+
+## Scope
 
 This is intentionally narrow. If you want gRPC, use gRPC. If you want
-GraphQL, use GraphQL. `LeanTea.Rpc` is the "one declaration drives the
-wire" pattern for the simple case.
+GraphQL, use GraphQL. `LeanTea.Rpc.Typed` is the "one typed declaration
+drives the wire" pattern for the common REST-shaped case.
 
 ## JSON-RPC sibling
 

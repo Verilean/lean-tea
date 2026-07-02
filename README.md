@@ -346,31 +346,51 @@ Tools exposed:
 When wiring this into Claude Desktop / Claude Code, point its MCP
 client at `transport: "http"`, `url: "http://localhost:8002/mcp"`.
 
-## Shared-endpoint RPC (Servant-inspired)
+## Typed RPC (Servant-style, checked on both sides)
 
-The server and the generated browser client share one `Endpoint`
-declaration (`LeanTea.Rpc`), so a path / method / parameter set is
-written once:
+`LeanTea.Rpc.Typed` makes the request and response *types* part of the
+endpoint. One declaration is the single source of truth, and both the
+server and the browser client are checked against it — a wrong field
+is a **compile error**, not a runtime surprise.
 
 ```lean
-def setCell : Endpoint := {
-  name := "apiSetCell", path := "/api/set", method := "POST",
-  params := ["kind", "x", "y", "w", "h", "text", "color"],
-  carrier := .form, output := .text
-}
+structure SetCellReq  where ref : String; formula : String
+  deriving Lean.ToJson, Lean.FromJson
+structure SetCellResp where ok : Bool;   value : String
+  deriving Lean.ToJson, Lean.FromJson
+
+def setCell : Endpoint SetCellReq SetCellResp :=
+  { name := "apiSetCell", path := "/api/set",
+    reqType := "SetCellReq", respType := "SetCellResp" }
 ```
 
-`Rpc.chainWith routes fallback` dispatches path + method to a
-`Handler`, and `Rpc.clientLib endpoints` auto-generates the matching
-`async function apiSetCell(...)` prepended to the `<script>` block —
-so adding an endpoint updates both sides together.
+**Server.** `serve setCell (fun (r : SetCellReq) => …)` — the handler
+is `SetCellReq → IO SetCellResp`. Dispatch decodes the body to
+`SetCellReq` via the derived codec and encodes the result; a malformed
+or wrong-shape body becomes a `400` at runtime (the wire carries
+untrusted bytes, so that check is unavoidable), while the handler code
+itself only ever sees a valid, typed request.
 
-> **Honest scope.** This is *shared-definition* RPC, not full
-> Servant-level type safety yet: a `Handler` is currently
-> `List String → IO String` (parameters arrive positionally decoded,
-> not as typed fields), so a wrong parameter is a runtime error, not
-> a compile error. A typed `Endpoint α β` with request/response types
-> is on the roadmap — see `LeanTea/Rpc.lean` for the current surface.
+**Client.** The same endpoint generates the browser JS
+(`Endpoint.clientFn` → `fetch` + `JSON.stringify(req)` + `r.json()`)
+*and* a type-check stub. A `.leanjs` client that builds the request or
+reads the response is checked against the very same `SetCellReq` /
+`SetCellResp`: accessing a field the type doesn't have fails to
+compile. LeanJs has no type system of its own, so rather than
+reinvent one, `LeanJs.TypeCheck` emits the client to Lean and lets
+Lean's own elaborator do the checking (`async`→`do`, `await`→`←`); the
+shared types are `import`ed, not re-declared, so there is exactly one
+definition.
+
+```text
+correct client            → type-checks ✓
+resp.value → resp.valueX  → REJECTED ✗  (SetCellResp.valueX doesn't exist)
+```
+
+See `examples/Tests/TypedRpcSpec.lean` for the end-to-end proof (server
+dispatch + client accept/reject + generated JS). The legacy
+stringly-typed `LeanTea.Rpc` (`Handler := List String → IO String`)
+remains for back-compat.
 
 ## CSS / JS DSLs
 

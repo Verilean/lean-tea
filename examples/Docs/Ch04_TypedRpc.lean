@@ -2,8 +2,14 @@ import LeanTea
 
 /-! # Chapter 4 — One declaration drives the wire
 
-Typed RPC is where lean-elm earns its name. You write one `Endpoint`
-record per route; the framework feeds it to:
+> **Note.** This chapter demonstrates the original *stringly-typed*
+> `LeanTea.Rpc` (`Handler := List String → IO String`). For the
+> **typed** layer — `Endpoint α β` with request/response types checked
+> on both the server and the client at compile time — see
+> `LeanTea.Rpc.Typed` and `examples/Tests/TypedRpcSpec.lean`, described
+> in `docs/05-rpc.md`. Prefer the typed layer for new code.
+
+You write one `Endpoint` record per route; the framework feeds it to:
 
   * `Rpc.dispatch` / `chainWith`  → server-side routing
   * `Rpc.clientLib`               → generated JS client functions

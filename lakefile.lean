@@ -39,7 +39,7 @@ lean_lib LeanTea where
 lean_lib LeanJs where
   roots := #[`LeanJs.Ast, `LeanJs.Parser, `LeanJs.Codegen,
              `LeanJs.Eval, `LeanJs.JsParser, `LeanJs.LeanEmit,
-             `LeanJs.Check, `LeanJs.Includes]
+             `LeanJs.Check, `LeanJs.Includes, `LeanJs.TypeCheck]
 
 lean_lib Examples where
   srcDir := "examples"
@@ -51,6 +51,7 @@ lean_lib Examples where
     `Tests.PureSpec,
     `Tests.AuthSpec,
     `Tests.TuiSpec,
+    `Tests.TypedRpcApi,
     `AuthIdp.Serve,
     `StateMachine.Order
   ]
@@ -431,6 +432,14 @@ lean_exe doc_ch09 where
 lean_exe leanjs_spec where
   srcDir := "examples"
   root := `Tests.LeanJsSpec
+
+/-- End-to-end typed RPC: one `Endpoint α β` drives a typed server
+    (codec dispatch) and a `.leanjs` client that is type-checked
+    against the same request/response types via `LeanJs.TypeCheck`.
+    Spawns `lean` for the client-side elaboration checks. -/
+lean_exe typed_rpc_spec where
+  srcDir := "examples"
+  root := `Tests.TypedRpcSpec
 
 /-- Pure unit tests for the `LeanTea.Tui` widget kit — layout
     primitives, combinators, elements, and the `Session` test
