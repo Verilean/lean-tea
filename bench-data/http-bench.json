@@ -1,0 +1,67 @@
+{
+  "lastUpdate": 1782952628691,
+  "repoUrl": "https://github.com/Verilean/lean-tea",
+  "entries": {
+    "HTTP throughput (lean-tea reactor vs nginx)": [
+      {
+        "commit": {
+          "author": {
+            "email": "junjihashimoto@users.noreply.github.com",
+            "name": "junji hashimoto",
+            "username": "junjihashimoto"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "039935efe8fa7805699114d9e307d99edaa9c2ba",
+          "message": "Merge pull request #3 from Verilean/feat/http-backends\n\nHTTP backends: reactor matches nginx (10x libuv), CI throughput tracker",
+          "timestamp": "2026-07-02T09:34:39+09:00",
+          "tree_id": "ef42ac75612ae4ee1c0a149e9df37417b8c16de5",
+          "url": "https://github.com/Verilean/lean-tea/commit/039935efe8fa7805699114d9e307d99edaa9c2ba"
+        },
+        "date": 1782952628690,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "lean-tea reactor /health",
+            "value": 51378,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /json",
+            "value": 53745,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /echo",
+            "value": 39793,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /health",
+            "value": 114539,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /json",
+            "value": 122352,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea/nginx /health %",
+            "value": 45,
+            "unit": "%"
+          },
+          {
+            "name": "lean-tea/nginx /json %",
+            "value": 44,
+            "unit": "%"
+          }
+        ]
+      }
+    ]
+  }
+}
