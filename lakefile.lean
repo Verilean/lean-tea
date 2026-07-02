@@ -239,6 +239,47 @@ target leantea_desktop_o pkg : FilePath := do
     traceArgs := traceArgs.push "-DLEANTEA_HAVE_DESKTOP"
   buildO oFile srcJob weakArgs traceArgs "cc"
 
+/-! ## Fast-net (SO_REUSEPORT + blocking socket ops) FFI
+
+Unlike the driver FFIs above this one has **no opt-in flag**: the
+primitives are POSIX-standard (`socket`, `setsockopt`, `accept`,
+`recv`, `send`) so the build stays portable everywhere Lean itself
+builds. `LeanTea.Net.FastServer` wraps them into an N-worker
+accept loop that bypasses libuv entirely — see the module doc for
+the "why not `Std.Async.TCP`" trade. -/
+
+target leantea_fastnet_o pkg : FilePath := do
+  let oFile := pkg.buildDir / "c" / "leantea_fastnet.o"
+  let srcJob ← inputTextFile <| pkg.dir / "c" / "leantea_fastnet.c"
+  let weakArgs := #[
+    "-I", (← getLeanIncludeDir).toString
+  ]
+  buildO oFile srcJob weakArgs #["-fPIC", "-O2"] "cc"
+
+extern_lib libleantea_fastnet pkg := do
+  let name := nameToStaticLib "leantea_fastnet"
+  let wrapperO ← leantea_fastnet_o.fetch
+  buildStaticLib (pkg.staticLibDir / name) #[wrapperO]
+
+/-! ## Reactor (epoll/kqueue) FFI for `LeanTea.Net.ReactorServer`.
+
+Adds the non-blocking reactor variant used for many-idle-connection
+workloads. Same "no opt-in flag" story as the fast-net FFI above —
+kqueue on macOS/BSD, epoll on Linux; both are stock POSIX. -/
+
+target leantea_reactor_o pkg : FilePath := do
+  let oFile := pkg.buildDir / "c" / "leantea_reactor.o"
+  let srcJob ← inputTextFile <| pkg.dir / "c" / "leantea_reactor.c"
+  let weakArgs := #[
+    "-I", (← getLeanIncludeDir).toString
+  ]
+  buildO oFile srcJob weakArgs #["-fPIC", "-O2"] "cc"
+
+extern_lib libleantea_reactor pkg := do
+  let name := nameToStaticLib "leantea_reactor"
+  let wrapperO ← leantea_reactor_o.fetch
+  buildStaticLib (pkg.staticLibDir / name) #[wrapperO]
+
 extern_lib libleantea_desktop pkg := do
   let name := nameToStaticLib "leantea_desktop"
   let wrapperO ← leantea_desktop_o.fetch

@@ -282,14 +282,33 @@ def parseRequest (raw : ByteArray) (body : ByteArray) : Option Request := do
 
 /-! ## Response serialization -/
 
-def Response.toBytes (r : Response) : ByteArray :=
-  let status := s!"HTTP/1.1 {r.status} {statusText r.status}\r\n"
-  let hdrs := r.headers.foldl
-    (fun acc (k, v) => acc ++ s!"{k}: {v}\r\n") ""
-  let cl := s!"content-length: {r.body.size}\r\n"
-  let close := "connection: close\r\n\r\n"
-  let head := (status ++ hdrs ++ cl ++ close).toUTF8
-  head ++ r.body
+/-- Serialize the response.
+
+    Historical bug worth calling out: this used to append a hardcoded
+    `connection: close` header at the terminator, so responses always
+    carried two `connection:` headers (the annotated `keep-alive` plus
+    the hardcoded `close`). Lenient clients like `ab` happened to still
+    reuse the socket, which is why the keep-alive benchmark improved,
+    but strict clients would drop the connection. Now the terminator
+    is just the empty line — the caller sets connection state via
+    `annotateConnection` in the server loop. -/
+def Response.toBytes (r : Response) : ByteArray := Id.run do
+  -- Build the head as one growing string, one final toUTF8, one ByteArray concat.
+  let mut head : String := ""
+  head := head ++ "HTTP/1.1 "
+  head := head ++ toString r.status
+  head := head ++ " "
+  head := head ++ statusText r.status
+  head := head ++ "\r\n"
+  for (k, v) in r.headers do
+    head := head ++ k
+    head := head ++ ": "
+    head := head ++ v
+    head := head ++ "\r\n"
+  head := head ++ "content-length: "
+  head := head ++ toString r.body.size
+  head := head ++ "\r\n\r\n"
+  return head.toUTF8 ++ r.body
 
 /-! ## Handler type -/
 

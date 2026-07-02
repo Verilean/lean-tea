@@ -44,10 +44,20 @@ private def handler (req : Request) : IO Response := do
 private structure Args where
   port : UInt16 := 8080
   host : String := "127.0.0.1"
+  /-- `--fast N` picks the POSIX-native accept-worker server
+      (`LeanTea.Net.FastServer`, SO_REUSEPORT-based, N workers).
+      Zero — the default — keeps the libuv-backed `serveConcurrent`
+      so we can bench both from the same binary. -/
+  fastWorkers : Nat := 0
+  /-- `--reactor` picks the epoll/kqueue non-blocking reactor server
+      (`LeanTea.Net.ReactorServer`). Single event-loop thread. -/
+  useReactor : Bool := false
 
 private partial def parseArgs : List String → Args → Args
   | "--port" :: v :: rest, a => parseArgs rest { a with port := (v.toNat?.getD 8080).toUInt16 }
   | "--host" :: v :: rest, a => parseArgs rest { a with host := v }
+  | "--fast" :: v :: rest, a => parseArgs rest { a with fastWorkers := v.toNat?.getD 1 }
+  | "--reactor" :: rest,   a => parseArgs rest { a with useReactor := true }
   | _ :: rest,             a => parseArgs rest a
   | [],                    a => a
 
@@ -57,4 +67,10 @@ def main (argv : List String) : IO Unit := do
   IO.eprintln s!"  routes: GET /health · GET /json · POST /echo"
   let nt := (← IO.getEnv "LEAN_NUM_THREADS").getD "(default = ncpu)"
   IO.eprintln s!"  LEAN_NUM_THREADS = {nt}"
-  serveConcurrent a.port a.host handler
+  -- CLI flags win over env vars — makes ad-hoc perf runs unambiguous.
+  let backend : LeanTea.Net.Backend.Backend ←
+    if a.useReactor then pure .reactor
+    else if a.fastWorkers > 0 then pure (.fast a.fastWorkers)
+    else LeanTea.Net.Backend.fromEnv (default := .libuv)
+  IO.eprintln s!"  backend = {repr backend}"
+  LeanTea.Net.Backend.serve backend a.port a.host handler

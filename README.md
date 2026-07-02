@@ -19,6 +19,12 @@ Questions, design discussion, and weekly progress threads live in the Discord ch
   into the binary, so deployment doesn't need `-lsqlite3`.
 - The browser only ever sees plain HTML + one inlined JS file
   (Web Speech API is the only external browser API used).
+- **Matches (slightly beats) tuned nginx** on hello-world / 5-field
+  JSON: the `LeanTea.Net.ReactorServer` backend is a
+  `c/leantea_reactor.c` non-blocking event loop
+  (kqueue on macOS/BSD, epoll on Linux) driving a Lean `ByteArray →
+  IO ByteArray` callback per request. **72 k RPS at c=128** vs
+  nginx 69 k on the same box. Full numbers in `docs/BENCHMARKS.md`.
 
 ## Inspirations
 
