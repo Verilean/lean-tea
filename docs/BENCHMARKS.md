@@ -11,6 +11,7 @@ on this box while dropping to a single OS thread.
 | 3     | POSIX-native (FFI, SO_REUSEPORT)   | 64 297     | 90 %     |
 | 4     | epoll/kqueue reactor               | **72 149** | **104 %**|
 | ref   | nginx (same box, same conf)        | 69 428     | —        |
+| ref   | `Std.Http.Server` (Lean 4.31 stock)|  1 652     | 2 %      |
 
 Rounds 1–2 topped out ~6-7 k RPS regardless of thread count because
 the single `Std.Async.TCP` accept loop was the bottleneck and every
@@ -182,6 +183,40 @@ For nginx parity, a matching config lives in the top of
 `keepalive_requests`, `SO_REUSEPORT`. The main difference is nginx
 uses `epoll`/`kqueue`; we still park threads in `accept()`. That's
 where the next 10-15 % has to come from.
+
+## Reference: `Std.Http.Server` (Lean 4.31 stock)
+
+Lean 4.31 ships an HTTP/1.1 server in `Std.Http.Server` (Sofia
+Rodrigues, 2025). `examples/BenchStdHttp/Main.lean` implements the
+same three routes against it so the comparison is like-for-like.
+
+Same wrk load, same box, same run:
+
+| server              | /health RPS | /json RPS | p99 (ms) |
+|---------------------|------------:|----------:|---------:|
+| **`Std.Http.Server`** | **1 652**   | **1 622** | **178–196** |
+| lean-tea reactor    | 73 533      | 69 069    | 2.1      |
+| nginx               | 72 183      | 66 384    | 2.0      |
+
+Reactor is ~**44 ×** the throughput of the stock Std server, at
+~1/80 the p99 latency. Two reasons feed into that gap:
+
+1. **`Std.Async.TCP` per-syscall hop**. Same reason our own libuv
+   `LeanTea.Net.Server` topped out at 6 k — every recv/send round-
+   trips through the async task scheduler. `Std.Http.Server`
+   inherits this ceiling directly.
+2. **Extra per-connection bookkeeping**. `Std.Http.Server` layers a
+   `Std.Semaphore` (connection limit) + `Std.Mutex Nat` (active-
+   conn counter) + `Std.CancellationContext` (shutdown coord) +
+   the full RFC-9112 `Std.Http.Protocol.H1` streaming codec on top.
+   The 178 ms p99 is characteristic of semaphore/mutex contention
+   under keep-alive load.
+
+That said, `Std.Http.Server` is the *correct* implementation — it
+supports HTTP/1.1 pipelining, `Expect: 100-continue`, chunked
+streaming request bodies, graceful shutdown across in-flight
+requests, and a proper cancellation story. The reactor gives none
+of that. Both belong in the framework; pick by workload.
 
 ## CI regression tracker
 
