@@ -62,8 +62,10 @@ which is what actually runs.
 | `if c then t else e` | `(c ? t : e)` | **expression**, never a statement; both branches required |
 | `let x := v; rest` | `((x) => rest)(v)` | `let` is also expression-shaped, via an IIFE |
 | `let _ := side_effect; rest` | (side effect then `rest`) | the idiomatic "do this for effect" pattern; `_` discards the value |
-| (no `while` / `for`) | `while` / `for` | use tail-recursive helper functions |
-| (no `let mut`) | mutable bindings | use object-field mutation (`obj.x <- v`) or a small `Ref` extern |
+| `do <stmts>` | `(() => { <stmts> })()` | statement block (sync IIFE); entry point for the loops/mutation below |
+| `for v in xs do s` | `for (const v of xs) { s }` | for-of; numeric ranges via a `range(lo,hi,step)` helper |
+| `while c do s` | `while (c) { s }` | statement loop (inside `do` / async body) |
+| `let mut x := v; rest` | `let x = v; rest` | reassignable binding; `x := e` reassigns |
 | `def f() := body` | `const f = (() => { return body; });` | zero-arity *function* |
 | `def f := body` | `const f = body;` | zero-arity *value* (no parens) |
 
@@ -93,8 +95,8 @@ runtime convention so `match` can dispatch and bind fields.
 
 | JS feature | What to do instead |
 |---|---|
-| `var` / `let mut` | mutate object fields (`obj.x <- v`); for globals use a small mutable record + helpers |
-| `for` / `while` | tail-recursive helpers |
+| `let mut` / `for` / `while` | available inside a `do` block (or async body) — see the syntax table above |
+| top-level `var` mutation | a small mutable record + helper externs |
 | `===` strict equality | LeanJs only emits `==`; compare type explicitly if needed |
 | ternary `?:` | `if c then a else b` |
 | template literals | string concatenation: `"hello " + name` |

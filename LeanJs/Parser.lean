@@ -51,7 +51,8 @@ private def reserved : List String :=
    "async", "await", "extern", "js",
    "class", "instance", "record",
    "null", "new", "import", "from", "as", "include",
-   "true", "false"]
+   "true", "false",
+   "do", "for", "while", "mut"]
 
 private def hexDigitValue (c : Char) : Nat :=
   if c.isDigit then c.toNat - '0'.toNat
@@ -133,10 +134,75 @@ mutual
 
 partial def parseExpr : Parser Expr := do
   if let some _ ← peek? then
-    (parseLet <|> parseIf <|> parseFun <|> parseMatch
+    (parseDo <|> parseLet <|> parseIf <|> parseFun <|> parseMatch
       <|> parseAwait <|> parseAssign)
   else
     fail "empty expression"
+
+/-- `do <statements>` — a statement block (compiles to a sync IIFE).
+    Statements are `;`-separated; `let` / `let mut` absorb the rest of
+    the block as their continuation, other statements sequence via
+    `seqE`, and the final statement (no trailing `;`) is the block's
+    result value. This is the only place the imperative constructs
+    (`for`, `while`, reassignment `x := e`) are meaningful. -/
+partial def parseDo : Parser Expr := attempt do
+  keyword "do"
+  let body ← parseStmtSeq
+  return .doBlock body
+
+partial def parseStmtSeq : Parser Expr :=
+  parseLetStmt <|> (do
+    let s ← parseStmt
+    (attempt do
+       sym ";"
+       let rest ← parseStmtSeq
+       return .seqE s rest)
+     <|> pure s)
+
+partial def parseLetStmt : Parser Expr := attempt do
+  keyword "let"
+  let isMut ← (do keyword "mut"; pure true) <|> pure false
+  let name ← ident
+  sym ":="
+  let val ← parseExpr
+  sym ";"
+  let body ← parseStmtSeq
+  return (if isMut then .letMutE name val body else .letE name val body)
+
+/-- One non-binding statement: a `for` / `while` loop, or an
+    expression optionally followed by `:= rhs` (reassignment). -/
+partial def parseStmt : Parser Expr :=
+  parseForStmt <|> parseWhileStmt <|> parseReassign
+
+partial def parseForStmt : Parser Expr := attempt do
+  keyword "for"
+  let v ← ident
+  keyword "in"
+  let iter ← parseExpr
+  keyword "do"
+  let body ← parseStmtBody
+  return .forE v iter body
+
+partial def parseWhileStmt : Parser Expr := attempt do
+  keyword "while"
+  let c ← parseExpr
+  keyword "do"
+  let body ← parseStmtBody
+  return .whileE c body
+
+/-- Body of a `for` / `while`: a parenthesised statement sequence
+    `( … )` for multiple statements, or a single statement. -/
+partial def parseStmtBody : Parser Expr :=
+  (attempt do sym "("; let s ← parseStmtSeq; sym ")"; return s)
+    <|> parseStmt
+
+partial def parseReassign : Parser Expr := do
+  let e ← parseExpr
+  (attempt do
+     sym ":="
+     let rhs ← parseExpr
+     return .assignE e rhs)
+   <|> pure e
 
 /-- Assignment `lhs <- rhs`, right-associative. LHS is whatever
     `parseAdd` produces (typically a `var`, `dotE`, `optDotE`, or
@@ -607,7 +673,11 @@ partial def parseAsyncDef : Parser TopDef := attempt do
     sym ")"
     return ps.toList) <|> pure []
   sym ":="
-  let body ← parseExpr
+  -- Async bodies use the statement grammar directly (no `do` wrapper):
+  -- a sync `do` IIFE would break `await`. This gives async functions
+  -- `let` / `let mut` / `for` / `while` / reassignment natively, and
+  -- `compileAsyncDefE` lowers the same chain into an async arrow.
+  let body ← parseStmtSeq
   return .asyncDefE name params body
 
 partial def parseExtern : Parser TopDef := attempt do

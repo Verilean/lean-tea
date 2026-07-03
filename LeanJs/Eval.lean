@@ -146,6 +146,13 @@ mutual
 partial def eval (globals env : Env) : Ast.Expr → Except String Value
   | .num n   => .ok (.int n)
   | .numF _  => .error "float literal: unsupported in pure-Lean eval"
+  /- Imperative statement constructs are JS-only (mutation / loops):
+     the pure tree-walker doesn't model them. Tests that use them run
+     `jsOnly`, so this branch is never hit in cross-check. -/
+  | .doBlock _   => .error "do-block: JS-only construct"
+  | .forE _ _ _  => .error "for-loop: JS-only construct"
+  | .whileE _ _  => .error "while-loop: JS-only construct"
+  | .letMutE _ _ _ => .error "let mut: JS-only construct"
   | .str s   => .ok (.str s)
   | .var x   =>
     match envLookup env x with
