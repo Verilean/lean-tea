@@ -179,8 +179,35 @@ emits
 ((x) => x * 10)(1 + 2)
 ```
 
-`let` is expression-shaped (an IIFE). There is no `let mut` — see
-*What's not in the language* below.
+`let` is expression-shaped (an IIFE). For a reassignable binding, use
+`let mut` inside a `do` block (see *do blocks* below).
+
+### `do` blocks — statements, loops, mutation
+
+`do` introduces a statement block (a synchronous IIFE). Inside it you
+get the imperative constructs that don't fit the pure expression core:
+
+```text
+def drawGrid(ctx, w, h) := do
+  let mut n := 0;
+  for x in range(0, w, 32) do
+    for y in range(0, h, 32) do (
+      fillRect(ctx, x, y, 30, 30);
+      n := n + 1
+    );
+  n
+```
+
+- `let x := e;` / `let mut x := e;` — `const` / reassignable `let`
+- `x := e` — reassignment (of a `let mut` local or an object field)
+- `for v in xs do <stmt>` — for-of over an array; numeric ranges use a
+  `range(lo, hi, step)` helper, so one loop form covers everything
+- `while c do <stmt>` — statement loop
+- multiple statements in a loop/branch body go in parentheses `( … ; … )`
+- the final statement (no trailing `;`) is the block's value
+
+`async def` bodies are statement blocks too (no `do` keyword needed), so
+`await`, `for`, and `let mut` compose there directly.
 
 ### `if / then / else`
 
@@ -439,9 +466,7 @@ Deliberate omissions, with the rationale and the workaround:
 
 | Missing             | Why                                                | Workaround                                   |
 |---------------------|----------------------------------------------------|----------------------------------------------|
-| `let mut`           | breaks the bilingual story; `IO.Ref` on the Lean side | recursion with an accumulator parameter, or `<-` on object fields |
-| Statement sequencing| LeanJs is expression-shaped end to end             | nest `let _ := … ;` so each step discards its value |
-| `while` / `for`     | same — needs statements + mutation                 | tail-recursive helper functions              |
+| Template literals   | keeps the string story single-quoted + `+`         | `"a" + x + "b"` (or a small `sconcat` extern) |
 | Ternary `cond ? a : b` | use `if cond then a else b`                     | n/a                                          |
 | Unary `-expr` (standalone) | only parsed as part of a literal           | `0 - expr` for negation                      |
 | Type checking       | optional annotations exist but aren't enforced     | rely on `node` / `lean --run` at runtime; the arity check catches the cheap class |

@@ -37,6 +37,13 @@ private def defaultType : String := "Int"
 partial def emitExpr : Ast.Expr → String
   | .num n        => if n < 0 then s!"({n})" else toString n
   | .numF lit     => s!"({lit} : Float)"
+  /- Imperative statement constructs don't exist in the pure-Lean
+     subset. They're JS-only; emitting a panic keeps this total while
+     making misuse loud (such code never round-trips through Lean). -/
+  | .doBlock _    => "(panic! \"do-block: JS-only construct\")"
+  | .forE _ _ _   => "(panic! \"for-loop: JS-only construct\")"
+  | .whileE _ _   => "(panic! \"while-loop: JS-only construct\")"
+  | .letMutE n v b => s!"(let {n} := {emitExpr v}; {emitExpr b})"
   | .str s        => "\"" ++ escape s ++ "\""
   | .var x        => x
   | .binop op l r =>

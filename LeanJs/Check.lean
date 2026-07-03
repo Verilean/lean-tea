@@ -176,6 +176,10 @@ partial def checkExpr (t : Tables) : Ast.Expr → Except String Unit
     | none      => throw s!"`{cls}`: not declared as a `record`"
     /- Still recurse into each field value. -/
     fields.forM (fun (_, v) => checkExpr t v)
+  | .doBlock body      => checkExpr t body
+  | .forE _ iter body  => do checkExpr t iter; checkExpr t body
+  | .whileE c body     => do checkExpr t c; checkExpr t body
+  | .letMutE _ v b     => do checkExpr t v; checkExpr t b
 
 end
 

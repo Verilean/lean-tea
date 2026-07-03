@@ -311,7 +311,49 @@ def nodeCases : List NodeCase := [
    ++ "def outfit := {moods: {default: {open: \"O.png\", closed: \"C.png\"},"
    ++ " smile: {open: \"SO.png\", closed: \"SC.png\"}}}\n"
    ++ "def main := pickFrame(outfit, \"angry\", false)",
-    expected := "C.png", jsOnly := true }
+    expected := "C.png", jsOnly := true },
+  /- ── do-blocks + imperative loops (this round) ──────────────────
+     `do` lowers to a sync IIFE; `let mut` → `let`; `for x in xs do`
+     → for-of; reassignment `x := e` → `x = e`. All JS-only (the pure
+     Lean evaluator doesn't model mutation / loops). -/
+  { label := "doForSum", source :=
+      "extern js \"(lo,hi,step) => { const a=[]; for(let i=lo;i<hi;i+=(step||1)) a.push(i); return a; }\" range\n"
+   ++ "def sumTo(n) := do\n"
+   ++ "  let mut s := 0;\n"
+   ++ "  for x in range(0, n, 1) do\n"
+   ++ "    s := s + x;\n"
+   ++ "  s\n"
+   ++ "def main := sumTo(5)",
+    expected := "10", jsOnly := true },
+  { label := "doForOfArray", source :=
+      "def sumArr(xs) := do\n"
+   ++ "  let mut s := 0;\n"
+   ++ "  for x in xs do\n"
+   ++ "    s := s + x;\n"
+   ++ "  s\n"
+   ++ "def main := sumArr([3, 4, 5])",
+    expected := "12", jsOnly := true },
+  { label := "doWhile", source :=
+      "def countDown(n) := do\n"
+   ++ "  let mut i := n;\n"
+   ++ "  let mut acc := 0;\n"
+   ++ "  while i > 0 do (\n"
+   ++ "    acc := acc + i;\n"
+   ++ "    i := i - 1\n"
+   ++ "  );\n"
+   ++ "  acc\n"
+   ++ "def main := countDown(4)",
+    expected := "10", jsOnly := true },
+  { label := "doNestedFor", source :=
+      "extern js \"(lo,hi,step) => { const a=[]; for(let i=lo;i<hi;i+=(step||1)) a.push(i); return a; }\" range\n"
+   ++ "def grid(w, h) := do\n"
+   ++ "  let mut n := 0;\n"
+   ++ "  for x in range(0, w, 32) do\n"
+   ++ "    for y in range(0, h, 32) do\n"
+   ++ "      n := n + 1;\n"
+   ++ "  n\n"
+   ++ "def main := grid(64, 96)",
+    expected := "6", jsOnly := true }
 ]
 
 /-! ## 3. Dual-flavour parity

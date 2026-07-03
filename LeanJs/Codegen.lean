@@ -94,6 +94,19 @@ partial def compileExpr : Ast.Expr → LeanTea.Js.Expr
        set matches the declared shape, so codegen is unconditional. -/
     let lit := obj (fields.map fun (k, v) => (k, compileExpr v))
     call (i cls) [lit]
+  | .doBlock body =>
+    -- `do <stmts>` → synchronous IIFE `(() => { <block> })()`.
+    call (arrow [] (compileStmts true body)) []
+  | .letMutE name value body =>
+    -- Reachable only if a `let mut` shows up in pure-expression
+    -- position (outside a block). Mutability is moot there, so treat
+    -- it like an ordinary `let` IIFE.
+    call (arrow [name] [retE (compileExpr body)]) [compileExpr value]
+  | .forE v iter body =>
+    -- Bare loop in expression position → run it in a void IIFE.
+    call (arrow [] [forOf v (compileExpr iter) (compileStmts false body)]) []
+  | .whileE c body =>
+    call (arrow [] [whileS (compileExpr c) (compileStmts false body)]) []
 
 /-- One branch of a `match` lowered into a guarded value.
     Three pattern shapes:
@@ -119,6 +132,43 @@ partial def compileMatchChain : List MatchBranch → LeanTea.Js.Expr
               acc ++ [idx (i "__m") (E.s s!"${k}")]
           call (arrow args [retE body']) actuals
       tern guard consumed (compileMatchChain rest)
+
+/-- Flatten a statement-chain expression into a JS statement block.
+    Shared by `do` blocks (sync IIFE) and `async def` bodies (async
+    IIFE) so `let` / `let mut` / `for` / `while` / reassignment / `if`
+    all lower to real JS statements.
+
+    `tail` marks whether a terminal expression is the block's result:
+    at the block's tail it becomes `return e`; anywhere mid-sequence
+    (a `seqE` left, or a loop/void `if` branch) it is a bare
+    expression statement run for its side effect. Loop and `seqE`-left
+    bodies are always emitted with `tail := false`. -/
+partial def compileStmts (tail : Bool) : Ast.Expr → Block
+  | .letE "_" value rest =>
+    -- `let _ := e; …` — run `e` for effect, no binder (a repeated
+    -- `const _` would collide in one block).
+    doE (compileExpr value) :: compileStmts tail rest
+  | .letE name value rest =>
+    constV name (compileExpr value) :: compileStmts tail rest
+  | .letMutE name value rest =>
+    letV name (compileExpr value) :: compileStmts tail rest
+  | .seqE a b =>
+    compileStmts false a ++ compileStmts tail b
+  | .forE v iter body =>
+    [forOf v (compileExpr iter) (compileStmts false body)]
+  | .whileE c body =>
+    [whileS (compileExpr c) (compileStmts false body)]
+  | .assignE lhs rhs =>
+    [assign (compileExpr lhs) (compileExpr rhs)]
+  | .ifE c t e =>
+    [ifS (compileExpr c) (compileStmts tail t) (compileStmts tail e)]
+  | .nullE =>
+    -- A `null` terminal means "no value" — emit nothing so a void
+    -- block doesn't end with a spurious `return null`.
+    []
+  | terminal =>
+    if tail then [retE (compileExpr terminal)]
+    else [doE (compileExpr terminal)]
 
 end
 
@@ -163,24 +213,11 @@ def compileInductive (ctors : List CtorDecl) : Block :=
     closest analogue we can offer to Lean's `Task`/`Task.get` — both
     sides build linear "do" blocks where `await` (or `.get`) blends
     in with the surrounding sequence. -/
-partial def compileAsyncBody : Ast.Expr → Block
-  | .letE name value body =>
-    -- `let _ := expr; rest` is the LeanJs idiom for "run expr for
-    -- its side-effect, then continue". In IIFE form each `_` lived
-    -- in its own scope; flattened, repeated `const _` would shadow
-    -- in the same block (JS error). So drop the binder and emit the
-    -- value as a bare expression statement.
-    let stmt :=
-      if name == "_" then doE (compileExpr value)
-      else constV name (compileExpr value)
-    stmt :: compileAsyncBody body
-  | .ifE c t e =>
-    [ifS (compileExpr c) (compileAsyncBody t) (compileAsyncBody e)]
-  | terminal =>
-    [retE (compileExpr terminal)]
-
 def compileAsyncDefE (name : String) (params : List Param) (body : Ast.Expr) : Stmt :=
-  let stmts := compileAsyncBody body
+  -- Async bodies flatten through the shared statement compiler, so
+  -- `await` survives in the async arrow's scope and `for` / `let mut`
+  -- / `while` work in async functions too.
+  let stmts := compileStmts true body
   let value := aarrow (params.map (·.name)) stmts
   constV name value
 

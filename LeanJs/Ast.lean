@@ -99,6 +99,23 @@ inductive Expr where
       `Check` verifies that the supplied field set matches the
       declared shape so typos surface at compile-time. -/
   | recordLitE (cls : String) (fields : List (String × Expr)) : Expr
+  /-- `do <statements>` — a statement block. Lowers to a synchronous
+      IIFE whose body is the flattened statement list. The block is
+      the entry point for the imperative constructs below (`for`,
+      `let mut`, reassignment, `while`): they are only meaningful in a
+      statement context, which `do` (and `async def` bodies) provide. -/
+  | doBlock (body : Expr) : Expr
+  /-- `for v in iter do body` — for-of loop over an array/iterable.
+      Statement-only (inside a `do` block or async body). Numeric
+      ranges use a `range(lo, hi, step)` helper on the iterable side,
+      so this single construct covers every loop. -/
+  | forE (v : String) (iter body : Expr) : Expr
+  /-- `while cond do body` — statement-only loop. -/
+  | whileE (cond body : Expr) : Expr
+  /-- `let mut name := value; body` — a *reassignable* binding.
+      Same shape as `letE` but lowers to `let` (not `const`) so later
+      `name := …` reassignments in the same block are legal. -/
+  | letMutE (name : String) (value body : Expr) : Expr
 
 /-- One arm of a `match`. `pat` carries either a constructor
     pattern (with named field binders), a string literal, or a
