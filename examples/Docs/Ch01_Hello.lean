@@ -1,6 +1,6 @@
 import LeanTea
 
-/-! # Chapter 1 — Hello, lean-elm
+/-! # Chapter 1 — Hello, lean-tea
 
 A Counter in 30 lines. We don't open an HTTP server in this chapter
 because the point is to see the *core* — `Model`, `Msg`, `update`,
@@ -78,7 +78,7 @@ def driveScript (script : List Ch01.Msg) (start : Ch01.Model)
     IO.println s!"               view  = {(Ch01.view m).render}"
 
 def main : IO Unit := do
-  IO.println "== Chapter 1 — Hello, lean-elm =="
+  IO.println "== Chapter 1 — Hello, lean-tea =="
   IO.println ""
   IO.println "Script: inc inc inc dec reset"
   driveScript [.inc, .inc, .inc, .dec, .reset] 0

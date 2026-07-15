@@ -7,7 +7,7 @@ file path at startup, reads it, and hands the contents to
 `LeanJs.Parser`.
 
 `loadSource` probes a small list of candidate paths so the same
-binary runs from either `lean-elm/` (the natural Lake build dir)
+binary runs from either `lean-tea/` (the natural Lake build dir)
 or one level up (the repo root). Mirrors any `*_serve`'s
 `resolveDist` shape. -/
 
@@ -19,6 +19,7 @@ private def candidates : List String := [
   "examples/Reversi/Game.leanjs",
   "../examples/Reversi/Game.leanjs",
   "../../examples/Reversi/Game.leanjs",
+  "lean-tea/examples/Reversi/Game.leanjs",
   "lean-elm/examples/Reversi/Game.leanjs"
 ]
 

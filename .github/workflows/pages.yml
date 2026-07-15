@@ -1,4 +1,4 @@
-# Build the lean-elm book (docs/*.md) into a static site and deploy
+# Build the lean-tea book (docs/*.md) into a static site and deploy
 # to GitHub Pages on every push to `main`. The site generator is the
 # `gen_site` Lean executable; everything renders through
 # LeanTea.Markdown + LeanTea.Css.

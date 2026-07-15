@@ -309,7 +309,7 @@ def toolsList : Json :=
     ])
   ]
 
-def initializeResult : Json := defaultInitializeResult "lean-elm-coder-mcp"
+def initializeResult : Json := defaultInitializeResult "lean-tea-coder-mcp"
 
 /-! ## Dispatch -/
 

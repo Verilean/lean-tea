@@ -6,7 +6,7 @@
 #   * auto-stop / auto-start keeps cost at $0 for personal use.
 #     Expect ~10-20s cold start when waking from stopped.
 #
-# Deploy from inside lean-elm/:
+# Deploy from inside lean-tea/:
 #   flyctl launch --no-deploy
 #   flyctl volumes create english_data --region nrt --size 1
 #   flyctl deploy

@@ -18,8 +18,8 @@ if [ ${#specs[@]} -eq 0 ]; then
 fi
 
 echo "→ building ${#specs[@]} spec target(s) …"
-lake build "${specs[@]}" > /tmp/lean-elm-specs-build.log 2>&1 || {
-  cat /tmp/lean-elm-specs-build.log
+lake build "${specs[@]}" > /tmp/lean-tea-specs-build.log 2>&1 || {
+  cat /tmp/lean-tea-specs-build.log
   echo "build failed" >&2
   exit 1
 }

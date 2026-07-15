@@ -20,8 +20,8 @@ if [ ${#chapters[@]} -eq 0 ]; then
 fi
 
 echo "→ building ${#chapters[@]} chapters …"
-lake build "${chapters[@]}" > /tmp/lean-elm-docs-build.log 2>&1 || {
-  cat /tmp/lean-elm-docs-build.log
+lake build "${chapters[@]}" > /tmp/lean-tea-docs-build.log 2>&1 || {
+  cat /tmp/lean-tea-docs-build.log
   echo "build failed" >&2
   exit 1
 }

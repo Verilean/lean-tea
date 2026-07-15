@@ -381,7 +381,7 @@ def toolsList : Json :=
     ])
   ]
 
-def initializeResult : Json := defaultInitializeResult "lean-elm-comfyui-mcp"
+def initializeResult : Json := defaultInitializeResult "lean-tea-comfyui-mcp"
 
 /-! ## Args extraction -/
 

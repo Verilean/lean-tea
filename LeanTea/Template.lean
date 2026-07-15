@@ -208,11 +208,11 @@ def parse (src : String) : Template :=
 /-! ## File loader
 
 Resolves a relative path against several plausible roots so the
-binary works from either `lean-elm/` or one level up. Defined ahead
+binary works from either `lean-tea/` or one level up. Defined ahead
 of the renderer so `{{#include}}` can call into it. -/
 
 private def candidates (rel : String) : List String := [
-  rel, "../" ++ rel, "../../" ++ rel, "lean-elm/" ++ rel
+  rel, "../" ++ rel, "../../" ++ rel, "lean-tea/" ++ rel, "lean-elm/" ++ rel
 ]
 
 def loadFile (rel : String) : IO Template := do

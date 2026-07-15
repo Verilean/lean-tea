@@ -46,7 +46,7 @@ def fillTemplate (tpl : String) (subs : List (String × String)) : String :=
 
 /-- Queue a workflow. Returns the prompt_id ComfyUI assigns. -/
 def submitPrompt (cfg : Config) (workflow : Json) : IO String := do
-  let clientId := "lean-elm"
+  let clientId := "lean-tea"
   let body := (Json.mkObj [
     ("prompt",    workflow),
     ("client_id", Json.str clientId)
