@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783049210657,
+  "lastUpdate": 1784145951635,
   "repoUrl": "https://github.com/Verilean/lean-tea",
   "entries": {
     "HTTP throughput (lean-tea reactor vs nginx)": [
@@ -356,6 +356,85 @@ window.BENCHMARK_DATA = {
           {
             "name": "nginx /json",
             "value": 114949,
+            "unit": "RPS"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "junjihashimoto@users.noreply.github.com",
+            "name": "junji hashimoto",
+            "username": "junjihashimoto"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "41f5353816663b416fc579c850c0d0354f57e6d5",
+          "message": "Merge pull request #12 from Verilean/chore/rename-lean-tea-and-apache-license\n\nAdd Apache-2.0 LICENSE + rename lean-elm → lean-tea (Reservoir)",
+          "timestamp": "2026-07-16T05:02:44+09:00",
+          "tree_id": "9a38177424083568026f7dfe3274c1967c989baf",
+          "url": "https://github.com/Verilean/lean-tea/commit/41f5353816663b416fc579c850c0d0354f57e6d5"
+        },
+        "date": 1784145950950,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "lean-tea libuv /health",
+            "value": 2891,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /json",
+            "value": 2673,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /echo",
+            "value": 2865,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /health",
+            "value": 94660,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /json",
+            "value": 96269,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /echo",
+            "value": 75041,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /health",
+            "value": 112842,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /json",
+            "value": 113615,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /echo",
+            "value": 89745,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /health",
+            "value": 118908,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /json",
+            "value": 113549,
             "unit": "RPS"
           }
         ]
