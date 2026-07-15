@@ -43,12 +43,13 @@ structure Session where
 
 The bridge script ships in `tools/browser-bridge/`. Mirror the same
 candidates pattern other examples use so the binary works from either
-`lean-elm/` or one level up. -/
+`lean-tea/` or one level up. -/
 
 private def candidates : List String := [
   "tools/browser-bridge/bridge.js",
   "../tools/browser-bridge/bridge.js",
   "../../tools/browser-bridge/bridge.js",
+  "lean-tea/tools/browser-bridge/bridge.js",
   "lean-elm/tools/browser-bridge/bridge.js"
 ]
 

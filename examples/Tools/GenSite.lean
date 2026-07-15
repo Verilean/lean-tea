@@ -37,7 +37,7 @@ private partial def parseArgs : List String → Args → Args
 
 private structure Page where
   slug  : String   -- e.g. "01-overview"
-  title : String   -- e.g. "1 · Overview — what `lean-elm` is"
+  title : String   -- e.g. "1 · Overview — what `lean-tea` is"
   file  : String   -- "docs/01-overview.md"
   deriving BEq, Inhabited
 
@@ -64,7 +64,7 @@ private def sidebarNav (pages : List Page) (currentSlug : String) : Html :=
                 ("class", cls)] [text p.title]
     ]
   elem "nav" [("class", "sidebar")] [
-    h2 [] [text "lean-elm"],
+    h2 [] [text "lean-tea"],
     p [("class", "muted"),
        ("style", "color:#94a3b8;font-size:0.78rem;margin-bottom:1.2em")]
       [text "the book"],

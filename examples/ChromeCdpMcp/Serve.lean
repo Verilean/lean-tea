@@ -240,7 +240,7 @@ def toolsList : Json :=
     ])
   ]
 
-def initializeResult : Json := defaultInitializeResult "lean-elm-chrome-cdp-mcp"
+def initializeResult : Json := defaultInitializeResult "lean-tea-chrome-cdp-mcp"
 
 /-! ## Tool implementations -/
 

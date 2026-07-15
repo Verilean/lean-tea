@@ -167,7 +167,7 @@ def toolsList : Json :=
     ])
   ]
 
-def initializeResult : Json := defaultInitializeResult "lean-elm-browser-mcp"
+def initializeResult : Json := defaultInitializeResult "lean-tea-browser-mcp"
 
 /-! ## Argument extraction -/
 

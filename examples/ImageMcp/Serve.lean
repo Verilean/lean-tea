@@ -293,6 +293,7 @@ private def findRemoveBgScript : IO String := do
     "tools/remove_bg.py",
     "../tools/remove_bg.py",
     "../../tools/remove_bg.py",
+    "lean-tea/tools/remove_bg.py",
     "lean-elm/tools/remove_bg.py"
   ]
   for p in candidates do
@@ -378,7 +379,7 @@ def toolsList : Json :=
     ])
   ]
 
-def initializeResult : Json := defaultInitializeResult "lean-elm-image-mcp"
+def initializeResult : Json := defaultInitializeResult "lean-tea-image-mcp"
 
 /-! ## Args extraction -/
 

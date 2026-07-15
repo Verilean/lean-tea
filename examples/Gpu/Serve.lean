@@ -14,7 +14,7 @@ namespace GpuServe
 def handler : Handler := fun req => do
   match req.path with
   | "/" =>
-    let body := WebGpu.page "lean-elm" WebGpu.demoShader
+    let body := WebGpu.page "lean-tea" WebGpu.demoShader
     return Response.html 200 body
   | "/favicon.ico" =>
     return { status := 204, headers := #[], body := .empty }

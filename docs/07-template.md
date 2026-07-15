@@ -92,7 +92,7 @@ rather than duplicate the same N lines across files use `{{#include}}`:
 Change a colour in `_assets/hud.css` and every including page updates
 on the next refresh. Includes are loaded inside the renderer
 (`Template.render` is `IO String`), so the resolution chain — current
-dir, parent, grandparent, `lean-elm/<path>` — is the same as
+dir, parent, grandparent, `lean-tea/<path>` — is the same as
 `loadFile` itself.
 
 ## Templates vs typed Html — when to pick which

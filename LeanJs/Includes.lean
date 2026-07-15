@@ -29,12 +29,12 @@ open LeanJs.Ast
 /-- Search list for an include path. Tries the path verbatim first
     (so absolute paths or already-correct relatives work), then
     relative to the directory of the including file, then up the
-    usual `lean-elm/` / `../` ladder that mirrors `Template.loadFile`
+    usual `lean-tea/` / `../` ladder that mirrors `Template.loadFile`
     and the various game loaders. -/
 private def candidates (baseDir : String) (rel : String) : List String :=
   let baseJoin : String := if baseDir.isEmpty then rel else baseDir ++ "/" ++ rel
   [rel, baseJoin, "examples/" ++ rel, "../examples/" ++ rel,
-   "../../examples/" ++ rel, "lean-elm/examples/" ++ rel]
+   "../../examples/" ++ rel, "lean-tea/examples/" ++ rel, "lean-elm/examples/" ++ rel]
 
 /-- Pick the first existing path. Returns the absolute form so we can
     use it as the cycle-detection key. -/

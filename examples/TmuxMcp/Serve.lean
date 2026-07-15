@@ -180,7 +180,7 @@ def toolsList : Json :=
     ])
   ]
 
-def initializeResult : Json := defaultInitializeResult "lean-elm-tmux-mcp"
+def initializeResult : Json := defaultInitializeResult "lean-tea-tmux-mcp"
 
 /-! ## Tool dispatch -/
 

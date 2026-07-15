@@ -26,7 +26,7 @@ cd tools/browser-bridge && npm install && npx playwright install chromium
 ## Connect to Claude Code (this CLI session)
 
 ```bash
-claude mcp add browser /Users/junji.hashimoto/git/english_learning/lean-elm/.lake/build/bin/browser_mcp_serve
+claude mcp add browser /path/to/lean-tea/.lake/build/bin/browser_mcp_serve
 ```
 
 That's it — restart `claude` and you'll see `browser_*` tools in the
@@ -47,7 +47,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "browser": {
-      "command": "/Users/junji.hashimoto/git/english_learning/lean-elm/.lake/build/bin/browser_mcp_serve"
+      "command": "/path/to/lean-tea/.lake/build/bin/browser_mcp_serve"
     }
   }
 }
@@ -111,7 +111,7 @@ env var:
     "browser": {
       "command": "/path/to/browser_mcp_serve",
       "env": {
-        "LEANTEA_BROWSER_BRIDGE": "/path/to/lean-elm/tools/browser-bridge/bridge.js"
+        "LEANTEA_BROWSER_BRIDGE": "/path/to/lean-tea/tools/browser-bridge/bridge.js"
       }
     }
   }

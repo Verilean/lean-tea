@@ -197,7 +197,7 @@ def toolsList : Json :=
     ])
   ]
 
-def initializeResult : Json := defaultInitializeResult "lean-elm-gemini-mcp"
+def initializeResult : Json := defaultInitializeResult "lean-tea-gemini-mcp"
 
 /-! ## Static model catalogue -/
 

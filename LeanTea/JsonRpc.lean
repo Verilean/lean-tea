@@ -13,7 +13,7 @@ Three things in one module:
    number, bool, object, array, nullable, enum).
 2. `Server` — register methods with their schema and handler; emit
    a `Net.Http.Handler` that speaks JSON-RPC 2.0 over POST.
-3. `Client` — shell-out-to-curl outbound RPC, so a lean-elm app can
+3. `Client` — shell-out-to-curl outbound RPC, so a lean-tea app can
    call other JSON-RPC services (own or third-party) by name. -/
 
 namespace LeanTea.JsonRpc
