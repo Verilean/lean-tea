@@ -24,6 +24,16 @@ def libpqLinkArgs : Array String :=
        link is at the canonical Debian multiarch path. -/
     #["/usr/lib/x86_64-linux-gnu/libpq.so.5"]
 
+/-- Link args for the OpenSSL TLS client (`c/leantea_tls.c`, LEANTEA_TLS=1).
+    macOS: Homebrew's keg-only openssl@3 dylibs; Linux: `-lssl -lcrypto`.
+    Weak, so only exes that actually request TLS pay the link. -/
+def sslLinkArgs : Array String :=
+  if System.Platform.isOSX then
+    #["/opt/homebrew/opt/openssl@3/lib/libssl.dylib",
+      "/opt/homebrew/opt/openssl@3/lib/libcrypto.dylib"]
+  else
+    #["-lssl", "-lcrypto"]
+
 package «lean-tea» where
   -- Pre-compile module C output so `lean_exe` targets can link the
   -- SQLite FFI without a separate `lean -c` pass at link time.
@@ -262,6 +272,49 @@ extern_lib libleantea_fastnet pkg := do
   let wrapperO ← leantea_fastnet_o.fetch
   buildStaticLib (pkg.staticLibDir / name) #[wrapperO]
 
+/-! ## TLS client (OpenSSL libssl) FFI — `LEANTEA_TLS=1`
+
+HTTPS transport for `LeanTea.Net.TlsClient`. Opt-in like the crypto FFI:
+enabled, it compiles the real OpenSSL client (which needs `-lssl -lcrypto`
+at link time, added via the consuming exe's `weakLinkArgs`); disabled, it's
+a stub that raises an IO error on first use, so the portable default build
+stays green even where OpenSSL headers aren't installed. -/
+
+target leantea_tls_o pkg : FilePath := do
+  let oFile := pkg.buildDir / "c" / "leantea_tls.o"
+  let srcJob ← inputTextFile <| pkg.dir / "c" / "leantea_tls.c"
+  let enabled := (← IO.getEnv "LEANTEA_TLS").map (·.toLower == "1")
+                  |>.getD false
+  let mut weakArgs : Array String := #["-I", (← getLeanIncludeDir).toString]
+  let mut traceArgs : Array String := #["-fPIC", "-O2"]
+  if enabled then
+    /- Find OpenSSL headers: pkg-config first, then known Homebrew paths. -/
+    let mut foundHeader := false
+    let cf ← (IO.Process.output {
+      cmd := "pkg-config", args := #["--cflags", "openssl"] }
+        ).catchExceptions (fun _ => pure { exitCode := 1, stdout := "", stderr := "" })
+    if cf.exitCode == 0 && !cf.stdout.trim.isEmpty then
+      for tok in cf.stdout.trim.splitOn " " do
+        if !tok.isEmpty then weakArgs := weakArgs.push tok
+      foundHeader := true
+    if !foundHeader then
+      for guess in [
+        "/opt/homebrew/opt/openssl@3/include",
+        "/opt/homebrew/include",
+        "/usr/local/opt/openssl@3/include",
+        "/usr/local/include"] do
+        if ← System.FilePath.pathExists (guess ++ "/openssl/ssl.h") then
+          weakArgs := weakArgs ++ #["-I", guess]
+          foundHeader := true
+          break
+    traceArgs := traceArgs.push "-DLEANTEA_HAVE_TLS"
+  buildO oFile srcJob weakArgs traceArgs "cc"
+
+extern_lib libleantea_tls pkg := do
+  let name := nameToStaticLib "leantea_tls"
+  let wrapperO ← leantea_tls_o.fetch
+  buildStaticLib (pkg.staticLibDir / name) #[wrapperO]
+
 /-! ## Reactor (epoll/kqueue) FFI for `LeanTea.Net.ReactorServer`.
 
 Adds the non-blocking reactor variant used for many-idle-connection
@@ -397,6 +450,14 @@ lean_exe postgres_smoke where
   srcDir := "examples"
   root := `Smoke.Postgres
   weakLinkArgs := libpqLinkArgs
+
+/-- HTTPS smoke over the OpenSSL TLS client. Build with `LEANTEA_TLS=1`
+    (real backend); `weakLinkArgs` pulls in libssl/libcrypto so the link
+    only happens when this exe is requested. Not a default target. -/
+lean_exe https_smoke where
+  srcDir := "examples"
+  root := `Smoke.Https
+  weakLinkArgs := sslLinkArgs
 
 /-! ## Executable documentation
 

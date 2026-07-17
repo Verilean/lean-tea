@@ -176,6 +176,99 @@ private def parseHead (head : String) : Nat × Array (String × String) :=
     | _         => none
   (status, headers.toArray)
 
+/-! ## Transport-agnostic helpers (shared with the TLS client)
+
+`request` below drives these over `Std.Async.TCP`; `LeanTea.Net.TlsClient`
+drives the exact same build/parse over an OpenSSL socket. -/
+
+/-- Build the raw HTTP/1.1 request bytes: request line + `Host` +
+    `Connection: close` + `Content-Length` (when a body is present) +
+    the caller's headers. `host` is used verbatim as the `Host:` value. -/
+def buildRequest (method host path : String)
+    (body : ByteArray := .empty) (headers : Array (String × String) := #[]) : ByteArray := Id.run do
+  let mut head : String :=
+    s!"{method} {path} HTTP/1.1\r\n" ++
+    s!"Host: {host}\r\n" ++
+    "Connection: close\r\n"
+  if body.size > 0 then
+    head := head ++ s!"Content-Length: {body.size}\r\n"
+  for (k, v) in headers do
+    head := head ++ s!"{k}: {v}\r\n"
+  head := head ++ "\r\n"
+  return head.toUTF8 ++ body
+
+/-- Parse a leading hex run into a Nat, stopping at the first non-hex
+    char (so `22f`, ` 22f `, and `22f;ext` all yield 559). -/
+def hexPrefix (s : String) : Nat := Id.run do
+  let mut acc := 0
+  for c in s.toList do
+    if c.isDigit then acc := acc * 16 + (c.toNat - '0'.toNat)
+    else if c ≥ 'a' ∧ c ≤ 'f' then acc := acc * 16 + (c.toNat - 'a'.toNat + 10)
+    else if c ≥ 'A' ∧ c ≤ 'F' then acc := acc * 16 + (c.toNat - 'A'.toNat + 10)
+    else return acc
+  return acc
+
+/-- Decode a `Transfer-Encoding: chunked` body: a sequence of
+    `<hex-size>[;ext]\r\n<data>\r\n` chunks terminated by a `0\r\n`. -/
+def dechunk (body : ByteArray) : ByteArray := Id.run do
+  let n := body.size
+  let mut out : ByteArray := .empty
+  let mut i := 0
+  let mut guard := 0
+  while i < n ∧ guard < n do
+    guard := guard + 1
+    -- size line: up to CRLF
+    let mut j := i
+    while j + 1 < n ∧ ¬ (body[j]! == 13 ∧ body[j+1]! == 10) do
+      j := j + 1
+    let hexStr := (String.fromUTF8? (body.extract i j)).getD ""
+    let size := hexPrefix hexStr
+    if size == 0 then break
+    let dataStart := j + 2
+    let dataEnd := dataStart + size
+    if dataEnd > n then break
+    out := out ++ body.extract dataStart dataEnd
+    i := dataEnd + 2      -- skip the chunk's trailing CRLF
+  return out
+
+/-- Parse a complete raw response (head + body) into a `Response`,
+    decoding a chunked body when the header says so. -/
+def parseResponse (raw : ByteArray) : Response :=
+  let (headBs, bodyBs) := splitHeadBody raw
+  let headStr := match String.fromUTF8? headBs with | some s => s | none => ""
+  let (status, hdrs) := parseHead headStr
+  let chunked := hdrs.any fun (k, v) =>
+    k == "transfer-encoding" ∧ (v.toLower.splitOn "chunked").length > 1
+  let body := if chunked then dechunk bodyBs else bodyBs
+  { status, headers := hdrs, body }
+
+/-- Read to EOF via a `recv` that yields `none` when the peer closes. -/
+partial def drainToEof (recv : IO (Option ByteArray)) (acc : ByteArray) : IO ByteArray := do
+  match ← recv with
+  | none   => return acc
+  | some c => drainToEof recv (acc ++ c)
+
+/-- Read until the buffer reaches `needed` bytes (or EOF). -/
+partial def drainToLen (recv : IO (Option ByteArray)) (needed : Nat) (acc : ByteArray) : IO ByteArray := do
+  if acc.size >= needed then return acc
+  match ← recv with
+  | none   => return acc
+  | some c => drainToLen recv needed (acc ++ c)
+
+/-- Drain a full HTTP response from any transport's `recv`. Honours
+    `Content-Length` (so keep-alive servers don't hang) and otherwise
+    reads to EOF (we always send `Connection: close`). -/
+partial def drainResponse (recv : IO (Option ByteArray)) (acc : ByteArray := .empty) : IO ByteArray := do
+  match findHeaderEnd acc 0 with
+  | none =>
+    match ← recv with
+    | none   => return acc
+    | some c => drainResponse recv (acc ++ c)
+  | some hdrEnd =>
+    match contentLengthOfHead (acc.extract 0 hdrEnd) with
+    | none      => drainToEof recv acc
+    | some clen => drainToLen recv (hdrEnd + 4 + clen) acc
+
 /-! ## High-level request -/
 
 /-- Send one request and return the parsed response. Closes the
