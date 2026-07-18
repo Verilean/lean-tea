@@ -675,6 +675,13 @@ lean_exe tmux_mcp_serve where
   srcDir := "examples"
   root := `TmuxMcp.Serve
 
+/-- MCP server driving `zellij(1)` — the Zellij sibling of tmux_mcp_serve.
+    Focus-relative pane orchestration for a target session: write / dump
+    screen / new pane+tab / move focus / go-to-tab / run. -/
+lean_exe zellij_mcp_serve where
+  srcDir := "examples"
+  root := `ZellijMcp.Serve
+
 /-- MCP server giving code-editing agents the standard file-system +
     shell toolkit, every operation workspace-bound via
     `LeanTea.Net.SafePath`. Seven tools: `coder_read_file`,
