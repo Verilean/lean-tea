@@ -1,6 +1,7 @@
 import Lean.Data.Json
 import LeanTea.Net.Http
 import LeanTea.Net.HttpClient
+import LeanTea.Net.TlsClient
 
 /-! # LeanTea.Llm.Openai — OpenAI-compatible client
 
@@ -166,15 +167,17 @@ private def authHeaders (cfg : Config) : Array (String × String) :=
   | none   => #[]
   | some k => #[("Authorization", s!"Bearer {k}")]
 
-/-- Non-streaming chat: pure-Lean HTTP, no curl. The socket transport
-    has no argv-size limit, so vision payloads (~1 MB base64) just go
-    over the wire. For HTTPS endpoints (OpenAI proper) this client
-    doesn't apply — see `chatStream` for the curl-backed path that
-    still works for both. -/
+/-- Non-streaming chat over the native clients, no curl: `LeanTea.Net`
+    dispatches by scheme — `http://` (LM Studio) over the socket client,
+    `https://` (OpenAI proper) over the OpenSSL `TlsClient`. The socket
+    transport has no argv-size limit, so vision payloads (~1 MB base64)
+    just go over the wire. HTTPS needs a `LEANTEA_TLS=1` build (else the
+    TLS client raises a clear IO error); `chatStream` remains curl-backed
+    for streaming. -/
 def chatRaw (cfg : Config) (req : ChatRequest) : IO Json := do
   let body := (requestToJson { req with stream := false }).compress
   let url  := s!"{cfg.baseUrl}/chat/completions"
-  let raw ← LeanTea.Net.HttpClient.postJsonText url body (authHeaders cfg)
+  let raw ← LeanTea.Net.postJsonText url body (authHeaders cfg)
   match Json.parse raw with
   | .error e => throw <| IO.userError s!"openai: bad JSON response: {e}\n{raw}"
   | .ok j    => return j
@@ -184,7 +187,7 @@ def chatRaw (cfg : Config) (req : ChatRequest) : IO Json := do
 def chat (cfg : Config) (req : ChatRequest) : IO ChatResult := do
   let body := (requestToJson { req with stream := false }).compress
   let url  := s!"{cfg.baseUrl}/chat/completions"
-  let stdout ← LeanTea.Net.HttpClient.postJsonText url body (authHeaders cfg)
+  let stdout ← LeanTea.Net.postJsonText url body (authHeaders cfg)
   let j ←
     match Json.parse stdout with
     | .error e => throw <| IO.userError s!"openai: bad JSON response: {e}\n{stdout}"

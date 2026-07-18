@@ -34,10 +34,29 @@ def sslLinkArgs : Array String :=
   else
     #["-lssl", "-lcrypto"]
 
+/-- OpenSSL link args, but ONLY when `LEANTEA_TLS=1` — read at lakefile
+    load (configure) time. This is what makes every serving exe
+    HTTPS-capable: with the flag set, all package exes link libssl/libcrypto
+    (so the native `TlsClient` works); without it, this is empty and the
+    portable default build never touches OpenSSL. Applied package-wide via
+    `moreLinkArgs`.
+
+    NOTE: because it's read at configure time, TOGGLING the flag on an
+    existing build dir needs a reconfigure so the link args re-read:
+        LEANTEA_TLS=1 lake build -R <exe>       # -R once after enabling
+    A fresh checkout built with the flag from the start needs no `-R`. The
+    C backend (`leantea_tls_o`) reads the same flag at build time, so keep
+    them in sync via that first `-R`. -/
+def tlsLinkArgs : Array String :=
+  if ((run_io (IO.getEnv "LEANTEA_TLS")).map (·.toLower == "1")).getD false
+  then sslLinkArgs else #[]
+
 package «lean-tea» where
   -- Pre-compile module C output so `lean_exe` targets can link the
   -- SQLite FFI without a separate `lean -c` pass at link time.
   precompileModules := false
+  -- OpenSSL for the TLS client — only when LEANTEA_TLS=1 (else empty).
+  moreLinkArgs := tlsLinkArgs
 
 lean_lib LeanTea where
   roots := #[`LeanTea, `LeanTea.Tui]
@@ -457,7 +476,8 @@ lean_exe postgres_smoke where
 lean_exe https_smoke where
   srcDir := "examples"
   root := `Smoke.Https
-  weakLinkArgs := sslLinkArgs
+  -- OpenSSL comes from the package `moreLinkArgs` (LEANTEA_TLS=1); nothing
+  -- exe-specific needed.
 
 /-! ## Executable documentation
 
