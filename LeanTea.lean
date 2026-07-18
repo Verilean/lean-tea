@@ -17,6 +17,7 @@ import LeanTea.Persist.Postgres
 import LeanTea.Persist.SafeQuery
 import LeanTea.Net.Http
 import LeanTea.Net.HttpClient
+import LeanTea.Net.TlsClient
 import LeanTea.Net.SafePath
 import LeanTea.Net.SafeRedirect
 import LeanTea.Net.WebDav
