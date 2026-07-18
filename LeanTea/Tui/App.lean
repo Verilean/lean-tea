@@ -38,6 +38,13 @@ structure App (s : Type) (m : Type) where
   quitWhen : s → Bool := fun _ => false
   /-- Widget id to focus initially. Empty = first id in `RunOpts.focusOrder`. -/
   initialFocus : String := ""
+  /-- Live-monitor support. When set, the key read is bounded to this many
+      milliseconds; if no key arrives the runtime fires `onTick` (an IO
+      refresh of the state, e.g. re-query a database) and repaints. `none`
+      = purely input-driven (blocks until a key is pressed). -/
+  tickMs   : Option Nat := none
+  /-- Called on each tick to refresh state from the outside world (IO). -/
+  onTick   : s → IO s := pure
 
 structure RunOpts where
   width      : Nat := 100
@@ -127,15 +134,53 @@ private def cyclePrev (order : List String) (cur : String) : String :=
 
 /-! ## Raw terminal mode (POSIX, via stty) -/
 
-private def sttyRawOn : IO Unit := do
-  let _ ← IO.Process.run { cmd := "sh", args := #["-c", "stty raw -echo < /dev/tty"] }
-  pure ()
+/-- Run an stty command, tolerating failure (e.g. no controlling TTY): the
+    app then simply runs without raw mode instead of crashing. -/
+private def stty (arg : String) : IO Unit := do
+  try
+    let _ ← IO.Process.run { cmd := "sh", args := #["-c", s!"stty {arg} < /dev/tty"] }
+    pure ()
+  catch _ => pure ()
 
-private def sttyRawOff : IO Unit := do
-  let _ ← IO.Process.run { cmd := "sh", args := #["-c", "stty -raw echo < /dev/tty"] }
-  pure ()
+private def sttyRawOn : IO Unit := stty "raw -echo"
+
+/-- Raw mode with a read timeout: `min 0 time <deci>` makes a 1-byte read
+    return after `deci` × 100ms even with no input, so the loop can tick. -/
+private def sttyRawTimedOn (deci : Nat) : IO Unit := stty s!"raw -echo min 0 time {deci}"
+
+private def sttyRawOff : IO Unit := stty "-raw echo"
 
 /-! ## Key reading -/
+
+/-- Like `readKey` but returns `none` when the (timed) read yields no byte,
+    so a ticking loop can tell "timed out, fire a tick" from a real key. -/
+partial def readKey? (stdin : IO.FS.Stream) : IO (Option Key) := do
+  let b0 ← stdin.read 1
+  if b0.size == 0 then return none
+  return some (← readKeyFrom stdin b0[0]!)
+where
+  readKeyFrom (stdin : IO.FS.Stream) (c0 : UInt8) : IO Key := do
+    if c0 == 0x1b then
+      let b1 ← stdin.read 1
+      if b1.size == 0 then return Key.esc
+      if b1[0]! == 0x5b /- [ -/ then
+        let b2 ← stdin.read 1
+        if b2.size == 0 then return Key.esc
+        match b2[0]! with
+        | 0x41 => return Key.up
+        | 0x42 => return Key.down
+        | 0x43 => return Key.right
+        | 0x44 => return Key.left
+        | 0x46 => return Key.end_
+        | 0x48 => return Key.home
+        | 0x5a => return Key.shiftTab
+        | _ => return Key.esc
+      else return Key.esc
+    else if c0 == 0x09 then return Key.tab
+    else if c0 == 0x0d || c0 == 0x0a then return Key.enter
+    else if c0 == 0x7f || c0 == 0x08 then return Key.backspace
+    else if c0 < 0x20 then return Key.ctrl (Char.ofNat (c0.toNat + 0x60))
+    else return Key.char (Char.ofNat c0.toNat)
 
 partial def readKey (stdin : IO.FS.Stream) : IO Key := do
   let b0 ← stdin.read 1
@@ -175,25 +220,34 @@ partial def App.runWith (app : App s m) (opts : RunOpts) : IO Unit := do
   let stdin ← IO.getStdin
   stdout.putStr (altScreenOn ++ hideCursor ++ clearScreen)
   stdout.flush
-  sttyRawOn
+  match app.tickMs with
+  | some ms => sttyRawTimedOn (max 1 (ms / 100))
+  | none    => sttyRawOn
   let mut state := app.init
   let mut focused :=
     if app.initialFocus.isEmpty then opts.focusOrder.head?.getD "" else app.initialFocus
   try
-    while !(app.quitWhen state) do
+    let mut running := true
+    while running && !(app.quitWhen state) do
       let w := app.view state
       let box := w.render opts.width opts.height (focused == w.focusId)
       stdout.putStr (renderBoxAnsi box)
       stdout.flush
-      let key ← readKey stdin
-      match key with
-      | .ctrl 'c' => break
-      | .tab      => focused := cycleNext opts.focusOrder focused
-      | .shiftTab => focused := cyclePrev opts.focusOrder focused
-      | _ =>
-        match w.dispatchKey focused key with
-        | none => pure ()
-        | some msg => state := app.update msg state
+      -- ticking apps use a timed read (none = timed out -> refresh via onTick)
+      let key? ← match app.tickMs with
+        | some _ => readKey? stdin
+        | none   => some <$> readKey stdin
+      match key? with
+      | none     => state ← app.onTick state
+      | some key =>
+        match key with
+        | .ctrl 'c' => running := false
+        | .tab      => focused := cycleNext opts.focusOrder focused
+        | .shiftTab => focused := cyclePrev opts.focusOrder focused
+        | _ =>
+          match w.dispatchKey focused key with
+          | none => pure ()
+          | some msg => state := app.update msg state
   finally
     sttyRawOff
     stdout.putStr (showCursor ++ altScreenOff ++ reset)
