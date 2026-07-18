@@ -188,7 +188,7 @@ private def handleLive (ctx : Ctx) : IO Response := do
 
 private def handleControl (ctx : Ctx) (req : Request) : IO Response := do
   match Json.parse (String.fromUTF8! req.body) with
-  | .error e => return Response.json 400 Json.mkObj [("error", Json.str s!"bad json: {e}")]
+  | .error e => return Response.json 400 (Json.mkObj [("error", Json.str s!"bad json: {e}")])
   | .ok j =>
     let action := (j.getObjVal? "action").toOption.bind (·.getStr?.toOption) |>.getD ""
     match action with
@@ -199,11 +199,11 @@ private def handleControl (ctx : Ctx) (req : Request) : IO Response := do
       ctx.state.modify (fun s => { s with stats := ∅, cumReward := 0.0, history := #[] })
       saveAllStats ctx.storeDir ∅
       return Response.json 200 (Json.mkObj [("ok", Json.bool true)])
-    | _ => return Response.json 400 Json.mkObj [("error", Json.str s!"unknown action: {action}")]
+    | _ => return Response.json 400 (Json.mkObj [("error", Json.str s!"unknown action: {action}")])
 
 private def handleToggle (ctx : Ctx) (req : Request) : IO Response := do
   match Json.parse (String.fromUTF8! req.body) with
-  | .error e => return Response.json 400 Json.mkObj [("error", Json.str s!"bad json: {e}")]
+  | .error e => return Response.json 400 (Json.mkObj [("error", Json.str s!"bad json: {e}")])
   | .ok j =>
     let id := (j.getObjVal? "id").toOption.bind (·.getStr?.toOption) |>.getD ""
     let enabled :=
