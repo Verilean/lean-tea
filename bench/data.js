@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1784145951635,
+  "lastUpdate": 1784342959945,
   "repoUrl": "https://github.com/Verilean/lean-tea",
   "entries": {
     "HTTP throughput (lean-tea reactor vs nginx)": [
@@ -435,6 +435,85 @@ window.BENCHMARK_DATA = {
           {
             "name": "nginx /json",
             "value": 113549,
+            "unit": "RPS"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "junjihashimoto@users.noreply.github.com",
+            "name": "junji hashimoto",
+            "username": "junjihashimoto"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "295ca1a3271032043cef702c1c4643f06e82e967",
+          "message": "Merge pull request #13 from Verilean/feat/openssl-https-client\n\nAdd an OpenSSL HTTPS client (LeanTea.Net.TlsClient)",
+          "timestamp": "2026-07-18T11:46:15+09:00",
+          "tree_id": "5fe5ca4c1291aabfdc4c31cea117f749ca50b675",
+          "url": "https://github.com/Verilean/lean-tea/commit/295ca1a3271032043cef702c1c4643f06e82e967"
+        },
+        "date": 1784342959238,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "lean-tea libuv /health",
+            "value": 2783,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /json",
+            "value": 2915,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /echo",
+            "value": 2827,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /health",
+            "value": 95527,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /json",
+            "value": 95759,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /echo",
+            "value": 77159,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /health",
+            "value": 113430,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /json",
+            "value": 114419,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /echo",
+            "value": 90386,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /health",
+            "value": 117156,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /json",
+            "value": 113643,
             "unit": "RPS"
           }
         ]
