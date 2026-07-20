@@ -95,7 +95,7 @@ runtime convention so `match` can dispatch and bind fields.
 
 | JS feature | What to do instead |
 |---|---|
-| `let mut` / `for` / `while` | available inside a `do` block (or async body) — see the syntax table above |
+| `for` / `while` | available inside a `do` block (or async body) — see the syntax table above |
 | top-level `var` mutation | a small mutable record + helper externs |
 | `===` strict equality | LeanJs only emits `==`; compare type explicitly if needed |
 | ternary `?:` | `if c then a else b` |
