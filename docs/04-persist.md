@@ -31,11 +31,11 @@ structure NoteRow where
 instance : Entity NoteRow where
   table := "notes"
   ddl :=
-    "CREATE TABLE IF NOT EXISTS notes(" ++
-    "id INTEGER PRIMARY KEY AUTOINCREMENT," ++
-    "title TEXT NOT NULL," ++
-    "body  TEXT NOT NULL," ++
-    "ts    INTEGER NOT NULL)"
+    "CREATE TABLE IF NOT EXISTS notes(\
+     id INTEGER PRIMARY KEY AUTOINCREMENT,\
+     title TEXT NOT NULL,\
+     body  TEXT NOT NULL,\
+     ts    INTEGER NOT NULL)"
   columns := ["title", "body", "ts"]
   toRow   n := #[n.title, n.body, toString n.ts]
   fromRow r := match r.toList with
