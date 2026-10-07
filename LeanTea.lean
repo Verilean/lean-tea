@@ -54,6 +54,9 @@ import LeanTea.Agent.Memory
 import LeanTea.Agent.Script
 import LeanTea.Agent.Playbook
 import LeanTea.Agent.Conductor
+import LeanTea.Vision.Image
+import LeanTea.Vision.Ground
+import LeanTea.Vision.Driver
 import LeanTea.Crypto.Base64
 import LeanTea.Crypto.Sha256
 import LeanTea.Crypto.Hmac

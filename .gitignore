@@ -34,3 +34,10 @@ sparkle*.md
 
 # macOS noise
 .DS_Store
+
+# vision_bench datasets, runs and VLM answer cache (regenerable)
+bench/vision/data/
+bench/vision/runs/
+bench/vision/cache/
+bench/vision/qa-evidence/
+bench/vision/*.html

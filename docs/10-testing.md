@@ -163,6 +163,96 @@ For everything else (Chrome bootstrap, CI integration patterns, the
 session-aware `asUser` helper that's still on the v0.3 roadmap), see
 **[Chapter 12 · WebSpec](12-webspec.md)**.
 
+## Layer 2.5 — Vision QA (local VLM, pixel-precise)
+
+When there is no DOM to query — a canvas game, a native macOS app, a
+terminal UI — the test has to *look*. `LeanTea.Vision` gives a small
+local vision model (Qwen3-VL-4B via LM Studio) four jobs and keeps
+everything else deterministic:
+
+| need | API | script action |
+|---|---|---|
+| where is X? | `locate` / `locateZoom` → `Rect` in screenshot px | `click_described` |
+| is X true? | `ask` → yes/no + reason | `assert_visual` |
+| what does X say? | `readText` | `assert_text` |
+| which screen? | `classify` | `expect` / `wait_for_screen` |
+| exact colour | `Image.pixel` (no model) | `assert_pixel` |
+
+`locateZoom` is the pixel-precision trick: a coarse pass on the full
+screenshot, then the neighbourhood is cropped, upscaled ×3 and asked
+again. Coordinates come back in the model's own convention
+(`CoordFrame` — Qwen3-VL answers in 0–1000 normalised units) and are
+converted to screenshot pixels.
+
+The same script runs against three drivers (`LeanTea.Vision.Driver`):
+
+```sh
+lake build vision_qa
+# headless Chromium
+./.lake/build/bin/vision_qa examples/VisionQa/scripts/reversi.json \
+    --target browser --url http://127.0.0.1:8005/
+# the real macOS display (LEANTEA_DESKTOP=1 build; Retina handled)
+./.lake/build/bin/vision_qa flow.json --target desktop
+# a tmux pane, rasterised with its colours
+./.lake/build/bin/vision_qa flow.json --target tmux --tmux-target qa:0.0
+```
+
+`click_described` with a `key` caches the verified point in
+`ui-map.json`, so the model is consulted once and later runs replay
+the click deterministically. Manifests land in
+`~/.cache/leantea-agent/runs/`, so `ui_report` renders them. For
+agent use, `vision_qa_mcp_serve` exposes the same primitives as MCP
+tools next to `browser_mcp_serve` / `desktop_mcp_serve`.
+
+### Choosing the model — `vision_bench`
+
+Which small model is "accurate enough" is measured, not assumed:
+
+```sh
+lake build vision_bench_gen vision_bench_run vision_bench_report
+./.lake/build/bin/vision_bench_gen                     # labelled synthetic screens
+./.lake/build/bin/vision_bench_run --models qwen/qwen3-vl-4b,google/gemma-3-4b --limit 20
+./.lake/build/bin/vision_bench_report bench/vision/runs/*.jsonl   # → bench/vision/report.html
+```
+
+`gen` renders five screen kinds (form UI, scattered icons 12–48 px,
+dense spreadsheet, pixel-only canvas, terminal UI) in headless
+Chromium and takes ground truth from the DOM. `run` discovers each
+model's coordinate frame from the data, then scores locate (hit = the
+predicted centre lands inside the target), yes/no asserts and OCR.
+Answers are cached under `bench/vision/cache/`, which also makes
+`vision_spec` (offline, in CI) able to replay recorded answers.
+
+**Results (2026-10, M-series Mac, LM Studio, 20 samples per kind × task).**
+Locate = predicted centre inside the target, zoom-refine; sizes are the
+target's short side.
+
+| model (LM Studio) | locate | <16 px | 16–23 px | ≥24 px | err p50 | assert | false yes | OCR exact | s / locate |
+|---|---|---|---|---|---|---|---|---|---|
+| **qwen/qwen3-vl-4b (MLX 4bit)** | **95%** | 90% | 94% | 98% | 1.1 px | **97%** | 0% | 99% | 3.6 |
+| qwen/qwen3-vl-4b (MLX 8bit) | 93% | 90% | 92% | 95% | 0.8 px | 97% | 2% | 100% | 4.6 |
+| gui-owl-1.5-4b (GGUF Q8) | 88% | 50% | 90% | 95% | 1.2 px | 97% | 4% | 98% | 6.2 |
+| qwen/qwen3-vl-8b (MLX 4bit) | 89% | 70% | 88% | 95% | 1.3 px | 99% | 0% | 100% | 7.6 |
+| qwen/qwen3-vl-2b (MLX 8bit) | 88% | 80% | 83% | 95% | 1.9 px | 84% | 29% | 96% | 2.8 |
+| qwen/qwen2.5-vl-7b (GGUF Q4) | 82% | 50% | 75% | 98% | 4.8 px | 96% | 6% | 100% | 10.5 |
+| google/gemma-4-e4b (2048 tok) | 50% | – | – | – | 11 px | 94% | – | 91% | 3.6 |
+| google/gemma-3-4b | 0% | – | – | – | – | 60% | 69% | 94% | 3.0 |
+
+Takeaways:
+
+- **Default: Qwen3-VL-4B, 4-bit MLX.** 8-bit buys nothing measurable;
+  8B is slower and no better at locating, which matches the public
+  ScreenSpot-Pro ranking (4B 59.5 vs 8B 54.6).
+- **Zoom-refine matters** for small targets: single-pass 88% → 95%.
+- **2B is fast but says "yes" too easily** (29% false positives), so
+  it can't be trusted for assertions.
+- **Known 4B limits, found by running real scenarios:** spatial
+  relations ("same column", "in a line") and very low-contrast
+  highlights are unreliable. Assert those through text (`assert_text`
+  on a status line) or `assert_pixel` instead.
+- Holo2-4B (mradermacher GGUF) raised `Compute error` in LM Studio's
+  llama.cpp 2.53 even on text-only prompts, so it is not scored.
+
 ## Dev loop
 
 `tools/dev.py` watches the source tree, runs `lake build` on save,

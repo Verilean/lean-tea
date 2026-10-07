@@ -105,6 +105,9 @@ use clickXy or wrap the lookup in a tool_call to ui_recall"
     return Json.mkObj [("waited_for_screen", Json.bool true)]
   | .toolCall tool args _ _ =>
     orch.callTool tool args
+  | .clickDescribed .. | .assertVisual .. | .assertText .. | .assertPixel ..
+  | .key .. | .typeText .. =>
+    throw <| IO.userError "vision actions are not supported by the Conductor — run the script with vision_qa"
 
 private def runPlaybookSteps (orch : Orchestrator) (pb : Playbook)
     : IO (Bool × Array Json × Option String) := do

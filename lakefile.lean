@@ -353,6 +353,26 @@ extern_lib libleantea_reactor pkg := do
   let wrapperO ← leantea_reactor_o.fetch
   buildStaticLib (pkg.staticLibDir / name) #[wrapperO]
 
+/-! ## Image FFI for `LeanTea.Vision.Image`.
+
+PNG/JPEG decode + PNG encode via the vendored public-domain stb
+headers (`c/stb_image.h`, `c/stb_image_write.h`), plus crop / resize.
+Pure C, no system deps — always built. -/
+
+target leantea_image_o pkg : FilePath := do
+  let oFile := pkg.buildDir / "c" / "leantea_image.o"
+  let srcJob ← inputTextFile <| pkg.dir / "c" / "leantea_image.c"
+  let weakArgs := #[
+    "-I", (← getLeanIncludeDir).toString,
+    "-I", (pkg.dir / "c").toString
+  ]
+  buildO oFile srcJob weakArgs #["-fPIC", "-O2"] "cc"
+
+extern_lib libleantea_image pkg := do
+  let name := nameToStaticLib "leantea_image"
+  let wrapperO ← leantea_image_o.fetch
+  buildStaticLib (pkg.staticLibDir / name) #[wrapperO]
+
 extern_lib libleantea_desktop pkg := do
   let name := nameToStaticLib "leantea_desktop"
   let wrapperO ← leantea_desktop_o.fetch
@@ -576,6 +596,12 @@ lean_exe pure_spec where
   srcDir := "examples"
   root := `Tests.PureSpec
 
+/-- Offline tests for `LeanTea.Vision` (parsing, frames, image FFI,
+    ANSI rendering, script actions, answer-cache replay). No model. -/
+lean_exe vision_spec where
+  srcDir := "examples"
+  root := `Tests.VisionSpec
+
 /-- LeanJs CLI trio:
     * `leanjs_compile file.leanjs [-o out.js]` — pure compiler
       (parse + check + codegen). No execution.
@@ -783,6 +809,36 @@ lean_exe browser_agent where
 lean_exe ui_script where
   srcDir := "examples"
   root := `UiScript.Run
+
+/-! ## vision_bench — pick a local VLM that is accurate enough for
+    pixel-precise GUI QA. `gen` renders labelled synthetic screens
+    (headless Playwright), `run` scores models via LM Studio,
+    `report` writes the comparison HTML. -/
+lean_exe vision_bench_gen where
+  srcDir := "examples"
+  root := `VisionBench.Gen
+
+lean_exe vision_bench_run where
+  srcDir := "examples"
+  root := `VisionBench.Run
+
+lean_exe vision_bench_report where
+  srcDir := "examples"
+  root := `VisionBench.Report
+
+/-- Vision QA runner: `ui_script`-format scripts plus VLM actions
+    (`click_described`, `assert_visual`, `assert_text`, `assert_pixel`)
+    against a browser, the macOS desktop, or a tmux pane. -/
+lean_exe vision_qa where
+  srcDir := "examples"
+  root := `VisionQa.Run
+
+/-- MCP server exposing the local VLM as tools: `vision_locate`,
+    `vision_ask`, `vision_read_text`, `vision_classify`, `vision_pixel`.
+    Pair with browser/desktop MCP servers for screenshot + click. -/
+lean_exe vision_qa_mcp_serve where
+  srcDir := "examples"
+  root := `VisionQaMcp.Serve
 
 /-- HTML report generator: turns a ui_script manifest JSON into a
     portable single-file HTML page with the step tree, embedded
