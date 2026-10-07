@@ -254,6 +254,9 @@ private def runAction (ctx : RunCtx) (script : Script) (idx : Nat) (act : Action
        and surfaces the response in the audit log. -/
     let _ ← ctx.mcp.callTool tool args
     return none
+  | .clickDescribed .. | .assertVisual .. | .assertText .. | .assertPixel ..
+  | .key .. | .typeText .. =>
+    throw <| IO.userError "vision actions need the vision_qa runner (see docs/10-testing.md)"
   | .waitForScreen screen timeoutMs =>
     /- Polling loop. Without a classifier, this degrades to a single
        wait + screenshot. With one, we re-classify every 1s until

@@ -250,6 +250,9 @@ private def curlSigned (r : SignedRequest) : IO HttpResp := do
     IO.FS.writeBinFile bodyFile r.payload
   let mut args : Array String := #[
     "-sS", "--max-time", "30",
+    /- Keys may contain `..` segments; curl would normalise them away
+       and the server would see a different path than we signed. -/
+    "--path-as-is",
     "-X", r.method,
     "-w", "\n___STATUS:%{http_code}",
     "-o", outFile, r.url ]
@@ -324,20 +327,15 @@ def listObjectsRaw (cfg : Config) (keyPrefix : String := "") : IO String := do
     throw <| IO.userError s!"S3 listObjects: HTTP {resp.status}\n{String.fromUTF8! resp.body}"
   return String.fromUTF8! resp.body
 
-/-- Extract `<Key>…</Key>` tags from a list-objects XML response. -/
-partial def extractKeys (xml : String) : List String := Id.run do
-  let mut acc : List String := []
-  let mut rest : String := xml
-  while true do
-    match rest.splitOn "<Key>" with
-    | _ :: tail :: _ =>
-      match tail.splitOn "</Key>" with
-      | key :: ks =>
-        acc := key :: acc
-        rest := String.intercalate "</Key>" ks
-      | _ => break
-    | _ => break
-  return acc.reverse
+/-- Extract `<Key>…</Key>` tags from a list-objects XML response,
+    un-escaping the five XML entities. -/
+def extractKeys (xml : String) : List String :=
+  let unescape (s : String) : String :=
+    s.replace "&lt;" "<" |>.replace "&gt;" ">" |>.replace "&quot;" "\"" |>.replace "&apos;" "'" |>.replace "&amp;" "&"
+  (xml.splitOn "<Key>").drop 1 |>.filterMap fun seg =>
+    match seg.splitOn "</Key>" with
+    | k :: _ :: _ => some (unescape k)
+    | _ => none
 
 /-- Convenience: parsed key list. Empty list on no matches; throws
     on non-2xx. -/

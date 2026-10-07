@@ -58,6 +58,23 @@ inductive Action where
   | toolCall (tool : String) (args : Lean.Json)
              (saveAs : Option String := none)
              (timeoutMs : Nat := 180000)
+  /- Vision actions — need a VLM-backed runner (`vision_qa`). -/
+  /-- Ask the VLM where `target` (a natural-language description) is
+      and click its centre. With `key`, a verified hit is cached in
+      `ui-map.json` and later runs click the cached point directly. -/
+  | clickDescribed (target : String) (key : Option String := none)
+  /-- Yes/no question about the current screen; fails unless the VLM
+      answers `want`. -/
+  | assertVisual (question : String) (want : Bool := true)
+  /-- Locate `target`, read its text, compare to `equals` exactly. -/
+  | assertText (target : String) (equals : String)
+  /-- Deterministic pixel check, no LLM: the colour at `(x, y)` is
+      within `tol` (per channel) of `rgb` (`"#rrggbb"`). -/
+  | assertPixel (x y : Nat) (rgb : String) (tol : Nat := 16)
+  /-- Press a named key (`Enter`, `Escape`, `Tab`, `ArrowUp`, …). -/
+  | key (name : String)
+  /-- Type literal text. -/
+  | typeText (text : String)
   deriving Inhabited
 
 structure Step where
@@ -113,6 +130,18 @@ private def actionToJson : Action → Json
     Json.mkObj (match saveAs with
       | some p => base ++ [("saveAs", Json.str p)]
       | none   => base)
+  | .clickDescribed target key => Json.mkObj ([
+      ("act", Json.str "click_described"), ("target", Json.str target)] ++
+      (match key with | some k => [("key", Json.str k)] | none => []))
+  | .assertVisual q want => Json.mkObj [
+      ("act", Json.str "assert_visual"), ("question", Json.str q), ("want", Json.bool want)]
+  | .assertText target eq => Json.mkObj [
+      ("act", Json.str "assert_text"), ("target", Json.str target), ("equals", Json.str eq)]
+  | .assertPixel x y rgb tol => Json.mkObj [
+      ("act", Json.str "assert_pixel"), ("x", Json.num (Int.ofNat x)), ("y", Json.num (Int.ofNat y)),
+      ("rgb", Json.str rgb), ("tol", Json.num (Int.ofNat tol))]
+  | .key name => Json.mkObj [("act", Json.str "key"), ("key", Json.str name)]
+  | .typeText t => Json.mkObj [("act", Json.str "type"), ("text", Json.str t)]
 
 private def stepToJson (s : Step) : Json :=
   let base := match actionToJson s.act with
@@ -166,6 +195,17 @@ private def actionFromJson (j : Json) : Except String Action := do
     let args := (j.getObjVal? "args").toOption.getD (Json.mkObj [])
     return .toolCall tool args (getStrOpt j "saveAs")
       (getNatOpt j "timeoutMs" 180000)
+  | "click_described" =>
+    return .clickDescribed (← getStr j "target") (getStrOpt j "key")
+  | "assert_visual" =>
+    let want := match j.getObjVal? "want" with | .ok (.bool b) => b | _ => true
+    return .assertVisual (← getStr j "question") want
+  | "assert_text" =>
+    return .assertText (← getStr j "target") (← getStr j "equals")
+  | "assert_pixel" =>
+    return .assertPixel (getNatOpt j "x") (getNatOpt j "y") (← getStr j "rgb") (getNatOpt j "tol" 16)
+  | "key" => return .key (← getStr j "key")
+  | "type" => return .typeText (← getStr j "text")
   | other => .error s!"unknown action: {other}"
 
 private def stepFromJson (j : Json) : Except String Step := do
@@ -237,6 +277,12 @@ private def fmtAct : Action → String
     match saveAs with
     | some p => s!"toolCall {t} → {p}"
     | none   => s!"toolCall {t}"
+  | .clickDescribed t _   => s!"click \"{t}\""
+  | .assertVisual q w     => s!"assert {if w then "" else "not "}\"{q}\""
+  | .assertText t e       => s!"text of \"{t}\" == \"{e}\""
+  | .assertPixel x y c _  => s!"pixel ({x}, {y}) ≈ {c}"
+  | .key k                => s!"key {k}"
+  | .typeText t           => s!"type \"{t}\""
 
 private def truncate (s : String) (n : Nat) : String :=
   if s.length ≤ n then s else (s.take (n - 1)).toString ++ "…"

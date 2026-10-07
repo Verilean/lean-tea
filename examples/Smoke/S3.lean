@@ -5,10 +5,11 @@ import LeanTea.Cloud.S3
 
 Needs a running S3-compatible server. Two ways:
 
-  1. **MinIO** (recommended for CI): `docker run --rm -p 9000:9000
-     -e MINIO_ROOT_USER=test -e MINIO_ROOT_PASSWORD=testtest1234
-     minio/minio server /data`. The smoke creates the bucket on
-     start.
+  1. **`s3_serve`** (the repo's own S3-compatible server; what CI
+     uses): `./.lake/build/bin/s3_serve --port 9000 --data /tmp/s3
+     --access-key test --secret-key testtest1234`. Any MinIO with
+     the same credentials works too. The smoke creates the bucket
+     on start.
   2. **Real AWS S3**: set `AWS_ACCESS_KEY_ID` /
      `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` / `S3_BUCKET` and the
      smoke picks them up via `Config.fromEnv`.

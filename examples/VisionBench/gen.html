@@ -1,0 +1,245 @@
+<!doctype html>
+<!-- vision_bench page generator.
+     Open as gen.html?kind=<form|icons|grid|canvas|tui>&seed=<n>. The page
+     draws a synthetic GUI and publishes ground truth on
+     window.__samples (bboxes in CSS px == screenshot px at DPR 1):
+       {task:"locate", query, bbox:[x,y,w,h]}
+       {task:"assert", question, expect:bool}
+       {task:"ocr",    bbox:[x,y,w,h], text}
+     Same seed → same page, so datasets are reproducible. -->
+<html><head><meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 1280px; height: 800px; overflow: hidden; }
+  body { font-family: -apple-system, "Helvetica Neue", "Hiragino Sans", Arial, sans-serif; }
+  .light { --bg:#f5f6f8; --panel:#ffffff; --fg:#1d2330; --muted:#6b7280; --line:#d9dce3; --accent:#2563eb; --btn:#e8ebf0; }
+  .dark  { --bg:#14161b; --panel:#1e2128; --fg:#e6e8ee; --muted:#9aa1ad; --line:#323743; --accent:#5b8cff; --btn:#2a2f39; }
+  body { background: var(--bg); color: var(--fg); }
+  .nav { height: 44px; display:flex; align-items:center; gap:18px; padding:0 16px; background: var(--panel); border-bottom:1px solid var(--line); }
+  .nav .title { font-weight:700; margin-right:24px; }
+  .side { position:absolute; left:0; top:44px; bottom:0; width:200px; background:var(--panel); border-right:1px solid var(--line); padding:8px 0; }
+  .side div { padding:6px 16px; color: var(--muted); }
+  .side div.sel { color: var(--fg); background: var(--btn); }
+  .main { position:absolute; left:200px; top:44px; right:0; bottom:0; padding:20px 28px; }
+  .tabs { display:flex; gap:2px; border-bottom:1px solid var(--line); margin-bottom:16px; }
+  .tabs span { padding:8px 14px; color:var(--muted); }
+  .tabs span.sel { color:var(--accent); border-bottom:2px solid var(--accent); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px 20px; margin-bottom:14px; }
+  .row { display:flex; align-items:center; gap:12px; margin:8px 0; }
+  .row label.l { width:140px; color:var(--muted); }
+  input[type=text] { border:1px solid var(--line); background:var(--bg); color:var(--fg); padding:5px 8px; border-radius:4px; width:260px; font: inherit; }
+  button { font: inherit; border:1px solid var(--line); background:var(--btn); color:var(--fg); border-radius:5px; padding:5px 12px; }
+  button.primary { background: var(--accent); color:#fff; border-color: var(--accent); }
+  .chk { display:inline-flex; align-items:center; gap:6px; margin-right:18px; }
+  .chk i { display:inline-block; width:14px; height:14px; border:1.5px solid var(--muted); border-radius:3px; }
+  .chk i.on { background: var(--accent); border-color: var(--accent); position:relative; }
+  .chk i.on::after { content:""; position:absolute; left:3.5px; top:0.5px; width:4px; height:8px; border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg); }
+  .ib { position:absolute; display:flex; align-items:center; justify-content:center; border-radius:4px; background: var(--btn); border:1px solid var(--line); line-height:1; }
+  .filler { color: var(--muted); font-size: 13px; line-height: 1.5; }
+  table.sheet { border-collapse: collapse; position:absolute; left:0; top:0; font-size:12px; }
+  table.sheet td, table.sheet th { border:1px solid var(--line); padding:0 4px; white-space:nowrap; overflow:hidden; }
+  table.sheet th { background: var(--btn); color: var(--muted); font-weight: 500; }
+  pre.tui { margin:0; padding:8px; background:#0c0c0c; color:#c8c8c8; font: 14px/18px Menlo, "Courier New", monospace; width:1280px; height:800px; }
+</style></head>
+<body>
+<script>
+(function () {
+  const P = new URLSearchParams(location.search);
+  const kind = P.get("kind") || "form";
+  let seed = parseInt(P.get("seed") || "1", 10) * 2654435761 >>> 0;
+  function rnd() { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }
+  const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+  const pick = xs => xs[Math.floor(rnd() * xs.length)];
+  function shuffle(xs) { xs = xs.slice(); for (let i = xs.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [xs[i], xs[j]] = [xs[j], xs[i]]; } return xs; }
+  const take = (xs, n) => shuffle(xs).slice(0, n);
+  const el = (tag, attrs, parent, text) => { const e = document.createElement(tag);
+    for (const k in (attrs || {})) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text;
+    (parent || document.body).appendChild(e); return e; };
+  const samples = [];
+  const box = e => { const r = e.getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map(v => Math.round(v * 10) / 10); };
+  const visible = b => b[2] > 0 && b[3] > 0 && b[0] >= 0 && b[1] >= 0 && b[0] + b[2] <= 1280 && b[1] + b[3] <= 800;
+  // `b` is an [x,y,w,h] array or an Element. Elements are measured only
+  // after the whole page is built — later content can reflow earlier
+  // boxes (table columns widen as cells fill).
+  const locate = (query, b, extra) => samples.push(Object.assign({ task: "locate", query, bbox: b }, extra || {}));
+  const ocr = (text, b) => samples.push({ task: "ocr", text, bbox: b });
+  const assert = (question, expect) => samples.push({ task: "assert", question, expect });
+
+  const theme = rnd() < 0.5 ? "light" : "dark";
+  document.body.className = theme;
+  const fontPx = pick([11, 12, 13, 14, 16]);
+
+  const WORDS = ["Save", "Cancel", "Delete", "Export", "Import", "Submit", "Apply", "Reset", "Upload", "Download",
+    "Share", "Archive", "Refresh", "Preview", "Publish", "Duplicate", "Rename", "Close", "Next", "Back",
+    "保存", "キャンセル", "削除", "送信", "更新", "検索", "設定", "戻る"];
+  const MENU = ["Dashboard", "Projects", "Reports", "Settings", "Billing", "Team", "Analytics", "Inbox", "Calendar",
+    "Files", "Messages", "Help", "Users", "Logs", "Alerts", "Deploys", "ホーム", "通知", "アカウント"];
+  const FIELDS = ["Full name", "Email", "Company", "Phone", "City", "Postal code", "Username", "Website", "Country", "Tax ID"];
+  const CHECKS = ["Remember me", "Enable notifications", "Dark mode", "Auto-save", "Send weekly report",
+    "Two-factor auth", "Public profile", "Beta features"];
+  const CODES = () => pick(["INV", "ORD", "TKT", "REF", "SKU"]) + "-" + ri(1000, 99999);
+
+  function form() {
+    document.body.style.fontSize = fontPx + "px";
+    const nav = el("div", { class: "nav" });
+    el("span", { class: "title" }, nav, pick(["Acme Console", "Northwind", "LeanTea Admin", "管理画面"]));
+    const navItems = take(MENU, 5);
+    navItems.forEach(m => { const s = el("span", {}, nav, m); locate(`the "${m}" item in the top navigation bar`, s); });
+    const side = el("div", { class: "side" });
+    const sideItems = take(MENU.filter(m => !navItems.includes(m)), ri(6, 9));
+    const selIdx = ri(0, sideItems.length - 1);
+    sideItems.forEach((m, i) => { const d = el("div", i === selIdx ? { class: "sel" } : {}, side, m);
+      locate(`the "${m}" item in the left sidebar`, d); });
+    assert(`Is "${sideItems[selIdx]}" the selected (highlighted) item in the left sidebar?`, true);
+    assert(`Is "${sideItems[(selIdx + 1) % sideItems.length]}" the selected (highlighted) item in the left sidebar?`, false);
+    const main = el("div", { class: "main" });
+    const tabs = el("div", { class: "tabs" }, main);
+    const tabNames = take(["General", "Security", "Members", "Billing", "Integrations", "API", "Advanced"], ri(3, 6));
+    const tabSel = ri(0, tabNames.length - 1);
+    tabNames.forEach((t, i) => { const s = el("span", i === tabSel ? { class: "sel" } : {}, tabs, t);
+      locate(`the "${t}" tab`, s); });
+    assert(`Is the "${tabNames[tabSel]}" tab currently selected?`, true);
+    assert(`Is the "${tabNames[(tabSel + 1) % tabNames.length]}" tab currently selected?`, false);
+    const card = el("div", { class: "card" }, main);
+    take(FIELDS, ri(3, 5)).forEach(f => { const r = el("div", { class: "row" }, card);
+      el("label", { class: "l" }, r, f); const inp = el("input", { type: "text" }, r);
+      if (rnd() < 0.5) { const v = rnd() < 0.5 ? CODES() : pick(["Tokyo", "Osaka", "Berlin", "jdoe@example.com", "+81 3-1234-5678"]);
+        inp.setAttribute("value", v); ocr(v, inp); }
+      locate(`the text input field for "${f}"`, inp); });
+    const cr = el("div", { class: "row" }, card);
+    const checks = take(CHECKS, ri(2, 4));
+    checks.forEach(c => { const on = rnd() < 0.5; const w = el("span", { class: "chk" }, cr);
+      const i = el("i", on ? { class: "on" } : {}, w); el("span", {}, w, c);
+      locate(`the checkbox for "${c}"`, i); assert(`Is the "${c}" checkbox checked?`, on); });
+    const br = el("div", { class: "row" }, card);
+    br.style.marginTop = "16px";
+    const btns = take(WORDS, ri(3, 6));
+    btns.forEach((b, i) => { const e = el("button", i === 0 ? { class: "primary" } : {}, br, b);
+      locate(`the "${b}" button`, e); ocr(b, e); });
+    assert(`Is there a button labeled "${btns[0]}"?`, true);
+    assert(`Is there a button labeled "${pick(WORDS.filter(w => !btns.includes(w)))}"?`, false);
+    const f = el("div", { class: "card filler" }, main);
+    f.textContent = "Last synced " + ri(2, 59) + " minutes ago. " + CODES() + " is pending review. Usage this month: " + ri(10, 99) + "%.";
+  }
+
+  const ICONS = [["★", "star"], ["♥", "heart"], ["⚙", "gear (settings)"], ["✕", "X (close)"], ["✓", "check mark"],
+    ["☰", "hamburger menu (three horizontal lines)"], ["✎", "pencil (edit)"], ["⌂", "house (home)"], ["🔍", "magnifying glass (search)"],
+    ["🗑", "trash can"], ["⬇", "down arrow"], ["⬆", "up arrow"], ["◀", "left-pointing triangle"], ["▶", "right-pointing triangle (play)"],
+    ["🔔", "bell"], ["📁", "folder"], ["⏸", "pause"], ["🔒", "padlock"], ["✉", "envelope (mail)"], ["⟳", "circular arrow (refresh)"]];
+
+  function icons() {
+    const nav = el("div", { class: "nav" });
+    el("span", { class: "title" }, nav, pick(["Editor", "Media Studio", "Board", "ドキュメント"]));
+    const chosen = take(ICONS, ri(9, 13));
+    const placed = [];
+    const overlaps = (x, y, s) => placed.some(p => x < p[0] + p[2] + 12 && p[0] < x + s + 12 && y < p[1] + p[2] + 12 && p[1] < y + s + 12);
+    chosen.forEach(([g, name]) => {
+      const s = pick([12, 16, 20, 24, 28, 32, 40, 48]);
+      let x, y, tries = 0;
+      do { x = ri(10, 1280 - s - 10); y = ri(60, 800 - s - 10); tries++; } while (overlaps(x, y, s) && tries < 200);
+      placed.push([x, y, s]);
+      const b = el("div", { class: "ib" }, document.body, g);
+      Object.assign(b.style, { left: x + "px", top: y + "px", width: s + "px", height: s + "px", fontSize: Math.round(s * 0.7) + "px" });
+      locate(`the ${name} icon`, b, { size: s });
+    });
+    for (let k = 0; k < 6; k++) { const t = el("div", { class: "filler" }); Object.assign(t.style, { position: "absolute",
+      left: ri(10, 1000) + "px", top: ri(60, 760) + "px" }); t.textContent = pick(["Untitled", "Layer " + ri(1, 9), "100%", "Draft", "v" + ri(1, 9) + "." + ri(0, 20)]); }
+    assert(`Is there a ${chosen[0][1]} icon on the screen?`, true);
+    assert(`Is there a ${pick(ICONS.filter(i => !chosen.includes(i)))[1]} icon on the screen?`, false);
+  }
+
+  function grid() {
+    const host = el("div", {}); Object.assign(host.style, { position: "absolute", left: "0", top: "0" });
+    const tbl = el("table", { class: "sheet" }, host);
+    const cols = ri(10, 14), rows = ri(22, 34), cw = ri(70, 96), rh = ri(20, 24);
+    const hr = el("tr", {}, tbl); el("th", {}, hr, "");
+    for (let c = 0; c < cols; c++) { const th = el("th", {}, hr, String.fromCharCode(65 + c)); th.style.width = cw + "px"; }
+    const words = shuffle(["Tokyo", "apple", "Q3 total", "pending", "Osaka", "banana", "revenue", "#N/A", "Berlin", "done",
+      "cherry", "margin", "Kyoto", "lime", "budget", "東京", "売上", "合計", "Paris", "draft"]);
+    const cells = [];
+    for (let r = 1; r <= rows; r++) { const tr = el("tr", {}, tbl); tr.style.height = rh + "px"; el("th", {}, tr, String(r));
+      for (let c = 0; c < cols; c++) { const td = el("td", {}, tr, ""); cells.push([r, c, td]); } }
+    let wi = 0;
+    shuffle(cells).slice(0, 60).forEach(([r, c, td], i) => {
+      if (i < 14 && wi < words.length) { td.textContent = words[wi++]; locate(`the spreadsheet cell containing "${td.textContent}"`, td); }
+      else { const v = (rnd() < 0.5 ? ri(1, 99999) : (rnd() * 10000).toFixed(2)); td.textContent = v; td.style.textAlign = "right";
+        if (i < 22) ocr(String(v), td); } });
+    shuffle(cells).slice(0, 5).forEach(([r, c, td]) => locate(`spreadsheet cell ${String.fromCharCode(65 + c)}${r} (column ${String.fromCharCode(65 + c)}, row ${r})`, td));
+    assert(`Does any spreadsheet cell contain the text "${words[0]}"?`, true);
+    assert(`Does any spreadsheet cell contain the text "${words[words.length - 1]}"?`, wi >= words.length);
+  }
+
+  function canvas() {
+    const cv = el("canvas", { width: 1280, height: 800 }); const g = cv.getContext("2d");
+    g.fillStyle = pick(["#ffffff", "#f0ead6", "#1b1e24", "#d9e7f5"]); g.fillRect(0, 0, 1280, 800);
+    const COLORS = [["red", "#e53935"], ["green", "#2e9d48"], ["blue", "#1e5bd8"], ["yellow", "#f2c500"], ["purple", "#8e3fc1"],
+      ["orange", "#f57c00"], ["pink", "#ec6aa8"], ["cyan", "#18b5c9"], ["brown", "#7b4a2a"], ["gray", "#8a8f98"]];
+    const SHAPES = ["circle", "square", "triangle", "diamond"];
+    const combos = take(COLORS.flatMap(c => SHAPES.map(s => [c, s])), ri(8, 14));
+    const placed = [];
+    combos.forEach(([[cname, col], shape]) => {
+      const s = pick([10, 14, 18, 24, 32, 48, 64, 80]);
+      let x, y, tries = 0;
+      do { x = ri(10, 1270 - s); y = ri(10, 790 - s); tries++; }
+      while (placed.some(p => x < p[0] + p[2] + 10 && p[0] < x + s + 10 && y < p[1] + p[2] + 10 && p[1] < y + s + 10) && tries < 300);
+      placed.push([x, y, s]); g.fillStyle = col; g.beginPath();
+      if (shape === "circle") g.arc(x + s / 2, y + s / 2, s / 2, 0, Math.PI * 2);
+      else if (shape === "square") g.rect(x, y, s, s);
+      else if (shape === "triangle") { g.moveTo(x + s / 2, y); g.lineTo(x + s, y + s); g.lineTo(x, y + s); }
+      else { g.moveTo(x + s / 2, y); g.lineTo(x + s, y + s / 2); g.lineTo(x + s / 2, y + s); g.lineTo(x, y + s / 2); }
+      g.fill(); locate(`the ${cname} ${shape}`, [x, y, s, s], { size: s });
+    });
+    const dark = g.getImageData(0, 0, 1, 1).data[0] < 128;
+    const texts = [["SCORE " + ri(0, 99999), 22], ["HP " + ri(1, 999) + "/999", 16], [pick(["GAME OVER", "PAUSED", "LEVEL " + ri(1, 30), "READY?"]), 36]];
+    texts.forEach(([t, px]) => { g.font = `bold ${px}px Menlo, monospace`; const w = g.measureText(t).width;
+      let x, y, tries = 0;
+      do { x = ri(10, Math.max(10, 1270 - w)); y = ri(10, 790 - px); tries++; }
+      while (placed.some(p => x < p[0] + p[2] + 8 && p[0] < x + w + 8 && y < p[1] + p[2] + 8 && p[1] < y + px + 8) && tries < 300);
+      placed.push([x, y, Math.max(w, px)]);
+      g.fillStyle = dark ? "#f5f5f5" : "#111"; g.textBaseline = "top"; g.fillText(t, x, y);
+      const b = [x, y, Math.round(w), px]; locate(`the text "${t}"`, b); ocr(t, b); });
+    const c0 = combos[0];
+    assert(`Is there a ${c0[0][0]} ${c0[1]} on the screen?`, true);
+    const absent = COLORS.flatMap(c => SHAPES.map(s => [c, s])).filter(x => !combos.some(y => y[0][0] === x[0][0] && y[1] === x[1]));
+    const a0 = pick(absent); assert(`Is there a ${a0[0][0]} ${a0[1]} on the screen?`, false);
+  }
+
+  function tui() {
+    const pre = el("pre", { class: "tui" });
+    const add = (t, style) => { const s = el("span", {}, pre, t); if (style) s.setAttribute("style", style); return s; };
+    const W = 150;
+    const title = pick([" File Manager ", " lean-tea tetris ", " Quiz ", " htop-ish "]);
+    add("┌" + title + "─".repeat(W - 2 - title.length) + "┐\n");
+    const files = take(["README.md", "lakefile.lean", "Main.lean", "config.toml", "notes.txt", "build.sh", "data.csv", "LICENSE",
+      "Makefile", "index.html", "server.log", "todo.org", "image.png", "Cargo.toml"], ri(7, 11));
+    const sel = ri(0, files.length - 1);
+    files.forEach((f, i) => { add("│ "); const st = i === sel ? "background:#2f6fd6;color:#fff" : "";
+      const s = add(f, st); add(" ".repeat(28 - f.length), st);
+      locate(`the "${f}" entry in the file list`, s);
+      add(String(ri(1, 99999)).padStart(10) + " B" + " ".repeat(W - 43) + "│\n"); });
+    assert(`Is "${files[sel]}" the highlighted entry in the file list?`, true);
+    assert(`Is "${files[(sel + 1) % files.length]}" the highlighted entry in the file list?`, false);
+    add("│" + " ".repeat(W - 2) + "│\n");
+    add("│   ");
+    const btns = take(["[ OK ]", "[ Cancel ]", "[ Retry ]", "< Yes >", "< No >", "[ Apply ]"], 3);
+    let used = 4;
+    btns.forEach(b => { const s = add(b, "color:#e5c07b"); locate(`the "${b}" button`, s); add("    "); used += b.length + 4; });
+    add(" ".repeat(Math.max(0, W - 1 - used)) + "│\n");
+    for (let k = 0; k < 6; k++) add("│" + " ".repeat(W - 2) + "│\n");
+    add("└" + "─".repeat(W - 2) + "┘\n");
+    const keys = take([["F1", "Help"], ["F2", "Save"], ["F3", "View"], ["F5", "Copy"], ["F6", "Move"], ["F8", "Delete"], ["F10", "Quit"]], 5)
+      .sort((a, b) => parseInt(a[0].slice(1)) - parseInt(b[0].slice(1)));
+    keys.forEach(([k, n]) => { add(k, "color:#c8c8c8"); const st = "background:#18a0a8;color:#000"; const s = add(n, st);
+      add(" ".repeat(6 - n.length), st);
+      locate(`the "${k} ${n}" key hint in the bottom bar`, s); ocr(n, s); add(" "); });
+  }
+
+  ({ form, icons, grid, canvas, tui })[kind]();
+  window.__meta = { kind, theme, seed: P.get("seed"), width: 1280, height: 800 };
+  window.__samples = samples
+    .map(x => (x.bbox instanceof Element) ? Object.assign({}, x, { bbox: box(x.bbox) }) : x)
+    .filter(x => !x.bbox || visible(x.bbox));
+})();
+</script>
+</body></html>

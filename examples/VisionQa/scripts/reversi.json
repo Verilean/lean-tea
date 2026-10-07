@@ -1,0 +1,53 @@
+{
+  "name": "reversi.opening_move",
+  "description": "reversi_serve (port 8005): play x's opening move, verify score/turn/pieces visually, reset. Run: vision_qa examples/VisionQa/scripts/reversi.json --target browser --url http://127.0.0.1:8005/",
+  "steps": [
+    {
+      "act": "assert_text",
+      "target": "the status bar text directly below the game board",
+      "equals": "x 2 - o 2 - next x"
+    },
+    {
+      "act": "assert_pixel",
+      "x": 440,
+      "y": 150,
+      "rgb": "#065f46",
+      "tol": 12,
+      "note": "board cell background is the green felt"
+    },
+    {
+      "act": "click_xy",
+      "x": 613,
+      "y": 270,
+      "note": "x plays row 3, column 4 — flips the o below it"
+    },
+    {
+      "act": "assert_text",
+      "target": "the status bar text directly below the game board",
+      "equals": "x 4 - o 1 - next o"
+    },
+    {
+      "act": "assert_pixel",
+      "x": 596,
+      "y": 250,
+      "rgb": "#047857",
+      "tol": 10,
+      "note": "last move cell is highlighted (#047857 vs felt #065f46) — too subtle for a 4B VLM, so check the pixel. Board geometry questions are also avoided: 4B VLMs misjudge 'same column / in a line'; the score text already proves the flip"
+    },
+    {
+      "act": "assert_visual",
+      "question": "Are there two or more o pieces on the board?",
+      "want": false
+    },
+    {
+      "act": "click_described",
+      "target": "the Reset button",
+      "key": "reversi.reset_button"
+    },
+    {
+      "act": "assert_text",
+      "target": "the status bar text directly below the game board",
+      "equals": "x 2 - o 2 - next x"
+    }
+  ]
+}
