@@ -446,6 +446,19 @@ lean_exe http_smoke where
   srcDir := "examples"
   root := `Smoke.Http
 
+/-- S3-compatible object store in Lean (`LeanTea.Net.S3Server`):
+    path-style buckets/objects, ListObjects, SigV4-verified. Replaces
+    the MinIO sidecar in CI. -/
+lean_exe s3_serve where
+  srcDir := "examples"
+  root := `S3Serve.Serve
+
+/-- Spawns `s3_serve` and checks round-trips plus refusals (bad
+    signature, tampered body, `..` keys, …). Self-contained. -/
+lean_exe s3_serve_spec where
+  srcDir := "examples"
+  root := `Tests.S3ServeSpec
+
 /-- S3 / object-storage round-trip. Opt-in: needs an S3-compatible
     endpoint at `S3_ENDPOINT` (or `http://127.0.0.1:9000` by default
     — MinIO). The CI workflow spins up MinIO as a service and runs
