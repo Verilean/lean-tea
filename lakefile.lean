@@ -833,6 +833,13 @@ lean_exe vision_qa where
   srcDir := "examples"
   root := `VisionQa.Run
 
+/-- A vision QA test as a plain Lean program (Driver + Ground + LSpec)
+    against `reversi_serve` — the code-first twin of
+    `examples/VisionQa/scripts/reversi.json`. -/
+lean_exe vision_qa_reversi where
+  srcDir := "examples"
+  root := `VisionQa.ReversiSpec
+
 /-- MCP server exposing the local VLM as tools: `vision_locate`,
     `vision_ask`, `vision_read_text`, `vision_classify`, `vision_pixel`.
     Pair with browser/desktop MCP servers for screenshot + click. -/

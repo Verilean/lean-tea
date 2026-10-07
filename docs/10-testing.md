@@ -197,6 +197,10 @@ lake build vision_qa
 ./.lake/build/bin/vision_qa flow.json --target tmux --tmux-target qa:0.0
 ```
 
+For tests that need control flow, skip the JSON and write Lean:
+`examples/VisionQa/ReversiSpec.lean` (`vision_qa_reversi`) drives the
+same checks with `Driver` + `Ground` + `LSpec` in ~90 lines.
+
 `click_described` with a `key` caches the verified point in
 `ui-map.json`, so the model is consulted once and later runs replay
 the click deterministically. Manifests land in
