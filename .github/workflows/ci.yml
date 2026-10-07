@@ -32,9 +32,9 @@ jobs:
     timeout-minutes: 30
 
     # Valkey rides GitHub's `services:` block (its container image's
-    # default CMD `valkey-server` does the right thing). MinIO needs
-    # `minio server /data` as the command and `services:` can't set
-    # commands, so we spin it up via `docker run` in a step below.
+    # default CMD `valkey-server` does the right thing). S3 is served
+    # by the repo's own `s3_serve` (LeanTea.Net.S3Server), started
+    # after the build — no third-party image to disappear.
     services:
       valkey:
         image: valkey/valkey:latest
@@ -85,26 +85,10 @@ jobs:
       - name: Install libpq-dev (for the LEANTEA_POSTGRES=1 build)
         run: sudo apt-get update && sudo apt-get install -y libpq-dev
 
-      - name: Start MinIO (S3-compatible) sidecar
-        run: |
-          docker run -d --rm --name leantea-minio \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER=test \
-            -e MINIO_ROOT_PASSWORD=testtest1234 \
-            minio/minio:latest server /data
-          # Wait for /minio/health/live
-          for i in $(seq 1 20); do
-            if curl -fsS http://127.0.0.1:9000/minio/health/live > /dev/null; then
-              echo "MinIO up after ${i}s"
-              break
-            fi
-            sleep 1
-          done
-
       - name: Build CI test binaries
         env:
           LEANTEA_POSTGRES: "1"
-        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve valkey_smoke s3_smoke postgres_smoke webdav_serve webdav_smoke leanjs_spec vision_spec
+        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve valkey_smoke s3_smoke postgres_smoke webdav_serve webdav_smoke leanjs_spec vision_spec s3_serve s3_serve_spec
 
       # ──────────────────────────────────────────────────────────────
       # Self-contained smoke binaries. Each one is an LSpec-shaped
@@ -126,7 +110,19 @@ jobs:
       - name: Valkey driver (RESP round-trip against the `services:` valkey container, 8 LSpec assertions)
         run: ./.lake/build/bin/valkey_smoke
 
-      - name: S3 / object storage (SigV4 round-trip against MinIO sidecar, 6 LSpec assertions)
+      - name: S3-compatible server (s3_serve round-trips + SigV4/tamper/traversal refusals, 18 LSpec assertions)
+        run: ./.lake/build/bin/s3_serve_spec
+
+      - name: Start s3_serve for the S3 client smoke
+        run: |
+          ./.lake/build/bin/s3_serve --port 9000 --data "$RUNNER_TEMP/s3" \
+            --access-key test --secret-key testtest1234 > "$RUNNER_TEMP/s3_serve.log" 2>&1 &
+          for i in $(seq 1 50); do
+            curl -fsS http://127.0.0.1:9000/health > /dev/null && { echo "s3_serve up"; break; }
+            sleep 0.2
+          done
+
+      - name: S3 / object storage (SigV4 client round-trip against s3_serve, 6 LSpec assertions)
         run: ./.lake/build/bin/s3_smoke
 
       - name: PostgreSQL driver (libpq round-trip against the `services:` postgres container, 8 LSpec assertions)
@@ -143,6 +139,6 @@ jobs:
       - name: Vision QA offline (coord parsing + frames + stb image FFI + ANSI render + cache replay, ~39 LSpec assertions)
         run: ./.lake/build/bin/vision_spec
 
-      - name: Tear down MinIO
+      - name: Stop s3_serve
         if: always()
-        run: docker rm -f leantea-minio || true
+        run: pkill -f "s3_serve --port 9000" || true
