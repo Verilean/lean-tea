@@ -88,7 +88,7 @@ jobs:
       - name: Build CI test binaries
         env:
           LEANTEA_POSTGRES: "1"
-        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve valkey_smoke s3_smoke postgres_smoke webdav_serve webdav_smoke leanjs_spec vision_spec s3_serve s3_serve_spec
+        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve valkey_smoke s3_smoke postgres_smoke webdav_serve webdav_smoke leanjs_spec vision_spec s3_serve s3_serve_spec site_spec gen_site
 
       # ──────────────────────────────────────────────────────────────
       # Self-contained smoke binaries. Each one is an LSpec-shaped
@@ -138,6 +138,9 @@ jobs:
 
       - name: Vision QA offline (coord parsing + frames + stb image FFI + ANSI render + cache replay, ~39 LSpec assertions)
         run: ./.lake/build/bin/vision_spec
+
+      - name: Static site generator (LeanTea.Site fixture build — layouts, nav, listings, links, assets, sitemap, 22 LSpec assertions)
+        run: ./.lake/build/bin/site_spec
 
       - name: Stop s3_serve
         if: always()
