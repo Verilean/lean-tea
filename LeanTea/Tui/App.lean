@@ -58,7 +58,6 @@ structure RunOpts where
 private def esc (s : String) : String := s!"\x1b[{s}"
 
 private def clearScreen : String := esc "2J" ++ esc "H"
-private def cursorHome  : String := esc "H"
 private def hideCursor  : String := esc "?25l"
 private def showCursor  : String := esc "?25h"
 private def altScreenOn  : String := esc "?1049h"
@@ -100,19 +99,27 @@ private def styleCode (s : Style) : String := Id.run do
   return out
 
 /-- Render a Box to one ANSI string, batching consecutive cells of
-    the same style so we don't emit a fresh escape per character. -/
+    the same style so we don't emit a fresh escape per character.
+
+    Each row starts with an explicit cursor move (`ESC[<row>;1H`)
+    instead of following a `\n`: `runWith` puts the tty in raw mode,
+    which turns off output post-processing (`opost`/`onlcr`), so a
+    bare `\n` only moves down and the next row would start where the
+    previous one ended (issue #22). Absolute positioning also means
+    the last row never scrolls the screen. -/
 def renderBoxAnsi (box : Box) : String := Id.run do
-  let mut out : String := cursorHome ++ reset
+  let mut out : String := reset
   let mut curStyle : Style := { fg := .red }  -- non-default so first cell forces an emit
   for r in [:box.height] do
     let row := box.cells[r]!
+    out := out ++ esc s!"{r + 1};1H"
     for c in [:box.width] do
       let cell := row[c]!
       if cell.style != curStyle then
         out := out ++ styleCode cell.style
         curStyle := cell.style
       out := out.push cell.ch
-    out := out ++ reset ++ "\n"
+    out := out ++ reset
     curStyle := {}
   return out ++ reset
 
