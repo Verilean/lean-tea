@@ -15,6 +15,8 @@ widget kit end-to-end without spinning up a real terminal:
     value, `listView` highlights the selected row.
   * App loop — feeding a sequence of `Key`s into a `Session` walks
     the state machine the same way the real `App.run` does.
+  * Raw-mode output — `renderBoxAnsi` replayed on a raw-mode terminal
+    model puts every row at column 1 (issue #22).
 
 The whole file completes in well under a second because there's no
 IO. Add a regression case here before changing layout heuristics.
@@ -252,6 +254,73 @@ def run : IO LSpec := do
 
 end AppGroup
 
+/-! ## Group 5 — ANSI output on a raw-mode terminal (issue #22)
+
+`App.runWith` puts the tty in raw mode, which disables output
+post-processing: `\n` moves the cursor down but NOT back to column 1.
+`rawScreen` replays `renderBoxAnsi` output on a tiny terminal model with
+exactly those semantics (CUP/`H` positions, `\r` returns, `\n` only goes
+down, SGR ignored), so a renderer that relies on `\n` produces the
+"staircase" from the issue and fails here. -/
+
+namespace RawRenderGroup
+
+/-- Replay `out` on a `rows × cols` raw-mode screen; returns the rows. -/
+def rawScreen (out : String) (rows cols : Nat) : Array String := Id.run do
+  let mut grid : Array (Array Char) := Array.replicate rows (Array.replicate cols ' ')
+  let mut r := 0
+  let mut c := 0
+  let mut cs := out.toList
+  while !cs.isEmpty do
+    match cs with
+    | '\x1b' :: '[' :: rest =>
+      let params := rest.takeWhile (fun ch => ch.isDigit || ch == ';' || ch == '?')
+      match rest.drop params.length with
+      | fin :: more =>
+        if fin == 'H' then
+          let ns := (String.ofList params).splitOn ";" |>.map (fun x => (x.toNat?.getD 1) - 1)
+          r := ns.getD 0 0
+          c := ns.getD 1 0
+        else if fin == 'J' then
+          grid := Array.replicate rows (Array.replicate cols ' ')
+        cs := more
+      | [] => cs := []
+    | '\r' :: rest => c := 0; cs := rest
+    | '\n' :: rest => r := r + 1; cs := rest          -- raw mode: no implicit CR
+    | ch :: rest =>
+      if r < rows && c < cols then grid := grid.set! r (grid[r]!.set! c ch)
+      c := c + 1
+      cs := rest
+    | [] => pure ()
+  return grid.map (fun row => String.ofList row.toList)
+
+def hashes (n : Nat) : String := String.ofList (List.replicate n '#')
+def pad (s : String) (n : Nat) : String := s ++ String.ofList (List.replicate (n - s.length) ' ')
+
+/-- The issue's repro: a 20×4 box of `#`. -/
+def issueBox : Box := Box.filled 20 4 '#'
+
+/-- Mixed styles mid-row, so style escapes sit between cells. -/
+def styledBox : Box :=
+  (Box.filled 12 3 '.').overlay (Box.text 4 "AB" { fg := .red, bold := true }) 1 5
+
+def run : IO LSpec := do
+  let scr := rawScreen (renderBoxAnsi issueBox) 6 70
+  let styled := rawScreen (renderBoxAnsi styledBox) 4 20
+  return group "Tui — raw-mode ANSI rendering (#22)" [
+    it "every row of the 20×4 box starts at column 1"
+      ((List.range 4).all (fun i => scr[i]! == pad (hashes 20) 70)),
+    it "nothing is drawn below the box"
+      (scr[4]! == pad "" 70 && scr[5]! == pad "" 70),
+    it "styled cells land in the right place"
+      (styled[0]! == pad "............" 20 && styled[1]! == pad ".....AB  ..." 20 &&
+       styled[2]! == pad "............" 20),
+    it "no bare newline (would scroll the last row)"
+      (!(renderBoxAnsi issueBox).contains '\n')
+  ]
+
+end RawRenderGroup
+
 /-! ## main -/
 
 def main : IO Unit := do
@@ -259,6 +328,7 @@ def main : IO Unit := do
   let c ← CombinatorGroup.run
   let e ← ElementGroup.run
   let a ← AppGroup.run
-  let tree := group "LeanTea.Tui widget kit" [b, c, e, a]
+  let r ← RawRenderGroup.run
+  let tree := group "LeanTea.Tui widget kit" [b, c, e, a, r]
   let code ← lspecIO tree
   if code != 0 then IO.Process.exit code.toUInt8
