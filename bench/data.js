@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791615060540,
+  "lastUpdate": 1791617481241,
   "repoUrl": "https://github.com/Verilean/lean-tea",
   "entries": {
     "HTTP throughput (lean-tea reactor vs nginx)": [
@@ -1146,6 +1146,85 @@ window.BENCHMARK_DATA = {
           {
             "name": "nginx /json",
             "value": 104874,
+            "unit": "RPS"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "junjihashimoto@users.noreply.github.com",
+            "name": "junji hashimoto",
+            "username": "junjihashimoto"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4709029de21bfa6ec6e7ce5183d3aa95a03e6466",
+          "message": "Merge pull request #23 from Verilean/fix/tui-raw-row-column\n\nFix TUI rows drifting right in raw mode (#22)",
+          "timestamp": "2026-10-10T16:28:09+09:00",
+          "tree_id": "7be7ebce4b2931ddf3606f432203193adee32ded",
+          "url": "https://github.com/Verilean/lean-tea/commit/4709029de21bfa6ec6e7ce5183d3aa95a03e6466"
+        },
+        "date": 1791617480706,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "lean-tea libuv /health",
+            "value": 2967,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /json",
+            "value": 3038,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /echo",
+            "value": 2881,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /health",
+            "value": 88982,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /json",
+            "value": 90302,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /echo",
+            "value": 72320,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /health",
+            "value": 105348,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /json",
+            "value": 106636,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /echo",
+            "value": 84407,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /health",
+            "value": 113865,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /json",
+            "value": 102349,
             "unit": "RPS"
           }
         ]
