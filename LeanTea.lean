@@ -58,6 +58,7 @@ import LeanTea.Vision.Image
 import LeanTea.Vision.Ground
 import LeanTea.Vision.Driver
 import LeanTea.Net.S3Server
+import LeanTea.Site
 import LeanTea.Crypto.Base64
 import LeanTea.Crypto.Sha256
 import LeanTea.Crypto.Hmac

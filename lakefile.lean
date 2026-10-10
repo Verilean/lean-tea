@@ -75,7 +75,7 @@ lean_lib Examples where
   roots := #[
     `Sheet.App,
     `Reversi.Game,
-    `Tools.GenSite,
+    `Tools.GenSite, `Tools.StaticSite,
     `Tools.LeanJsCompile, `Tools.LeanJsInterp, `Tools.LeanJsRun,
     `Tests.PureSpec,
     `Tests.AuthSpec,
@@ -960,3 +960,15 @@ lean_exe vn_chat_serve where srcDir := "examples"; root := `VnChat.Serve
 lean_exe gen_site where
   srcDir := "examples"
   root := `Tools.GenSite
+
+/-- Generic static site generator CLI over `LeanTea.Site`:
+    `static_site new|build|serve <dir>`. -/
+lean_exe static_site where
+  srcDir := "examples"
+  root := `Tools.StaticSite
+
+/-- Builds a fixture site with `LeanTea.Site` and checks layouts,
+    front matter, nav, listings, link rewriting, assets, sitemap. -/
+lean_exe site_spec where
+  srcDir := "examples"
+  root := `Tests.SiteSpec
