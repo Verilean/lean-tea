@@ -562,6 +562,12 @@ lean_exe tui_spec where
   srcDir := "examples"
   root := `Tests.TuiSpec
 
+/-- Mouse + resize demo for `LeanTea.Tui`: a draggable
+    split, a clickable list, a scrolling log and buttons. -/
+lean_exe tui_mouse where
+  srcDir := "examples"
+  root := `TuiMouse.Main
+
 /-- Aggregated LSpec runner for the construction-time security
     primitives (SafeHtml + SafePath + SafeCmd + SafeHeader +
     SafeRedirect). One binary, one CI step, ~60 LSpec assertions. -/
