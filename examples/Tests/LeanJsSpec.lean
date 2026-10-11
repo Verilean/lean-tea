@@ -527,6 +527,17 @@ def ergonomicNodeCases : List NodeCase := [
       "def p := {x: 1, y: 2}\ndef q := { p with y := 5 }\n"
    ++ "def main := p.y * 100 + q.y * 10 + q.x",
     expected := "251" },
+  { label := "nested-patterns", source :=
+      "inductive Shape where | Circle(r) | Rect(w, h) | Empty\n"
+   ++ "inductive Opt where | None | Some(v)\n"
+   ++ "def describe(o) := match o with\n"
+   ++ "  | Some(Rect(w, h)) => w * h\n  | Some(Circle(r)) => r\n  | Some(Empty) => 5\n  | None => 0\n"
+   ++ "def main := describe(Some(Rect(3, 4))) * 100 + describe(Some(Circle(7))) * 10 + describe(None)",
+    expected := "1270" },
+  { label := "literal-and-variable-patterns", source :=
+      "def fib(n) := match n with | 0 => 0 | 1 => 1 | k => fib(k - 1) + fib(k - 2)\n"
+   ++ "def main := fib(10)",
+    expected := "55" },
   { label := "string-escapes", jsOnly := true, source :=
       "def main := \"a\\\"b\\\\c\".length * 10 + \"x\\ny\".length",
     expected := "53" }
@@ -559,6 +570,29 @@ def ergonomicSpecs : LSpec := group "ergonomics" [
       == "<compiled>"),
   it "record update can't add a field to a known-shape object"
     (has (compileErr "def P := {x: 0}\ndef f() := { P with z := 1 }") "`P` has no field `z`"),
+  it "match: a missing constructor is reported"
+    (has (compileErr ("inductive Shape where | Circle(r) | Rect(w, h) | Empty\n"
+      ++ "def f(s) := match s with | Circle(r) => r | Rect(w, h) => w"))
+      "in `def f`: `match` is missing a case: `Empty`"),
+  it "match: a missing nested case is reported as a pattern"
+    (has (compileErr ("inductive Shape where | Circle(r) | Rect(w, h)\ninductive Opt where | None | Some(v)\n"
+      ++ "def f(o) := match o with | Some(Rect(w, h)) => w | None => 0"))
+      "missing a case: `Some(Circle(_))`"),
+  it "match: literals need a catch-all arm"
+    (has (compileErr "def f(s) := match s with | \"a\" => 1 | \"b\" => 2") "missing a case: `_`"),
+  it "match: complete nested coverage passes"
+    (compileErr ("inductive Shape where | Circle(r) | Rect(w, h)\ninductive Opt where | None | Some(v)\n"
+      ++ "def f(o) := match o with | Some(Rect(_, h)) => h | Some(Circle(r)) => r | None => 0")
+      == "<compiled>"),
+  it "pattern: unknown constructor, with a suggestion"
+    (has (compileErr "inductive Shape where | Circle(r) | Rect(w, h)\ndef f(s) := match s with | Rectt(w, h) => w | _ => 0")
+      "unknown constructor `Rectt` in pattern (did you mean `Rect`?)"),
+  it "pattern: wrong number of fields"
+    (has (compileErr "inductive Shape where | Circle(r) | Rect(w, h)\ndef f(s) := match s with | Rect(w) => w | _ => 0")
+      "`Rect` has 2 field(s), the pattern gives 1"),
+  it "pattern: a lowercase constructor name gets a hint"
+    (has (compileErr "inductive Msg where | inc | dec\ndef f(m) := match m with | inc => 1 | _ => 0")
+      "`inc` is a constructor"),
   it "every node-case program passes the checks (no false positives)"
     ((nodeCases ++ ergonomicNodeCases).all fun c =>
       match parseProgramString c.source with

@@ -77,6 +77,10 @@ abbrev RecordTable := List (String × List String)
 structure Tables where
   arity   : ArityTable := []
   records : RecordTable := []
+  /-- constructor → (its inductive, arity) -/
+  ctors   : List (String × String × Nat) := []
+  /-- inductive → its constructors, in declaration order -/
+  types   : List (String × List String) := []
   deriving Inhabited
 
 private def addDef (t : ArityTable) (name : String) (arity : Nat) : ArityTable :=
@@ -85,7 +89,12 @@ private def addDef (t : ArityTable) (name : String) (arity : Nat) : ArityTable :
 def buildTables (p : Program) : Tables := Id.run do
   let mut a : ArityTable := []
   let mut r : RecordTable := []
+  let mut cs : List (String × String × Nat) := []
+  let mut ts : List (String × List String) := []
   for d in p do
+    if let .indE ty ctors := d then
+      cs := ctors.map (fun c => (c.name, ty, c.arity)) ++ cs
+      ts := (ty, ctors.map (·.name)) :: ts
     match d with
     | .defE name params _ _      => a := addDef a name params.length
     | .asyncDefE name params _   => a := addDef a name params.length
@@ -105,7 +114,7 @@ def buildTables (p : Program) : Tables := Id.run do
     | .importE _ _               => pure ()
     | .includeE _                => pure ()
     | .exprE _                   => pure ()
-  return { arity := a, records := r }
+  return { arity := a, records := r, ctors := cs, types := ts }
 
 /-- Back-compat alias for callers that still want just the arity table. -/
 def buildTable (p : Program) : ArityTable := (buildTables p).arity
@@ -133,6 +142,87 @@ private def checkRecordLit (decl : List String) (supplied : List String)
     if !decl.contains s then
       throw s!"`{cls}`: unknown field `{s}` (expected: {String.intercalate ", " decl})"
 
+private def editDistance (a b : String) : Nat := Id.run do
+  let a := a.toList.toArray
+  let b := b.toList.toArray
+  let mut prev : Array Nat := Array.range (b.size + 1)
+  for i in [1:a.size + 1] do
+    let mut cur : Array Nat := #[i]
+    for j in [1:b.size + 1] do
+      let cost := if a[i-1]! == b[j-1]! then 0 else 1
+      cur := cur.push (min (min (prev[j]! + 1) (cur[j-1]! + 1)) (prev[j-1]! + cost))
+    prev := cur
+  return prev[b.size]!
+
+/-- ` (did you mean `x`?)` for the closest candidate within distance 2. -/
+def suggest (name : String) (cands : List String) : String :=
+  let scored := cands.map (fun c => (editDistance name c, c))
+  match scored.foldl (fun best x => match best with
+      | none => some x
+      | some b => if x.1 < b.1 then some x else some b) none with
+  | some (d, c) => if d ≤ 2 && d < name.length then s!" (did you mean `{c}`?)" else ""
+  | none => ""
+
+/-! ## Patterns: constructors and exhaustiveness
+
+Every constructor a pattern names must be declared and given the
+right number of fields. A `match` must cover every value: for each
+column of the pattern matrix, either some row is irrefutable there or
+every constructor of the type is covered (recursively, through the
+fields) — Maranget's usefulness check, without guards. String and
+number literals never cover their (infinite) type on their own, so a
+`match` over them needs a `_` / variable arm. A missing case is
+reported as a pattern, e.g. ``missing case `Some(Rect(_, _))` ``. -/
+
+private def irrefutable : Pattern → Bool
+  | .wildcard | .var _ => true
+  | _ => false
+
+partial def checkPattern (t : Tables) : Pattern → Except String Unit
+  | .ctor c args => do
+    match t.ctors.find? (·.1 == c) with
+    | none => throw s!"unknown constructor `{c}` in pattern{suggest c (t.ctors.map (·.1))}"
+    | some (_, _, k) =>
+      if args.length != k then
+        throw s!"`{c}` has {k} field(s), the pattern gives {args.length}"
+    args.forM (checkPattern t)
+  | .var x =>
+    if (t.ctors.find? (·.1 == x)).isSome then
+      throw s!"`{x}` is a constructor: in patterns, constructor names must start with an uppercase letter"
+    else pure ()
+  | _ => pure ()
+
+/-- A value vector (`n` columns) that no row of `rows` matches, if any. -/
+partial def uncovered (t : Tables) (rows : List (List Pattern)) (n : Nat) : Option (List Pattern) :=
+  if n == 0 then (if rows.isEmpty then some [] else none)
+  else
+    let col := rows.filterMap (·.head?)
+    let names := col.filterMap fun | .ctor c _ => some c | _ => none
+    let dflt := fun (_ : Unit) =>
+      (uncovered t (rows.filterMap fun r =>
+        if r.head?.all irrefutable then some r.tail else none) (n - 1)).map (.wildcard :: ·)
+    match names.head? with
+    | none => dflt ()
+    | some c0 =>
+      match t.ctors.find? (·.1 == c0) with
+      | none => none  -- unknown constructor: reported by `checkPattern`
+      | some (_, ty, _) =>
+        let all := (t.types.find? (·.1 == ty)).map (·.2) |>.getD []
+        all.findSome? fun c =>
+          let k := ((t.ctors.find? (·.1 == c)).map (·.2.2)).getD 0
+          let spec := rows.filterMap fun r =>
+            match r.head? with
+            | some (.ctor c' args) => if c' == c then some (args ++ r.tail) else none
+            | some p => if irrefutable p then some (List.replicate k .wildcard ++ r.tail) else none
+            | none => none
+          (uncovered t spec (k + n - 1)).map fun w => Pattern.ctor c (w.take k) :: w.drop k
+
+def checkMatch (t : Tables) (bs : List MatchBranch) : Except String Unit := do
+  for b in bs do checkPattern t b.pat
+  match uncovered t (bs.map (fun b => [b.pat])) 1 with
+  | some (w :: _) => throw s!"`match` is missing a case: `{w.show}`"
+  | _ => pure ()
+
 mutual
 
 partial def checkExpr (t : Tables) : Ast.Expr → Except String Unit
@@ -156,6 +246,7 @@ partial def checkExpr (t : Tables) : Ast.Expr → Except String Unit
   | .fnE _ b           => checkExpr t b
   | .matchE s bs       => do
     checkExpr t s
+    checkMatch t bs
     for b in bs do checkExpr t b.body
   | .dotE e _          => checkExpr t e
   | .awaitE e          => checkExpr t e
@@ -231,27 +322,6 @@ def objectShapes (p : Program) : List (String × List String) := p.toList.filter
   | .defE n [] _ (.objE fs) => if fs.isEmpty then none else some (n, fs.map (·.1))
   | _ => none
 
-private def editDistance (a b : String) : Nat := Id.run do
-  let a := a.toList.toArray
-  let b := b.toList.toArray
-  let mut prev : Array Nat := Array.range (b.size + 1)
-  for i in [1:a.size + 1] do
-    let mut cur : Array Nat := #[i]
-    for j in [1:b.size + 1] do
-      let cost := if a[i-1]! == b[j-1]! then 0 else 1
-      cur := cur.push (min (min (prev[j]! + 1) (cur[j-1]! + 1)) (prev[j-1]! + cost))
-    prev := cur
-  return prev[b.size]!
-
-/-- ` (did you mean `x`?)` for the closest candidate within distance 2. -/
-def suggest (name : String) (cands : List String) : String :=
-  let scored := cands.map (fun c => (editDistance name c, c))
-  match scored.foldl (fun best x => match best with
-      | none => some x
-      | some b => if x.1 < b.1 then some x else some b) none with
-  | some (d, c) => if d ≤ 2 && d < name.length then s!" (did you mean `{c}`?)" else ""
-  | none => ""
-
 structure Scope where
   globals : List String
   shapes  : List (String × List String)
@@ -286,10 +356,7 @@ partial def checkNames (sc : Scope) : Ast.Expr → Except String Unit
   | .fnE ps b => checkNames (sc.bind ps) b
   | .matchE scr bs => do
     checkNames sc scr
-    for b in bs do
-      match b.pat with
-      | .ctor _ args => checkNames (sc.bind args) b.body
-      | _ => checkNames sc b.body
+    for b in bs do checkNames (sc.bind b.pat.binders) b.body
   | .dotE e f | .optDotE e f => do checkField sc e f; checkNames sc e
   | .awaitE e | .unopE _ e | .doBlock e => checkNames sc e
   | .arrE xs => xs.forM (checkNames sc)

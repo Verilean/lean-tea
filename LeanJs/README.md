@@ -309,9 +309,33 @@ emits `const None = {tag: "None"};` and `const Some = (v) => ({tag:
 "Some", $0: v});`. So you write `None` (not `None()`) for the value
 and `Some(42)` to construct.
 
-`match` lowers to a chain of ternaries that read the `tag` field and
-bind `$0`, `$1`, … in order. A constructor name not in any branch
-falls through to `null`.
+Patterns nest, and can also be literals, variables or `_`:
+
+```text
+def describe(o) := match o with
+  | Some(Rect(w, h)) => w * h
+  | Some(Circle(r))  => 3 * r * r
+  | Some(_)          => 0
+  | None             => -1
+
+def fib(n) := match n with | 0 => 0 | 1 => 1 | k => fib(k - 1) + fib(k - 2)
+```
+
+A bare name in a pattern is a **constructor if it starts with an
+uppercase letter** (`None`) and a variable otherwise (`k`); a name
+followed by `( … )` is always a constructor.
+
+`match` lowers to a chain of ternaries: each branch tests the `tag`
+fields along its pattern (`__m.tag == "Some" && __m.$0.tag == "Rect"`)
+and binds its variables to the matching `$k` paths.
+
+`LeanJs.Check` makes `match` safe:
+
+- every constructor in a pattern must be declared, with the right
+  number of fields (`unknown constructor `Rectt` (did you mean `Rect`?)`);
+- the arms must be **exhaustive**. A gap is reported as the missing
+  pattern — ``in `def describe`: `match` is missing a case: `Some(Circle(_))` `` —
+  and a match on string / number literals needs a `_` or variable arm.
 
 ---
 

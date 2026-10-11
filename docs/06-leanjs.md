@@ -47,8 +47,8 @@ byte-equal stdout.
 ## What .leanjs gives you over hand-written JS
 
 - `--` line comments
-- `match` over inductive constructors *and* over string literals (with
-  `_` wildcard fall-through)
+- `match` with nested constructor patterns, literals, variables and `_`,
+  checked for exhaustiveness (a gap is reported as the missing pattern)
 - `record Name where field : Type, …` plus `Name { field: value, … }`
   named-args constructor — `LeanJs.Check` verifies the field set so
   typos surface at compile time

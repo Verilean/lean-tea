@@ -34,6 +34,15 @@ private def defaultType : String := "Int"
 
 /-! ## Expressions -/
 
+/-- A pattern in Lean syntax: `.Some (.Rect w _)`. -/
+partial def emitPat : Pattern → String
+  | .wildcard => "_"
+  | .var x => x
+  | .strLit s' => "\"" ++ (s'.replace "\\" "\\\\" |>.replace "\"" "\\\"") ++ "\""
+  | .numLit n => if n < 0 then s!"({n})" else toString n
+  | .ctor name [] => s!".{name}"
+  | .ctor name args => s!"(.{name} " ++ String.intercalate " " (args.map emitPat) ++ ")"
+
 partial def emitExpr : Ast.Expr → String
   | .num n        => if n < 0 then s!"({n})" else toString n
   | .numF lit     => s!"({lit} : Float)"
@@ -60,14 +69,7 @@ partial def emitExpr : Ast.Expr → String
     if xs.isEmpty then emitExpr f else s!"({emitExpr f} {args})"
   | .matchE scr branches =>
     let arms := branches.map fun b =>
-      let head := match b.pat with
-        | .wildcard => " | _"
-        | .strLit s' => s!" | \"{escape s'}\""
-        | .ctor name args =>
-          let binders := if args.isEmpty then ""
-                         else " " ++ String.intercalate " " args
-          s!" | .{name}{binders}"
-      s!"{head} => {emitExpr b.body}"
+      s!" | {emitPat b.pat} => {emitExpr b.body}"
     s!"(match {emitExpr scr} with{String.join arms})"
   | .dotE e f     => s!"({emitExpr e}).{f}"
   | .awaitE e     => emitExpr e            -- no async on the Lean side

@@ -343,39 +343,41 @@ partial def parseMatch : Parser Expr := attempt do
   let branches ← many1 parseMatchBranch
   return .matchE scrutinee branches.toList
 
+/-- A (possibly nested) pattern: `"lit"`, `42`, `_`, `x`, `None`,
+    `Some(p)`, `Pair(Some(x), _)`. A bare name is a constructor when it
+    starts with an uppercase letter, otherwise a variable binder. -/
+partial def parsePattern : Parser Pattern :=
+  (attempt do
+    let _ ← pchar '"'
+    let body ← manyChars (satisfy (· != '"'))
+    let _ ← pchar '"'
+    whitespace
+    return Pattern.strLit body)
+  <|> (attempt do
+    match ← number with
+    | .num n => return Pattern.numLit n
+    | _ => fail "float literal patterns are not supported")
+  <|> (attempt do
+    skipChar '_'
+    match ← peek? with
+    | some c => if c.isAlphanum || c == '_' then fail "ident starting with _" else pure ()
+    | none   => pure ()
+    whitespace
+    return Pattern.wildcard)
+  <|> (do
+    let name ← ident
+    let args ← optional (attempt do
+      sym "("
+      let xs ← sepBy parsePattern (sym ",")
+      sym ")"
+      return xs.toList)
+    match args with
+    | some xs => return Pattern.ctor name xs
+    | none => return (if name.front.isUpper then Pattern.ctor name [] else Pattern.var name))
+
 partial def parseMatchBranch : Parser MatchBranch := attempt do
   sym "|"
-  /- Pattern shapes, tried in order:
-       1. string literal     `| "loading" => …`
-       2. wildcard `_`       `| _      => …`
-       3. constructor + args `| Cons(h, t) => …`  /  `| None => …`
-     `attempt` on each so a partial match rolls back cleanly. -/
-  let pat ← (do
-        attempt do
-          let _ ← pchar '"'
-          let body ← manyChars (satisfy (· != '"'))
-          let _ ← pchar '"'
-          whitespace
-          return Pattern.strLit body)
-      <|> (do
-        attempt do
-          skipChar '_'
-          /- Reject if the `_` is the head of an identifier (e.g. `_x`). -/
-          match ← peek? with
-          | some c => if c.isAlphanum || c == '_' then
-                        fail "ident starting with _"
-                      else pure ()
-          | none   => pure ()
-          whitespace
-          return Pattern.wildcard)
-      <|> (do
-        let ctor ← ident
-        let args ← (do
-          sym "("
-          let xs ← sepBy ident (sym ",")
-          sym ")"
-          return xs.toList) <|> pure []
-        return Pattern.ctor ctor args)
+  let pat ← parsePattern
   sym "=>"
   let body ← parseAdd  -- nested `match` requires explicit parens
   return .mk pat body
