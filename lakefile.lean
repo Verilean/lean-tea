@@ -562,7 +562,7 @@ lean_exe tui_spec where
   srcDir := "examples"
   root := `Tests.TuiSpec
 
-/-- Mouse + resize + wide-character demo for `LeanTea.Tui`: a draggable
+/-- Mouse + resize demo for `LeanTea.Tui`: a draggable
     split, a clickable list, a scrolling log and buttons. -/
 lean_exe tui_mouse where
   srcDir := "examples"

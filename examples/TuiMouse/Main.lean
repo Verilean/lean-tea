@@ -1,6 +1,6 @@
 import LeanTea.Tui
 
-/-! # tui_mouse — mouse, resize and wide characters in `LeanTea.Tui`
+/-! # tui_mouse — mouse and resize in `LeanTea.Tui`
 
 ```
 $ lake exe tui_mouse
@@ -12,7 +12,7 @@ $ lake exe tui_mouse
   * wheel over the log, or press / drag its scrollbar
   * click the buttons; Tab still cycles focus, Enter activates
   * resize the terminal window — the layout follows
-  * Ctrl+C or the `[終了]` button quits
+  * Ctrl+C or the `[Quit]` button quits
 
 All state (split ratios, scroll offset, selection) lives in `State`;
 the widgets only report changes, as everywhere else in the kit. -/
@@ -32,12 +32,12 @@ structure State where
   offset : Nat := 0
   sel    : Nat := 0
   count  : Int := 0
-  log    : Array String := (List.range 30).toArray.map (s!"起動ログ {·}: 古い行はホイールでスクロール")
+  log    : Array String := (List.range 30).toArray.map (s!"boot log {·}: wheel to scroll back")
   quit   : Bool := false
 
 def files : List String :=
-  ["README.md", "設計メモ.md", "lakefile.lean", "Main.lean", "テスト結果.txt", "画像_01.png",
-   "画像_02.png", "data.csv", "ノート.org", "LICENSE", "変更履歴.md", "build.sh"]
+  ["README.md", "design-notes.md", "lakefile.lean", "Main.lean", "test-results.txt", "image_01.png",
+   "image_02.png", "data.csv", "notes.org", "LICENSE", "CHANGELOG.md", "build.sh"]
 
 def note (s : State) (line : String) : State :=
   let log := s.log.push line
@@ -51,32 +51,32 @@ def update (msg : Msg) (s : State) : State :=
   | .scrolled o => { s with offset := o }
   | .up         => { s with sel := s.sel - 1 }
   | .down       => { s with sel := min (files.length - 1) (s.sel + 1) }
-  | .pick i     => note { s with sel := i } s!"選択: {files.getD i "?"}"
-  | .openSel    => note s s!"開く: {files.getD s.sel "?"}"
-  | .inc        => note { s with count := s.count + 1 } s!"＋ → {s.count + 1}"
-  | .dec        => note { s with count := s.count - 1 } s!"－ → {s.count - 1}"
+  | .pick i     => note { s with sel := i } s!"picked: {files.getD i "?"}"
+  | .openSel    => note s s!"open: {files.getD s.sel "?"}"
+  | .inc        => note { s with count := s.count + 1 } s!"+ -> {s.count + 1}"
+  | .dec        => note { s with count := s.count - 1 } s!"- -> {s.count - 1}"
   | .clear      => { s with log := #[], offset := 0 }
   | .quit       => { s with quit := true }
 
 def view (s : State) : Widget Msg :=
   let logLines : List (Widget Msg) := s.log.toList.map (text ·)
   vbox [
-    text " LeanTea.Tui マウスデモ — クリック・ドラッグ・ホイール・リサイズ (Ctrl+C で終了)"
+    text " LeanTea.Tui mouse demo — click, drag, wheel, resize (Ctrl+C to quit)"
       { fg := .black, bg := .cyan, bold := true },
     hsplit s.ratio .ratio
-      (panel "ファイル" .line (listView "files" files s.sel .up .down .openSel (onPick := some .pick)))
+      (panel "Files" .line (listView "files" files s.sel .up .down .openSel (onPick := some .pick)))
       (vsplit s.vratio .vratio
-        (panel "ログ" .line (scroll s.offset .scrolled (vbox logLines) (contentHeight := some s.log.size)))
-        (panel "操作" .line (vbox [
-          text s!"カウント: {s.count}",
+        (panel "Log" .line (scroll s.offset .scrolled (vbox logLines) (contentHeight := some s.log.size)))
+        (panel "Actions" .line (vbox [
+          text s!"count: {s.count}",
           hbox [
-            button "inc" .primary "[＋]" .inc,
-            button "dec" .secondary "[－]" .dec,
-            button "clear" .ghost "[ログ消去]" .clear,
-            button "quit" .danger "[終了]" .quit
+            button "inc" .primary "[+]" .inc,
+            button "dec" .secondary "[-]" .dec,
+            button "clear" .ghost "[Clear log]" .clear,
+            button "quit" .danger "[Quit]" .quit
           ]
         ]))),
-    text s!" 分割 {s.ratio / 10}% / {s.vratio / 10}%  ログ {s.log.size} 行  選択 {files.getD s.sel ""}"
+    text s!" split {s.ratio / 10}% / {s.vratio / 10}%  log {s.log.size} lines  selected {files.getD s.sel ""}"
       { dim := true }
   ]
 
