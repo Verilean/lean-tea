@@ -12,7 +12,10 @@ CDN, so this only guards the build side.
     bare names `page.html`'s import map provides
   * `node --check` accepts the module as valid JavaScript
   * every element id the client looks up exists in `page.html`, and
-    the page loads `/world.js` as a module -/
+    the page loads `/world.js` as a module
+  * the movement rules (`Physics.leanjs`, a pure `step`) behave:
+    `PhysicsTest.leanjs` runs them under node on toy worlds and each
+    `PASS` / `FAIL` line becomes a test here -/
 
 open LeanTea LeanTea.LSpec
 
@@ -23,10 +26,25 @@ def usedIds (src : String) : List String :=
   ((src.splitOn "byId(\"").drop 1).filterMap fun chunk =>
     (chunk.splitOn "\"").head?
 
+/-- Compile `PhysicsTest.leanjs`, run it with node, one test per line. -/
+def physicsTests : IO (List LSpec) := do
+  match ← Breezehollow.compileFile (← Breezehollow.findFile "PhysicsTest.leanjs") with
+  | .error e => return [it "PhysicsTest.leanjs compiles" false e]
+  | .ok js =>
+    let tmp : System.FilePath := s!"/tmp/breezehollow-physics-{← IO.rand 0 0xffffff}.js"
+    IO.FS.writeFile tmp js
+    let out ← IO.Process.output { cmd := "node", args := #[tmp.toString] }
+    IO.FS.removeFile tmp
+    if out.exitCode != 0 then return [it "PhysicsTest.leanjs runs" false out.stderr]
+    let lines := (out.stdout.splitOn "\n").filter (!·.isEmpty)
+    return lines.map fun l =>
+      if l.startsWith "PASS " then it (l.drop 5).toString true
+      else it ((l.drop 5).toString.takeWhile (· != '{')).toString false l
+
 def main : IO UInt32 := do
-  let src ← Breezehollow.loadSource
+  let src ← IO.FS.readFile (← Breezehollow.findFile "World.leanjs")
   let page ← IO.FS.readFile "examples/Breezehollow/page.html"
-  let compiled := Breezehollow.compileSource src
+  let compiled ← Breezehollow.compileFile (← Breezehollow.findFile "World.leanjs")
   let js := match compiled with | .ok js => js | .error _ => ""
   let tmp : System.FilePath := s!"/tmp/breezehollow-spec-{← IO.rand 0 0xffffff}.mjs"
   IO.FS.writeFile tmp js
@@ -38,8 +56,9 @@ def main : IO UInt32 := do
   if check.exitCode != 0 then IO.eprintln check.stderr
   let tree := group "Breezehollow" [
     group "LeanJs build" [
-      it "World.leanjs parses and passes the checks"
-        (match compiled with | .ok _ => true | .error _ => false),
+      it "World.leanjs (+ Physics.leanjs) parses and passes the checks"
+        (match compiled with | .ok _ => true | .error _ => false)
+        (match compiled with | .ok _ => "" | .error e => e),
       it "imports three.js by bare name" (has js "import * as THREE from 'three';"),
       it "imports the bloom post-processing addons"
         (has js "from 'three/addons/postprocessing/UnrealBloomPass.js'" &&
@@ -52,7 +71,8 @@ def main : IO UInt32 := do
         (has page "type=\"importmap\"" && has page "\"three\":" && has page "\"three/addons/\":"),
       it "loads /world.js as an ES module" (has page "<script type=\"module\" src=\"/world.js\">"),
       it s!"every id the client uses exists ({ids.length} ids)" (ids.length > 5 && missing.isEmpty)
-    ]
+    ],
+    group "Physics.step (node, toy worlds)" (← physicsTests)
   ]
   let code ← lspecIO tree
   return if code == 0 then 0 else 1

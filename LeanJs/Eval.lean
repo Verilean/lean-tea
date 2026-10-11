@@ -196,6 +196,16 @@ partial def eval (globals env : Env) : Ast.Expr → Except String Value
     let vs ← xs.foldlM
       (fun acc e => do return acc ++ [(← eval globals env e)]) []
     .ok (.arr vs)
+  | .updE base kv => do
+    match ← eval globals env base with
+    | .dict old =>
+      let mut out := old
+      for (k, e) in kv do
+        let v ← eval globals env e
+        out := if out.any (·.1 == k) then out.map (fun (k', v') => if k' == k then (k, v) else (k', v'))
+               else out ++ [(k, v)]
+      .ok (.dict out)
+    | _ => .error "`{ … with … }` on a non-object"
   | .objE kv => do
     let pairs ← kv.foldlM
       (fun acc (k, e) => do return acc ++ [(k, (← eval globals env e))]) []

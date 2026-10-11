@@ -480,6 +480,92 @@ def runIncludeSpec : IO LSpec := do
       if r == "43" then return it s!"include ✓ {r}" true
       else return it "include" false s!"expected 43, got {r}"
 
+/-! ## 6. Language ergonomics
+
+Error positions, the column-0 rule for space application, optional
+`else`, `:=` assignment in expressions, `( a; b )` sequences, unary
+minus, string escapes, inlined nested `do` blocks, and check errors
+that name the enclosing definition. -/
+
+def has (h n : String) : Bool := (h.splitOn n).length > 1
+
+def parseErr (src : String) : String :=
+  match parseProgramString src with
+  | .error e => e
+  | .ok _ => "<parsed>"
+
+def compileErr (src : String) : String :=
+  match parseProgramString src with
+  | .error e => s!"parse: {e}"
+  | .ok p => match compileChecked p with
+    | .error e => e
+    | .ok _ => "<compiled>"
+
+def compiled (src : String) : String :=
+  match parseProgramString src with
+  | .error e => s!"parse: {e}"
+  | .ok p => compileToString p
+
+def ergonomicNodeCases : List NodeCase := [
+  { label := "col0-stops-space-app", jsOnly := true, source :=
+      "def logged := []\ndef push1(v) := logged.push(v)\ndef boot() := push1(1)\nboot()\n"
+   ++ "def main := logged.length",
+    expected := "1" },
+  { label := "if-without-else", jsOnly := true, source :=
+      "def f(x) := do\n  let mut n := 0;\n  if x > 1 then n := 5;\n  n\n"
+   ++ "def main := f(3) + f(0)",
+    expected := "5" },
+  { label := "paren-sequence-in-branch", jsOnly := true, source :=
+      "def f(x) := do\n  let mut a := 0;\n  let mut b := 0;\n"
+   ++ "  if x then (a := 1; b := 2) else (a := 10);\n  a + b\n"
+   ++ "def main := f(true) * 100 + f(false)",
+    expected := "310" },
+  { label := "unary-minus", jsOnly := true, source :=
+      "def neg(x) := -x * 2\ndef main := neg(3) + -(1 + 1)",
+    expected := "-8" },
+  { label := "record-update", source :=
+      "def p := {x: 1, y: 2}\ndef q := { p with y := 5 }\n"
+   ++ "def main := p.y * 100 + q.y * 10 + q.x",
+    expected := "251" },
+  { label := "string-escapes", jsOnly := true, source :=
+      "def main := \"a\\\"b\\\\c\".length * 10 + \"x\\ny\".length",
+    expected := "53" }
+]
+
+def ergonomicSpecs : LSpec := group "ergonomics" [
+  it "parse error points at the line inside the do block"
+    (has (parseErr "def ok := 1\ndef f(x) := do\n  let a := x;\n  let b := a + ;\n  b\n") "line 4"),
+  it "parse error shows the source line and a caret"
+    (has (parseErr "def x := (1 + \n") "^"),
+  it "line numbers survive multi-byte characters"
+    (has (parseErr "-- a — b — c\n-- ✓ é\ndef x := )\n") "line 3"),
+  it "nested do in an if branch is inlined, not an IIFE"
+    (let js := compiled "def f(x) := do\n  if x then (do let y := 1; g(y));\n  0\ndef g(v) := v";
+     has js "{const y=1;" && !has js "(()=>{const y"),
+  it "check errors name the enclosing def"
+    (has (compileErr "def g(a) := a\ndef f() := g(1, 2)") "in `def f`"),
+  it "unknown identifier, with the closest name suggested"
+    (has (compileErr "def heightAt(x) := x\ndef f() := heigthAt(1)")
+      "unknown identifier `heigthAt` (did you mean `heightAt`?)"),
+  it "field typo on a top-level object literal (read or write)"
+    (has (compileErr "def P := {x: 0, stamina: 1}\ndef f() := P.stamna")
+      "`P` has no field `stamna` (did you mean `stamina`?)" &&
+     has (compileErr "def P := {x: 0}\ndef f() := do\n  P.y := 1;\n  null") "`P` has no field `y`"),
+  it "binders, JS globals, empty dictionaries and shadowing are fine"
+    (compileErr ("def keys := {}\ndef P := {x: 0}\n"
+      ++ "def f(xs) := do\n  for v in xs do (let w := v * 2; keys[w] := Math.max(w, P.x));\n"
+      ++ "  let P := {y: 1};\n  P.y\n"
+      ++ "def g(o) := match o with | Some(v) => v | _ => 0\ninductive Opt where | None | Some(v)")
+      == "<compiled>"),
+  it "record update can't add a field to a known-shape object"
+    (has (compileErr "def P := {x: 0}\ndef f() := { P with z := 1 }") "`P` has no field `z`"),
+  it "every node-case program passes the checks (no false positives)"
+    ((nodeCases ++ ergonomicNodeCases).all fun c =>
+      match parseProgramString c.source with
+      | .ok p => (match LeanJs.Check.check p with | .ok _ => true | .error _ => false)
+      | .error _ => true)
+]
+
 def main : IO UInt32 := do
   IO.println "── LeanJs pure tests ─────────────────────────────────────"
   let pureCode ← lspecIO pureSpecs
@@ -506,4 +592,11 @@ def main : IO UInt32 := do
   IO.println "── LeanJs `include` resolution ───────────────────────────"
   let incCode ← lspecIO (group "include" [← runIncludeSpec])
 
-  return pureCode + nodeCode + dualCode + leanCode + incCode
+  IO.println ""
+  IO.println "── LeanJs ergonomics ─────────────────────────────────────"
+  let mut ergLeaves : List LSpec := [ergonomicSpecs]
+  for c in ergonomicNodeCases do
+    ergLeaves := ergLeaves ++ [(← runNodeCase c)]
+  let ergCode ← lspecIO (group "ergonomics" ergLeaves)
+
+  return pureCode + nodeCode + dualCode + leanCode + incCode + ergCode

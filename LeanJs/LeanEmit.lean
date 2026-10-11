@@ -74,6 +74,10 @@ partial def emitExpr : Ast.Expr → String
   | .arrE xs      =>
     "[" ++ String.intercalate ", " (xs.map emitExpr) ++ "]"
   | .objE _       => "(panic! \"object literal: unsupported in LeanEmit\")"
+  | .updE b fs    =>
+    -- Lean's own structure-update syntax
+    let entries := String.intercalate ", " (fs.map (fun (k, v) => s!"{k} := {emitExpr v}"))
+    s!"(\{ {emitExpr b} with {entries} })"
   | .idxE e ix    => s!"(({emitExpr e}).get! {emitExpr ix})"
   | .nullE        => "(panic! \"null: unsupported in LeanEmit\")"
   | .boolE b      => if b then "true" else "false"

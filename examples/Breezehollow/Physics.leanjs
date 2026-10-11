@@ -1,0 +1,121 @@
+-- examples/Breezehollow/Physics.leanjs — the hero's movement rules, as one
+-- pure function.
+--
+--   step(player, input, world, dt) → { player, events }
+--
+-- No mutation and no three.js: the player is a record, every frame returns
+-- a new one (`{ p with … }`), and anything the renderer should react to
+-- (dust on landing, the skill's wind ring) comes back as an event name.
+-- World.leanjs includes this file and only feeds it input and the world
+-- queries; examples/Tests/BreezehollowSpec.lean runs it under node to check
+-- jump height, glide sink rate, stamina, updrafts and the wind skill.
+--
+-- `world` answers four questions about the terrain:
+--   ground(x, z, y) — height of the surface someone at height y stands on
+--   lift(x, z, y)   — 1 inside an updraft, else 0
+--   wade(x, z)      — true in water deep enough to slow you down
+--   push(x, z, y)   — [x, z] moved out of trees / rocks / the world edge
+
+def GRAVITY := 28
+def JUMP_V := 10.5
+def WALK := 6.5
+def SPRINT := 12.5
+def WADE := 4
+def GLIDE := 9.5
+def GLIDE_SINK := 2.4
+def GLIDE_DRIFT := 4.5
+def UPDRAFT_DRIFT := 1.2
+def UPDRAFT_ACCEL := 42
+def UPDRAFT_MAX := 13
+def GLIDE_MIN_HEIGHT := 1.2
+def SKILL_V := 17
+def SKILL_CD := 5
+def SPRINT_DRAIN := 22
+def GLIDE_DRAIN := 7
+def REGEN := 30
+def MAX_STAMINA := 100
+def RECOVER_AT := 35
+
+record Player where
+  x : Float, y : Float, z : Float,
+  vx : Float, vy : Float, vz : Float,
+  facing : Float, onGround : Bool, gliding : Bool,
+  stamina : Float, exhausted : Bool, skillCd : Float
+
+def newPlayer(x, y, z) := Player {
+  x: x, y: y, z: z, vx: 0, vy: 0, vz: 0, facing: Math.PI,
+  onGround: false, gliding: false, stamina: MAX_STAMINA, exhausted: false, skillCd: 0 }
+
+def mix(a, b, t) := a + (b - a) * t
+
+-- Signed angle from a to b, in (-π, π].
+def turn(a, b) :=
+  let d := (b - a) / (2 * Math.PI) + 0.5;
+  (d - Math.floor(d)) * 2 * Math.PI - Math.PI
+
+-- WASD relative to the camera's yaw → a unit direction on the ground.
+def moveDir(inp) :=
+  let fx := -Math.sin(inp.yaw);
+  let fz := -Math.cos(inp.yaw);
+  let rx := Math.cos(inp.yaw);
+  let rz := -Math.sin(inp.yaw);
+  let mx := rx * inp.kx + fx * inp.kz;
+  let mz := rz * inp.kx + fz * inp.kz;
+  let len := Math.hypot(mx, mz);
+  if len > 0.01 then {x: mx / len, z: mz / len, moving: true}
+  else {x: 0, z: 0, moving: false}
+
+def step(p, inp, world, dt) :=
+  let m := moveDir(inp);
+  let inLift := world.lift(p.x, p.z, p.y) == 1;
+  let wade := p.onGround && world.wade(p.x, p.z);
+  let sprinting := inp.sprint && m.moving && p.onGround && !p.exhausted && !wade;
+  -- Space: jump on the ground; in the air, open / close the glider
+  let height := p.y - world.ground(p.x, p.z, p.y);
+  let jumped := inp.jump && p.onGround;
+  let glideOn := inp.jump && !p.onGround && !p.gliding && !p.exhausted && height > GLIDE_MIN_HEIGHT;
+  let glideOff := inp.jump && !p.onGround && p.gliding;
+  let skill := inp.skill && p.skillCd <= 0;
+  let gliding := if glideOn then true else if glideOff || skill then false else p.gliding;
+  let launched := jumped || skill;
+  let grounded := p.onGround && !launched;
+  -- horizontal: ease toward the target velocity; a glider drifts forward
+  let speed := if gliding then GLIDE else if sprinting then SPRINT else if wade then WADE else WALK;
+  let drift := if inLift then UPDRAFT_DRIFT else GLIDE_DRIFT;
+  let tvx := if gliding && !m.moving then Math.sin(p.facing) * drift else m.x * speed;
+  let tvz := if gliding && !m.moving then Math.cos(p.facing) * drift else m.z * speed;
+  let k := Math.min(1, (if grounded then 14 else 3.5) * dt);
+  let vx := mix(p.vx, tvx, k);
+  let vz := mix(p.vz, tvz, k);
+  let facing := if m.moving then p.facing + turn(p.facing, Math.atan2(m.x, m.z)) * Math.min(1, 12 * dt)
+                else p.facing;
+  -- vertical: launch, gravity, glider sink limit, updraft lift
+  let vy0 := if jumped then JUMP_V else if glideOn then Math.min(p.vy, 2) else p.vy;
+  let vy1 := if skill then (if p.onGround then SKILL_V else Math.max(vy0, 9)) else vy0;
+  let vy2 := vy1 - GRAVITY * dt;
+  let vy3 := if gliding then Math.max(vy2, -GLIDE_SINK) else vy2;
+  let vy := if gliding && inLift then Math.min(vy3 + UPDRAFT_ACCEL * dt, UPDRAFT_MAX) else vy3;
+  -- stamina: sprinting and gliding (outside updrafts) drain, the ground refills
+  let drain := if sprinting then SPRINT_DRAIN else if gliding && !inLift then GLIDE_DRAIN else 0;
+  let st := if drain > 0 then p.stamina - drain * dt
+            else if grounded then Math.min(MAX_STAMINA, p.stamina + REGEN * dt) else p.stamina;
+  let stamina := Math.max(0, st);
+  let exhausted := if st <= 0 then true else if p.exhausted && stamina > RECOVER_AT then false else p.exhausted;
+  -- move, then settle on whatever is underfoot
+  let at := world.push(p.x + vx * dt, p.z + vz * dt, p.y);
+  let ny := p.y + vy * dt;
+  let g := world.ground(at[0], at[1], ny);
+  let landed := ny <= g;
+  let events := [].concat(
+    (if jumped then ["jump"] else []),
+    (if glideOn then ["glide"] else []),
+    (if skill then ["skill"] else []),
+    (if landed && !grounded then ["land"] else []));
+  { player: { p with
+      x := at[0], z := at[1], y := (if landed then g else ny),
+      vx := vx, vz := vz, vy := (if landed then 0 else vy), facing := facing,
+      onGround := landed || ny - g < 0.05,
+      gliding := gliding && st > 0 && !landed,
+      stamina := stamina, exhausted := exhausted,
+      skillCd := (if skill then SKILL_CD else Math.max(0, p.skillCd - dt)) },
+    events: events }

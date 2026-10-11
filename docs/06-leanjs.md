@@ -127,13 +127,32 @@ $ lake exe breezehollow          # http://localhost:8010/
 $ lake exe breezehollow_spec     # offline: compiles, node --check, page ids
 ```
 
-Two habits that the bigger program needed:
+The movement rules are a separate, pure file, `Physics.leanjs`:
 
-- a top-level call after a `def` whose body *ends in a call* is
-  swallowed as an extra argument (space application spans newlines),
-  so end such bodies with a literal such as `null`;
-- shader source fits in ordinary string literals, which may span
-  lines (they just can't contain `"`).
+```text
+def step(p, inp, world, dt) :=
+  let jumped := inp.jump && p.onGround;
+  …
+  { player: { p with x := at[0], z := at[1], vy := (if landed then 0 else vy), … },
+    events: events }
+```
+
+`World.leanjs` `include`s it and is only the shell: it reads the keys,
+calls `step`, stores the new player and turns the returned events
+(`"jump"`, `"glide"`, `"skill"`, `"land"`) into particles. Because
+`step` is a plain function, `PhysicsTest.leanjs` checks jump height,
+glide sink rate, stamina, updrafts and the wind skill on toy worlds
+under node, and `breezehollow_spec` turns each result into a test.
+
+Shader source fits in ordinary string literals, which may span lines.
+
+## Errors and checks
+
+Parse errors give the line, column, the source line and a caret at
+the deepest point the parser reached. `LeanJs.Check` names the
+enclosing `def` and catches wrong arity, bad record fields, unknown
+identifiers (suggesting the closest name) and typos in the fields of
+top-level object literals — see the LeanJs README for the details.
 
 ## CLI trio
 

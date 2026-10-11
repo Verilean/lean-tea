@@ -97,6 +97,10 @@ partial def compileExpr : Ast.Expr → LeanTea.Js.Expr
   | .doBlock body =>
     -- `do <stmts>` → synchronous IIFE `(() => { <block> })()`.
     call (arrow [] (compileStmts true body)) []
+  | .updE base fields =>
+    -- `({...base, k: v})` — a fresh object; `base` is not mutated.
+    let kvs := fields.map fun (k, v) => s!",{k}:{LeanTea.Js.renderExpr (compileExpr v)}"
+    E.raw s!"(\{...{LeanTea.Js.renderExpr (compileExpr base)}{String.join kvs}})"
   | .letMutE name value body =>
     -- Reachable only if a `let mut` shows up in pure-expression
     -- position (outside a block). Mutability is moot there, so treat
@@ -166,6 +170,12 @@ partial def compileStmts (tail : Bool) : Ast.Expr → Block
     -- A `null` terminal means "no value" — emit nothing so a void
     -- block doesn't end with a spurious `return null`.
     []
+  | .doBlock body =>
+    -- A nested `do` in statement position (an `if` branch, a loop
+    -- body) is inlined as a `{ … }` block instead of an IIFE: same
+    -- scoping (const/let are block-scoped), no closure per iteration,
+    -- and a tail `return` still returns the enclosing block's value.
+    [.rawS ("{" ++ (compileStmts tail body).render ++ "}")]
   | terminal =>
     if tail then [retE (compileExpr terminal)]
     else [doE (compileExpr terminal)]

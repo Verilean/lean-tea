@@ -116,6 +116,10 @@ inductive Expr where
       Same shape as `letE` but lowers to `let` (not `const`) so later
       `name := …` reassignments in the same block are legal. -/
   | letMutE (name : String) (value body : Expr) : Expr
+  /-- `{ base with f1 := v1, f2 := v2 }` — a copy of `base` with some
+      fields replaced; `base` is untouched. The functional way to
+      "change" a record: lowers to `{...base, f1: v1, f2: v2}`. -/
+  | updE (base : Expr) (fields : List (String × Expr))
 
 /-- One arm of a `match`. `pat` carries either a constructor
     pattern (with named field binders), a string literal, or a

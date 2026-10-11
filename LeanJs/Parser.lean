@@ -1,21 +1,118 @@
 import Std.Internal.Parsec
-import Std.Internal.Parsec.String
 import LeanJs.Ast
 
-/-! # LeanJs.Parser — `Std.Internal.Parsec.String` combinators
+/-! # LeanJs.Parser — `Std.Internal.Parsec` combinators
 
 We avoid hand-rolling a tokenizer. Tokens are absorbed inline using
-`pchar` / `pstring` plus a shared `ws` whitespace skipper.
+`pchar` / `skipString` plus a shared `whitespace` skipper.
 
 Operator precedence climbs: `parseAdd` chains `parseMul`, which
 chains `parseApp`, which chains `parseAtom`. Same shape as the
 recursive-descent demo from Chapter 7, just expressed via the
-combinator library rather than by hand. -/
+combinator library rather than by hand.
+
+## Error positions
+
+The grammar leans on `attempt` for backtracking, and a plain
+`attempt` rewinds the error position to where the construct started
+— so a typo deep inside a `do` block used to be reported at the
+`def` (or at end of input). The input type here, `Src`, also carries
+the *furthest* position any alternative reached before failing, and
+`attempt` folds each failure into it. A failed parse reports that
+position (as line / column, with the source line and a caret), which
+is almost always where the actual mistake is. -/
 
 namespace LeanJs.Parser
 
 open LeanJs.Ast
-open Std.Internal Parsec Parsec.String
+open Std.Internal (Parsec)
+open Std.Internal.Parsec (ParseResult Input many many1 manyChars satisfy peek? fail eof)
+
+/-! ## Input with furthest-failure tracking -/
+
+structure Src where
+  cs     : Array Char
+  i      : Nat := 0
+  /-- Deepest position a failed alternative reached, and its message. -/
+  far    : Nat := 0
+  farMsg : String := ""
+
+instance : Input Src Char Nat where
+  pos it := it.i
+  next it := { it with i := it.i + 1 }
+  curr it := it.cs[it.i]!
+  hasNext it := it.i < it.cs.size
+  next' it _ := { it with i := it.i + 1 }
+  curr' it _ := it.cs[it.i]!
+
+abbrev Parser (α : Type) : Type := Parsec Src α
+
+/-- Fold the failure carried by `rem` (its own deepest failure, or its
+    position with `msg`) into `it`, keeping whichever is further. -/
+private def Src.noteFail (it rem : Src) (msg : String) : Src :=
+  let (f, m) := if rem.far > rem.i then (rem.far, rem.farMsg) else (rem.i, msg)
+  if f ≥ it.far then { it with far := f, farMsg := m } else it
+
+/-- Backtracking: on failure, rewind to where `p` started but remember
+    how far it got. -/
+@[inline] def attempt (p : Parser α) : Parser α := fun it =>
+  match p it with
+  | .success rem a => .success rem a
+  | .error rem err => .error (it.noteFail rem (toString err)) err
+
+def skipString (str : String) : Parser Unit := attempt do
+  for c in str.toList do
+    let _ ← satisfy (· == c)
+  pure ()
+
+def pchar (c : Char) : Parser Char := do
+  -- look before consuming, so a mismatch is reported at the char itself
+  match ← peek? with
+  | some d => if d == c then satisfy (fun _ => true) else fail s!"expected '{c}'"
+  | none => fail s!"expected '{c}'"
+
+def skipChar (c : Char) : Parser Unit := do let _ ← pchar c; pure ()
+
+/-- True when the next token begins a line at column 0 — the start of
+    a new top-level form, which ends any expression in progress. -/
+def atLineStart : Parser Bool := fun it =>
+  .success it (it.i > 0 && it.cs[it.i - 1]! == '\n')
+
+/-- `(line, col)` (1-based) of a character index. -/
+def lineColOfIndex (src : Array Char) (idx : Nat) : Nat × Nat := Id.run do
+  let mut line := 1
+  let mut col := 1
+  for k in [:min idx src.size] do
+    if src[k]! == '\n' then
+      line := line + 1
+      col := 1
+    else col := col + 1
+  return (line, col)
+
+/-- `error at line L, col C: unexpected …`, then the source line and a
+    caret. Single-character expectations (`expected '"'`) only say which
+    alternative happened to be tried last, so they're left out; any
+    other message (e.g. `reserved word: do`) is kept. -/
+def formatError (src : Array Char) (idx : Nat) (msg : String) : String :=
+  let (line, col) := lineColOfIndex src idx
+  let text := ((String.ofList src.toList).splitOn "\n")[line - 1]?.getD ""
+  let caret := String.ofList (List.replicate (col - 1) ' ') ++ "^"
+  let found := match src[idx]? with
+    | some '\n' => "unexpected end of line"
+    | some c => s!"unexpected `{c}`"
+    | none => "unexpected end of input"
+  let detail := if msg.startsWith "expected '" || msg.isEmpty || msg == "condition not satisfied"
+    then "" else s!" ({msg})"
+  s!"error at line {line}, col {col}: {found}{detail}\n  {text}\n  {caret}"
+
+/-- Run a parser over the whole string, reporting the deepest failure. -/
+def runParser (p : Parser α) (src : String) : Except String α :=
+  let cs := src.toList.toArray
+  match p { cs } with
+  | .success _ a => .ok a
+  | .error rem err =>
+    let (pos, msg) := if rem.far > rem.i then (rem.far, rem.farMsg) else (rem.i, toString err)
+    .error (formatError cs pos msg)
 
 /-! ## Whitespace + lexemes -/
 
@@ -99,12 +196,25 @@ private def number : Parser Expr := attempt do
       let n : Int := intStr.toInt!
       return .num (if negOpt.isSome then -n else n)
 
+/-- One character of a string literal: `\n` `\t` `\r` `\"` `\\` are
+    escapes; any other backslash is kept as-is. Literals may span lines. -/
+private def strChar : Parser String := do
+  let c ← satisfy (· != '"')
+  if c != '\\' then return String.singleton c
+  match ← peek? with
+  | some 'n'  => let _ ← satisfy (fun _ => true); return "\n"
+  | some 't'  => let _ ← satisfy (fun _ => true); return "\t"
+  | some 'r'  => let _ ← satisfy (fun _ => true); return "\r"
+  | some '"'  => let _ ← satisfy (fun _ => true); return "\""
+  | some '\\' => let _ ← satisfy (fun _ => true); return "\\"
+  | _ => return "\\"
+
 private def stringLit : Parser Expr := attempt do
   let _ ← pchar '"'
-  let body ← manyChars (satisfy (· != '"'))
+  let parts ← many strChar
   let _ ← pchar '"'
   whitespace
-  return .str body
+  return .str (String.join parts.toList)
 
 private def identCore : Parser String := attempt do
   let head ← satisfy (fun c => c.isAlpha || c == '_')
@@ -213,7 +323,9 @@ partial def parseReassign : Parser Expr := do
     `parseExpr`, so `x <- if cond then a else b` works. -/
 partial def parseAssign : Parser Expr := do
   let head ← parseAdd
-  match ← optional (attempt (skipString "<-" <* whitespace)) with
+  -- `x := e` and `x <- e` are the same assignment, usable anywhere an
+  -- expression is (a branch of `if`, a lambda body, …).
+  match ← optional (attempt ((skipString "<-" <|> skipString ":=") <* whitespace)) with
   | some _ =>
     let rhs ← parseExpr
     return .assignE head rhs
@@ -277,13 +389,14 @@ partial def parseLet : Parser Expr := attempt do
   let body ← parseExpr
   return .letE name val body
 
+/-- `if c then a else b`. The `else` branch may be left out: it is
+    then `null`, which in a statement block means "do nothing". -/
 partial def parseIf : Parser Expr := attempt do
   keyword "if"
   let c ← parseExpr
   keyword "then"
   let t ← parseExpr
-  keyword "else"
-  let f ← parseExpr
+  let f ← (do keyword "else"; parseExpr) <|> pure .nullE
   return .ifE c t f
 
 partial def parseFun : Parser Expr := attempt do
@@ -387,6 +500,15 @@ partial def parseApp : Parser Expr := do
   if (← optional (attempt (do skipChar '!'; whitespace))).isSome then
     let e ← parseApp
     return .unopE "!" e
+  -- Unary minus: `-x`, `-f(y)`. A `-` before a digit stays part of the
+  -- number literal (`-7`), so constant folding / emitted text don't change.
+  if (← optional (attempt (do
+      skipChar '-'
+      match ← peek? with
+      | some c => if c.isDigit then fail "numeric literal" else whitespace
+      | none => fail "eof"))).isSome then
+    let e ← parseApp
+    return .unopE "-" e
   let head ← parseAtom
   let head ← parseAppTail head
   /- Lean-prover-style space-separated application: `f a b` lowers
@@ -518,6 +640,9 @@ partial def parseSpaceApp (head : Expr) : Parser Expr := do
     | some c => return c != '[' && c != '-'
     | none   => return false)
   if !canStartArg then return head
+  /- A token at column 0 starts the next top-level form: `boot()` on
+     the line after a def ending in `raf(frame)` is not an argument. -/
+  if ← atLineStart then return head
   /- The arg's own chain is restricted to member access — a stray
      `(` after the atom belongs to the OUTER space-app, not to this
      arg. Using parseAppTail here would over-eat: `add 1 (dbl 3)`
@@ -584,14 +709,28 @@ partial def parseRecordLit : Parser Expr := attempt do
 
 partial def parseAtom : Parser Expr :=
   parseNullLit <|> parseBoolLit <|> parseNew
-    <|> number <|> stringLit <|> arrayLit <|> objectLit
-    <|> parenExpr parseExpr <|> parseRecordLit <|> varExpr
+    <|> number <|> stringLit <|> arrayLit <|> updateLit <|> objectLit
+    <|> parenExpr parseStmtSeq <|> parseRecordLit <|> varExpr
 
 partial def arrayLit : Parser Expr := attempt do
   sym "["
   let xs ← sepBy parseExpr (sym ",")
   sym "]"
   return .arrE xs.toList
+
+/-- `{ base with f := v, g := w }` (`f: v` also accepted). -/
+partial def updateLit : Parser Expr := attempt do
+  sym "{"
+  let base ← parseApp
+  keyword "with"
+  let field : Parser (String × Expr) := attempt do
+    let k ← ident
+    (sym ":=" <|> sym ":")
+    let v ← parseExpr
+    return (k, v)
+  let fields ← sepBy field (sym ",")
+  sym "}"
+  return .updE base fields.toList
 
 partial def objectLit : Parser Expr := attempt do
   sym "{"
@@ -810,44 +949,10 @@ partial def parseProgram : Parser Program := do
 
 /-! ## Public entry -/
 
-/-- Translate a byte offset back to a `(line, col)` pair by walking
-    `src` and counting newlines. Both are 1-indexed; if `off` is past
-    EOF we return the last position. -/
-def lineColOfOffset (src : String) (off : Nat) : Nat × Nat := Id.run do
-  let mut line : Nat := 1
-  let mut col  : Nat := 1
-  let mut i    : Nat := 0
-  let cs := src.toList
-  for c in cs do
-    if i ≥ off then break
-    if c == '\n' then
-      line := line + 1
-      col  := 1
-    else
-      col := col + 1
-    i := i + 1
-  return (line, col)
-
-/-- Post-process a `Parsec` error string of the shape
-    `offset N: <message>` (the default `Std.Internal.Parsec` format)
-    and prepend a human-readable `(line L, col C)`. Unrecognised
-    formats pass through unchanged. -/
-private def withLineCol (src : String) : String → String := fun e =>
-  /- Strip a leading "offset " then parse digits. -/
-  if !e.startsWith "offset " then e else
-  let rest := (e.drop 7).toString
-  let digits := rest.takeWhile Char.isDigit |>.toString
-  match digits.toNat? with
-  | none      => e
-  | some off  =>
-    let (line, col) := lineColOfOffset src off
-    let tail := (rest.drop digits.length).toString.dropWhile (fun c => c == ':' || c == ' ')
-    s!"error at (line {line}, col {col}, offset {off}): {tail.toString}"
-
 def parseExpressionString (src : String) : Except String Expr :=
-  (Parser.run (whitespace *> parseExpr <* eof) src).mapError (withLineCol src)
+  runParser (whitespace *> parseExpr <* eof) src
 
 def parseProgramString (src : String) : Except String Program :=
-  (Parser.run parseProgram src).mapError (withLineCol src)
+  runParser parseProgram src
 
 end LeanJs.Parser
