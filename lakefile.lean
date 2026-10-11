@@ -75,6 +75,7 @@ lean_lib Examples where
   roots := #[
     `Sheet.App,
     `Reversi.Game,
+    `Breezehollow.Game,
     `Tools.GenSite, `Tools.StaticSite,
     `Tools.LeanJsCompile, `Tools.LeanJsInterp, `Tools.LeanJsRun,
     `Tests.PureSpec,
@@ -567,6 +568,19 @@ lean_exe tui_spec where
 lean_exe tui_mouse where
   srcDir := "examples"
   root := `TuiMouse.Main
+
+/-- Breezehollow — an anime-style open-world demo on three.js. The
+    whole client is `examples/Breezehollow/World.leanjs`, compiled to
+    an ES module at startup and served with a HUD page. -/
+lean_exe breezehollow where
+  srcDir := "examples"
+  root := `Breezehollow.Serve
+
+/-- Offline checks for Breezehollow: `World.leanjs` parses, passes the
+    LeanJs checks, and the emitted module is valid JS (`node --check`). -/
+lean_exe breezehollow_spec where
+  srcDir := "examples"
+  root := `Tests.BreezehollowSpec
 
 /-- Aggregated LSpec runner for the construction-time security
     primitives (SafeHtml + SafePath + SafeCmd + SafeHeader +

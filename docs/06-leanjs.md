@@ -95,6 +95,46 @@ scoring, view rendering — is in the subset. The Lean side parses,
 compiles, and serves the JS at startup (see
 `examples/Reversi/Serve.lean`).
 
+## Worked example — Breezehollow (three.js)
+
+`examples/Breezehollow/World.leanjs` is a whole 3D game client: an
+anime-style open-world vignette with cel-shaded terrain, instanced
+grass with a wind shader, floating islands, a wind shrine,
+collectible motes, updrafts, a chibi hero who runs, jumps and glides,
+bloom post-processing and a canvas minimap.
+
+```text
+import * as THREE from "three"
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
+
+def toon(color) := new THREE.MeshToonMaterial({color: color, gradientMap: toonRamp})
+
+def updatePlayer(dt) := do
+  let kx := (if keys["d"] then 1 else 0) - (if keys["a"] then 1 else 0);
+  …
+  if P.gliding then (do
+    P.vy <- Math.max(P.vy, -2.4);
+    if inUpdraft(P.x, P.z, P.y) == 1 then (P.vy <- Math.min(P.vy + 42 * dt, 13)) else null) else null;
+  …
+```
+
+`examples/Breezehollow/Serve.lean` compiles it once at startup
+(`--dev` recompiles per request) and serves it as `/world.js` next to
+a HUD page whose import map points `three` at a CDN:
+
+```bash
+$ lake exe breezehollow          # http://localhost:8010/
+$ lake exe breezehollow_spec     # offline: compiles, node --check, page ids
+```
+
+Two habits that the bigger program needed:
+
+- a top-level call after a `def` whose body *ends in a call* is
+  swallowed as an extra argument (space application spans newlines),
+  so end such bodies with a literal such as `null`;
+- shader source fits in ordinary string literals, which may span
+  lines (they just can't contain `"`).
+
 ## CLI trio
 
 Three executables share the LeanJs frontend:
