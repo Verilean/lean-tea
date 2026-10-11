@@ -41,3 +41,4 @@ bench/vision/runs/
 bench/vision/cache/
 bench/vision/qa-evidence/
 bench/vision/*.html
+examples/Breezehollow/PhysicsTest.js
