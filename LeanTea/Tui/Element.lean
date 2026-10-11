@@ -41,7 +41,7 @@ private def buttonStyle (kind : ButtonKind) (focused : Bool) : Style :=
   | .ghost,     false => { fg := .yellow, dim := true }
 
 def button (id : String) (kind : ButtonKind) (label : String) (msg : m) : Widget m :=
-  let labelLen := label.length
+  let labelLen := displayWidth label
   let render := fun w _h focused =>
     let chrome := if focused then "▶ " else "  "
     let inner := chrome ++ label
@@ -52,6 +52,8 @@ def button (id : String) (kind : ButtonKind) (label : String) (msg : m) : Widget
       | .enter => some msg
       | .char ' ' => some msg
       | _ => none,
+    onMouse := fun _ _ ev =>
+      if ev.kind == .press && ev.button == .left then some msg else none,
     focusId := id,
     prefHeight := some 1,
     prefWidth := some (labelLen + 2)
@@ -77,11 +79,10 @@ def input (id : String) (value : String) (bindings : InputBindings m) : Widget m
     let caret := if focused then "│" else " "
     let visible := value ++ caret
     -- truncate from the left if value overflows so caret stays on screen
-    let display :=
-      if visible.length > w then
-        let drop := visible.length - w
-        (visible.drop drop).toString
-      else visible
+    let display := Id.run do
+      let mut cs := visible.toList
+      while displayWidth (String.ofList cs) > w && !cs.isEmpty do cs := cs.tail
+      return String.ofList cs
     let style : Style := if focused then { bg := .blue, fg := .white } else { dim := true }
     Box.text w display style
   {
@@ -113,17 +114,21 @@ def panel (title : String) (style : BorderStyle := .line) (body : Widget m) : Wi
 
 Items are plain strings (formatted by the caller). The selected
 index is owned by the parent state. The list renders a window of
-items around the selection. -/
+items around the selection. The wheel sends `onUp` / `onDown`;
+clicking a row sends `onPick index` when given. -/
+
+/-- First visible item when `selected` must stay in an `h`-row window. -/
+private def listStart (total selected h : Nat) : Nat :=
+  if selected >= h then min (selected - h + 1) (total - 1) else 0
 
 def listView (id : String) (items : List String) (selected : Nat)
-    (onUp onDown : m) (onSelect : m) : Widget m :=
+    (onUp onDown : m) (onSelect : m) (onPick : Option (Nat → m) := none) : Widget m :=
   let render := fun w h focused => Id.run do
     if items.isEmpty || h == 0 then
       return Box.empty w h
     -- Window: keep selected in view.
     let total := items.length
-    let start :=
-      if selected >= h then min (selected - h + 1) (total - 1) else 0
+    let start := listStart total selected h
     let window := (items.drop start).take h
     let mut rows : Array (Array Cell) := #[]
     let mut idx := start
@@ -147,6 +152,14 @@ def listView (id : String) (items : List String) (selected : Nat)
       | .up    => some onUp
       | .down  => some onDown
       | .enter => some onSelect
+      | _ => none,
+    onMouse := fun _ h ev =>
+      match ev.kind with
+      | .scrollUp => some onUp
+      | .scrollDown => some onDown
+      | .press =>
+        let idx := listStart items.length selected h + ev.row.toNat
+        if ev.button == .left && 0 ≤ ev.row && idx < items.length then onPick.map (· idx) else none
       | _ => none,
     focusId := id
   }
