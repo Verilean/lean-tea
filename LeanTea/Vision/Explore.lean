@@ -120,9 +120,12 @@ def describe : Action → String
 
 /-- The per-turn prompt. -/
 def promptFor (goal : String) (notes : List String) (worked : List Action)
-    (lastError? : Option String) (turnsLeft : Nat) (outline : String := "") : String :=
-  let done := if worked.isEmpty then "(none yet)" else
-    String.intercalate "\n" (worked.zipIdx.map fun (a, k) => s!"{k + 1}. {describe a} — ok")
+    (lastError? : Option String) (turnsLeft : Nat) (outline : String := "") (earlier : Nat := 0) : String :=
+  -- only this goal's steps: a small model copies the last line it sees,
+  -- and an earlier goal's closing check is the wrong thing to copy
+  let done := (if earlier == 0 then "" else s!"({earlier} steps for earlier goals, not shown)\n") ++
+    (if worked.isEmpty then "(none yet for this goal)" else
+      String.intercalate "\n" (worked.zipIdx.map fun (a, k) => s!"{k + 1}. {describe a} — ok"))
   let noteText := if notes.isEmpty then "" else
     "Notes from the user:\n" ++ String.intercalate "\n" (notes.map ("- " ++ ·)) ++ "\n"
   let err := match lastError? with
@@ -141,7 +144,8 @@ def promptFor (goal : String) (notes : List String) (worked : List Action)
   "{\"action\": \"done\", \"why\": \"<what was verified>\"}   (only after an assert proved the goal)\n" ++
   "{\"action\": \"fail\", \"reason\": \"<why the goal cannot be done on this page>\"}\n" ++
   "Fill every field the goal mentions before submitting. Check the goal with an assert that expects yes.\n" ++
-  "If the screen ALREADY shows what the goal asks you to check, assert it NOW — do not click anything else first.\n" ++
+  "If the goal only asks to check something and the screen ALREADY shows it, assert it NOW. " ++
+  "If the goal asks to click, skip, open, start or run something, do that first — a button being visible is not the goal.\n" ++
   "If a dialog or popup is open, the button to press is inside it: describe it as \"the <label> button in the dialog\" " ++
   "(the same label may also appear behind the dialog)."
 
@@ -316,7 +320,8 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
     let pageOutline ← try outline catch _ => pure ""
     -- standing advice, re-read every turn so it can be edited mid-run
     let ruleNotes ← try rules catch _ => pure []
-    let prompt := promptFor goal (ruleNotes ++ notes) (steps.map (·.act)) lastError (cfg.maxTurns - turn) pageOutline
+    let prompt := promptFor goal (ruleNotes ++ notes) ((steps.drop worked.length).map (·.act)) lastError
+      (cfg.maxTurns - turn) pageOutline worked.length
     let reply ← try propose c img prompt (if failures == 0 then 0.0 else 0.5) cfg.maxTokens
       catch e => do
         emit (.finished false s!"model call failed: {e}")
@@ -357,7 +362,7 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
       -- that insisting on a check that already passed, before doing
       -- anything, means the goal was only that check
       -- (a click / key may well repeat: the same label on the next
-      -- screen, e.g. 終了 and then 終了 in its confirmation dialog)
+      -- screen, e.g. Skip and then Skip in its confirmation dialog)
       if acts.length == 1 && !acts.any mustChange && steps.getLast?.map (·.act |> describe) == some text then
         if !acted && acts.all confirms && checkedThisGoal then
           let (_, now) ← c.shot idx "judge"
@@ -370,7 +375,7 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
           emit (.note s!"not finished yet: {left}")
           continue
         failures := failures + 1
-        lastError := some s!"`{text}` was just done; choose the next step."
+        lastError := some s!"`{text}` was just done and holds. Do NOT assert again: the next step must be a click, fill, key or wait that moves toward the goal."
         emit (.note s!"skipped a repeat of `{text}`")
         continue
       match tried.find? (·.1 == text) with

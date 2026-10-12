@@ -159,7 +159,10 @@ def exploreGroup : LSpec :=
     it "prompt carries goal, notes, history, the last error and the page outline"
       (let p := Explore.promptFor "sign in" ["be quick"] [.typeText "alice"] (some "typing changed nothing") 5 "button \"Sign in\"";
        [ "Goal: sign in", "- be quick", "1. type \"alice\" — ok", "FAILED: typing changed nothing",
-         "button \"Sign in\"", "5 steps left" ].all (fun n => (p.splitOn n).length > 1))
+         "button \"Sign in\"", "5 steps left" ].all (fun n => (p.splitOn n).length > 1)),
+    it "earlier goals' steps are counted, not listed"
+      (let p := Explore.promptFor "skip" [] [] none 5 "" 7;
+       (p.splitOn "7 steps for earlier goals").length > 1 && (p.splitOn "(none yet for this goal)").length > 1)
   ]
 
 def run : IO LSpec := do

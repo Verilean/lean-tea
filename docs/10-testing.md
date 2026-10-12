@@ -232,10 +232,8 @@ trial and error (`LeanTea.Vision.Explore`):
 - the goal is reached when an assertion that expects "yes" passes and
   a second question ("has the WHOLE goal been achieved? what is left?")
   agrees. A 4B model tends to assert something easy once it has made
-  some progress ("is the chapter ready to run?") and stop halfway. On a
-  real game's chapter map, with the goal "run all sessions" after only
-  opening the chapter, the judge answered no ("the session is not yet
-  started"); when it says no, the run goes on with what is left.
+  some progress ("is the chapter ready to run?") and stop halfway. When it
+  says no, the run goes on with what is left.
 
 Later messages continue from there, so a test is built goal by goal.
 **Replay** reloads the start page and runs only the recorded steps;
@@ -324,8 +322,8 @@ before the battle whose Skip asks again in a confirmation dialog with a
 second Skip). "Skip the story before the battle and check that the
 battle starts" clicked the Skip in the corner, then "the Skip button in
 the dialog", and verified the battle. Before, the second click was
-refused as a repeat of the first, so a real game's 終了 → 終了 skip
-never got past the dialog. A click may now repeat, and a dialog's button
+refused as a repeat of the first, so a skip like that never got past the
+dialog. A click may now repeat, and a dialog's button
 is described as being in the dialog.
 With `qwen/qwen3-vl-4b`: logging in through the portal by chat worked;
 after a restart the profile skipped the login; "start the game and open
