@@ -141,7 +141,9 @@ def promptFor (goal : String) (notes : List String) (worked : List Action)
   "{\"action\": \"done\", \"why\": \"<what was verified>\"}   (only after an assert proved the goal)\n" ++
   "{\"action\": \"fail\", \"reason\": \"<why the goal cannot be done on this page>\"}\n" ++
   "Fill every field the goal mentions before submitting. Check the goal with an assert that expects yes.\n" ++
-  "If the screen ALREADY shows what the goal asks you to check, assert it NOW — do not click anything else first."
+  "If the screen ALREADY shows what the goal asks you to check, assert it NOW — do not click anything else first.\n" ++
+  "If a dialog or popup is open, the button to press is inside it: describe it as \"the <label> button in the dialog\" " ++
+  "(the same label may also appear behind the dialog)."
 
 /-! ## The loop -/
 
@@ -354,7 +356,9 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
       -- the same step again right after it worked adds nothing — except
       -- that insisting on a check that already passed, before doing
       -- anything, means the goal was only that check
-      if acts.length == 1 && steps.getLast?.map (·.act |> describe) == some text then
+      -- (a click / key may well repeat: the same label on the next
+      -- screen, e.g. 終了 and then 終了 in its confirmation dialog)
+      if acts.length == 1 && !acts.any mustChange && steps.getLast?.map (·.act |> describe) == some text then
         if !acted && acts.all confirms && checkedThisGoal then
           let (_, now) ← c.shot idx "judge"
           let (whole, left) ← try goalReached c now goal (steps.map (·.act)) catch _ => pure (true, "")
@@ -395,6 +399,8 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
           idx := idx + done.length
           lastError := none
           failures := 0
+          -- what failed on the old screen may work on the new one
+          if acts.any mustChange then tried := []
           if acts.any (fun a => !confirms a && !(match a with | .assertVisual .. => true | _ => false)) then
             acted := true
           if acts.any confirms then

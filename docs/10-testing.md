@@ -319,7 +319,14 @@ the game was still on Quest Select with the 6 recorded steps, and the
 next goal ("open Main Story and check Chapter 1 is shown") passed.
 
 `/demo-game` is a stand-in to try this on (portal login, a canvas game
-in an iframe, 2.5 s loading, animated background).
+in an iframe, 2.5 s loading, animated background, and a story scene
+before the battle whose Skip asks again in a confirmation dialog with a
+second Skip). "Skip the story before the battle and check that the
+battle starts" clicked the Skip in the corner, then "the Skip button in
+the dialog", and verified the battle. Before, the second click was
+refused as a repeat of the first, so a real game's 終了 → 終了 skip
+never got past the dialog. A click may now repeat, and a dialog's button
+is described as being in the dialog.
 With `qwen/qwen3-vl-4b`: logging in through the portal by chat worked;
 after a restart the profile skipped the login; "start the game and open
 the quest screen, check Quest Select is shown" took 3 proposals / 11 s;
