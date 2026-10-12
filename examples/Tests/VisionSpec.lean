@@ -172,6 +172,41 @@ def exploreGroup : LSpec :=
        (p.splitOn "7 steps for earlier goals").length > 1 && (p.splitOn "(none yet for this goal)").length > 1)
   ]
 
+/-! ## Plans and loops -/
+
+open LeanTea.Agent.Script in
+def planGroup : LSpec :=
+  let text := "Open the chapter map\n\nrepeat until \"Are all stages cleared?\" max 4:\n  Sortie and win\n  # a comment\n  Click Next\nend\nCheck the reward"
+  let parsed := Plan.parse text
+  let expected : List Plan.Item :=
+    [.goal "Open the chapter map", .loop "Are all stages cleared?" 4 [.goal "Sortie and win", .goal "Click Next"],
+     .goal "Check the reward"]
+  let fromModel := Plan.fromJson ((Json.parse
+    "[\"Open Drafts\", \"Repeat until done\", {\"repeat_until\": \"Is the list empty?\", \"max\": 20, \"steps\": [\"Delete the first\"]}]").toOption.getD .null)
+  let loopScript : Script := { name := "t", steps := [
+    { act := .repeatStart "Is it done?" 3, goal := some "loop" },
+    { act := .repeatStart "Inner?" 2 }, { act := .key "Enter" }, { act := .repeatEnd },
+    { act := .repeatEnd }] }
+  group "Plans and loops" [
+    it "plan text parses, with a loop and a comment" (parsed.toOption == some expected),
+    it "render then parse is the same plan" ((Plan.parse (Plan.render expected)).toOption == some expected),
+    it "repeat without a max defaults to 10"
+      (Plan.parseRepeat "repeat until Is the list empty?:" == some ("Is the list empty?", 10)),
+    it "an unclosed repeat is an error" (match Plan.parse "repeat until \"x\" max 2:\n  a" with | .error _ => true | _ => false),
+    it "a stray end is an error" (match Plan.parse "a\nend" with | .error _ => true | _ => false),
+    it "the model's JSON plan, minus its prose repeat line"
+      (fromModel == [.goal "Open Drafts", .loop "Is the list empty?" 20 [.goal "Delete the first"]]),
+    it "repeat / end_repeat and goal survive the script JSON round trip"
+      (match Script.fromJson loopScript.toJson with
+       | .ok sc => match sc.steps with
+         | [{ act := .repeatStart "Is it done?" 3, goal := some "loop", .. }, { act := .repeatStart "Inner?" 2, .. },
+            { act := .key "Enter", .. }, { act := .repeatEnd, .. }, { act := .repeatEnd, .. }] => true
+         | _ => false
+       | .error _ => false),
+    it "matchingEnd skips a nested loop"
+      (matchingEnd loopScript.steps.toArray 0 == some 4 && matchingEnd loopScript.steps.toArray 1 == some 3)
+  ]
+
 def run : IO LSpec := do
   -- Image ops (C / stb)
   let png ← testImage.encodePng
@@ -215,7 +250,7 @@ def run : IO LSpec := do
       (Qa.changedPixelsIn testImage testImage 0 0 4 2 == 0 && Qa.changedPixelsIn testImage testImage 3 1 50 50 == 0)
   ]
   return group "LeanTea.Vision" [parseGroup, geometryGroup, yesNoGroup, scriptGroup, ansiGroup, imgGroup, replay,
-                                 exploreGroup, changeGroup]
+                                 exploreGroup, changeGroup, planGroup]
 
 def main : IO Unit := do
   let code ← lspecIO (← run)

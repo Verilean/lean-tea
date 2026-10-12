@@ -138,6 +138,13 @@ def runAction (c : Ctx) (idx : Nat) : Action → IO (Option String × Option Str
       if (← IO.monoMsNow) - t0 > timeoutMs then break
       IO.sleep 1000
     throw <| IO.userError s!"wait_until: still no after {timeoutMs}ms — {q} (last answer: {last})"
+  -- loop markers: `runSteps` does the control flow; on their own
+  -- (a single step run by the studio) the start asks its question
+  | .repeatStart q _ => do
+    let (p, img) ← c.shot idx "until"
+    let v ← ask c.vlm img q
+    return (some (if v.yes? == some true then "done (yes)" else "not yet (no)"), some p.toString)
+  | .repeatEnd => return (none, none)
   | .waitForScreen screen timeoutMs => do
     let t0 ← IO.monoMsNow
     let mut last := "unknown"
@@ -234,7 +241,7 @@ def settle (c : Ctx) (maxMs : Nat := 5000) (quiet : Float := 0.01) (gapMs : Nat 
   return last
 
 def isAssertion : Action → Bool
-  | .assertVisual .. | .assertText .. | .assertPixel .. | .screenshot .. | .waitForScreen .. | .waitUntil .. => true
+  | .assertVisual .. | .assertText .. | .assertPixel .. | .screenshot .. | .waitForScreen .. | .waitUntil .. | .repeatStart .. | .repeatEnd => true
   | _ => false
 
 def runStep (c : Ctx) (idx : Nat) (step : Step) : IO StepResult := do
@@ -264,24 +271,78 @@ def runStep (c : Ctx) (idx : Nat) (step : Step) : IO StepResult := do
     return { step, ok := false, error := some (toString e),
              durationMs := (← IO.monoMsNow) - t0 }
 
+/-- Run `steps[from:]` in order, following loops (`repeat … end_repeat`:
+    before each round the VLM is asked the loop's question; yes leaves
+    the loop). Stops at the first failure; `(passed, results, index of
+    the failed step)`. -/
+def runSteps (c : Ctx) (steps : Array Step) (start : Nat := 0)
+    (onStep : Nat → StepResult → IO Unit := fun _ _ => pure ()) (stop : IO Bool := pure false) :
+    IO (Bool × Array StepResult × Option Nat) := do
+  let mut results := #[]
+  let mut i := start
+  -- open loops, innermost first: (index of its repeat, rounds started)
+  let mut loops : List (Nat × Nat) := []
+  let mut budget := 100000
+  while i < steps.size && budget > 0 do
+    budget := budget - 1
+    if ← stop then
+      return (false, results, some i)
+    let step := steps[i]!
+    match step.act with
+    | .repeatStart q mx =>
+      let (rounds, outer) := match loops with
+        | (s, n) :: rest => if s == i then (n, rest) else (0, loops)
+        | [] => (0, [])
+      let t0 ← IO.monoMsNow
+      let (p, img) ← c.shot i "until"
+      let v ← ask c.vlm img q
+      let done := v.yes? == some true
+      let ms := (← IO.monoMsNow) - t0
+      let ev := some p.toString
+      let r : StepResult :=
+        if done then
+          { step := step, ok := true, observed := some s!"done after {rounds} rounds", evidencePath := ev, durationMs := ms }
+        else if rounds ≥ mx then
+          { step := step, ok := false, evidencePath := ev, durationMs := ms,
+            error := some s!"repeat: still not done after {mx} rounds — {q} (last answer: {v.answer})" }
+        else
+          { step := step, ok := true, observed := some s!"round {rounds + 1}", evidencePath := ev, durationMs := ms }
+      results := results.push r
+      onStep i r
+      if !r.ok then return (false, results, some i)
+      if done then
+        loops := outer
+        i := (matchingEnd steps i).getD steps.size + 1
+      else
+        loops := (i, rounds + 1) :: outer
+        i := i + 1
+    | .repeatEnd =>
+      -- back to the loop's question (a stray end, e.g. replaying from
+      -- inside a loop body, just falls through)
+      match loops with
+      | (s, _) :: _ => i := s
+      | [] => i := i + 1
+    | _ =>
+      let r ← runStep c i step
+      results := results.push r
+      onStep i r
+      if !r.ok then return (false, results, some i)
+      i := i + 1
+  return (true, results, none)
+
 /-- Run every step, stopping at the first failure. `onStep` sees each
     result as it lands (the CLI prints it, `qa_studio` streams it). -/
-def runScript (c : Ctx) (onStep : Nat → StepResult → IO Unit := fun _ _ => pure ()) : IO ScriptResult := do
+def runScript (c : Ctx) (onStep : Nat → StepResult → IO Unit := fun _ _ => pure ())
+    (start : Nat := 0) (stop : IO Bool := pure false) : IO ScriptResult := do
   let t0 ← IO.monoMsNow
-  let mut results := #[]
-  let mut passed := true
-  for (step, idx) in c.script.steps.zipIdx do
-    let r ← runStep c idx step
-    results := results.push r
-    onStep idx r
-    if !r.ok then
-      passed := false
+  let (passed, results, failedAt) ← runSteps c c.script.steps.toArray start onStep stop
+  if let some idx := failedAt then
+    if let some r := results.back? then
       LeanTea.Agent.Memory.escalate s!"vision_qa: {c.script.name} step {idx + 1} failed: {r.error.getD ""}"
         (Json.mkObj [("script", .str c.script.name), ("step", .num (Int.ofNat (idx + 1))),
                      ("evidence", .str (r.evidencePath.getD ""))])
-      break
   let totalMs := (← IO.monoMsNow) - t0
-  let skipped := c.script.steps.length - results.size
+  let skipped := if passed then 0 else c.script.steps.length - min c.script.steps.length ((failedAt.getD 0) + 1)
   let res : ScriptResult := { script := c.script, steps := results, passed, totalMs, skipped }
   let runs := (← LeanTea.Agent.Memory.agentDir) / "runs"
   IO.FS.createDirAll runs

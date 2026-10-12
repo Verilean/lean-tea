@@ -45,7 +45,10 @@ ones that work are recorded, failures go back to the model. Then:
     command that runs it (CI, a terminal, or `ui_report`).
 
 Further messages continue from where the last goal left off, so a
-test can be built up goal by goal. `/demo` serves a small sign-in +
+test can be built up goal by goal. For a broad instruction, **Plan**
+asks the model for sub-goals (with `repeat until` loops) that you edit
+and then run (`LeanTea.Vision.Plan`); the recorded steps are grouped by
+sub-goal and can be deleted, replayed from any step, or edited as JSON. `/demo` serves a small sign-in +
 to-do app to try it on; `/demo-game` a stand-in browser game (login
 gate, game canvas in an iframe, slow loading, animated background) to
 try `--profile` / `--clip auto` on. -/
@@ -98,6 +101,10 @@ structure State where
   verified : Option Bool := none
   saved?   : Option (String × String) := none
   lastShot : Option String := none
+  /-- The plan being worked on, in its editable text form (`Plan.render`). -/
+  plan     : String := ""
+  /-- The broad instruction the plan was made from (a note for each sub-goal). -/
+  instruction : String := ""
 
 structure Studio where
   args    : Args
@@ -176,7 +183,8 @@ def Studio.persist (s : Studio) : IO Unit := do
     ("script", ({ name := "studio", steps := st.steps } : Script).toJson),
     ("events", .arr st.events),
     ("shotN", .num (Int.ofNat (← s.shotN.get))),
-    ("lastShot", (st.lastShot.map Json.str).getD .null)]
+    ("lastShot", (st.lastShot.map Json.str).getD .null),
+    ("plan", .str st.plan), ("instruction", .str st.instruction)]
   IO.FS.writeFile s.statePath j.compress
 
 /-- Bring back a session saved by `persist` for the same start page. -/
@@ -194,7 +202,9 @@ def Studio.restore (s : Studio) : IO Bool := do
   let events := match j.getObjValD "events" with | .arr a => a | _ => #[]
   let lastShot := (j.getObjValD "lastShot").getStr?.toOption
   if let .num n := j.getObjValD "shotN" then s.shotN.set n.mantissa.toNat
-  s.state.modify fun st => { st with steps, goals, events, lastShot }
+  let plan := (j.getObjValD "plan").getStr?.toOption.getD ""
+  let instruction := (j.getObjValD "instruction").getStr?.toOption.getD ""
+  s.state.modify fun st => { st with steps, goals, events, lastShot, plan, instruction }
   return true
 
 /-- Mark a job as running; false if one already is. -/
@@ -281,27 +291,36 @@ def Studio.rules (s : Studio) : IO (List String) := do
   return (← IO.FS.readFile path).splitOn "\n" |>.map (·.trimAscii.toString)
     |>.filter (fun l => !l.isEmpty && !l.startsWith "#")
 
-def Studio.explore (s : Studio) (goal : String) : IO Unit := do
+/-- Explore one goal from where the recorded test stands; the steps that
+    worked are recorded under `goal`. True if the goal was reached. -/
+def Studio.exploreGoal (s : Studio) (goal : String) : IO Bool := do
   let st ← s.state.get
   let ctx ← s.ctx st.steps
-  let notes := st.goals.reverse.map (s!"Earlier goal, already done: " ++ ·)
+  let notes := (if st.instruction.isEmpty then [] else [s!"The whole test: {st.instruction}"]) ++
+    st.goals.reverse.map (s!"Earlier goal, already done: " ++ ·)
   let _ ← s.drainHints
   s.pointer.set none
   s.exploring.set true
-  let (steps, _) ← try
+  let (steps, reached) ← try
       Explore.explore ctx {} goal notes st.steps s.emit (s.stopReq.get) s.outline s.drainHints
         (s.pointer.modifyGet fun p => (p, none)) s.rules
     finally s.exploring.set false
+  let fresh := (steps.drop st.steps.length).map ({ · with goal := some goal })
   -- a fresh test opens the page and must not act before it's ready (a
   -- game takes a while to load): gate it on its first click target
-  let steps := match st.steps, steps with
+  let fresh := match st.steps, fresh with
     | [], first :: rest =>
       match first.act with
       | .clickDescribed t _ =>
-        { act := .waitUntil s!"Is {t} visible on the screen?", note := "wait for the start screen" } :: first :: rest
-      | _ => steps
-    | _, _ => steps
-  s.state.modify fun st => { st with steps, verified := none, goals := goal :: st.goals }
+        { act := .waitUntil s!"Is {t} visible on the screen?", note := "wait for the start screen", goal := some goal }
+          :: first :: rest
+      | _ => fresh
+    | _, _ => fresh
+  s.state.modify fun st => { st with steps := st.steps ++ fresh, verified := none, goals := goal :: st.goals }
+  return reached
+
+def Studio.explore (s : Studio) (goal : String) : IO Unit := do
+  let _ ← s.exploreGoal goal
 
 /-- The user clicked the live view with nothing running: click there and
     record it (a fixed point — fine for a game canvas, which `--clip`
@@ -320,21 +339,109 @@ def Studio.pointClick (s : Studio) (x y : Nat) : IO Unit := do
     s.state.modify fun st => { st with steps := st.steps ++ Explore.pointedSteps name? x y, verified := none }
   | .error (e, ev, pt) => s.emit (.stepFailed (Explore.describe act) e ev pt)
 
-def Studio.replay (s : Studio) : IO Unit := do
+def Studio.pushResult (s : Studio) (r : StepResult) : IO Unit := do
+  let url ← s.keepShot r.evidencePath
+  s.push [("kind", if r.ok then "stepOk" else "stepFailed"),
+          ("text", .str (Explore.describe r.step.act)), ("observed", .str (r.observed.getD "")),
+          ("error", .str (r.error.getD "")), ("shot", (url.map Json.str).getD .null),
+          ("point", .null)]
+
+/-- Run the recorded steps as a plain script. From the start page, or
+    (`start > 0`) from that step on the screen as it is now. -/
+def Studio.replay (s : Studio) (start : Nat := 0) : IO Unit := do
   let st ← s.state.get
-  s.push [("kind", "note"), ("text", .str s!"replaying {st.steps.length} steps from {st.startUrl}…")]
-  s.goto st.startUrl
+  if start == 0 then
+    s.push [("kind", "note"), ("text", .str s!"replaying {st.steps.length} steps from {st.startUrl}…")]
+    s.goto st.startUrl
+  else
+    s.push [("kind", "note"), ("text", .str s!"replaying from step {start + 1} on the current screen…")]
   let ctx ← s.ctx st.steps
-  let res ← runScript ctx fun _ r => do
-    let url ← s.keepShot r.evidencePath
-    s.push [("kind", if r.ok then "stepOk" else "stepFailed"),
-            ("text", .str (Explore.describe r.step.act)), ("observed", .str (r.observed.getD "")),
-            ("error", .str (r.error.getD "")), ("shot", (url.map Json.str).getD .null),
-            ("point", .null)]
-  s.state.modify ({ · with verified := some res.passed })
+  let res ← runScript ctx (fun _ r => s.pushResult r) start s.stopReq.get
+  if start == 0 then s.state.modify ({ · with verified := some res.passed })
   s.push [("kind", "finished"), ("ok", .bool res.passed),
           ("text", .str (if res.passed then s!"replay passed ({res.steps.size} steps, {res.totalMs / 1000}s)"
                          else "replay failed — see the red step"))]
+
+/-! ## Plans -/
+
+def Studio.record (s : Studio) (step : Step) : IO Unit :=
+  s.state.modify fun st => { st with steps := st.steps ++ [step], verified := none }
+
+def Studio.askNow (s : Studio) (question : String) : IO Bool := do
+  let st ← s.state.get
+  let ctx ← s.ctx st.steps
+  let (_, img) ← ctx.shot st.steps.length "until"
+  return (← ask ctx.vlm img question).yes? == some true
+
+/-- Work through plan items, recording as it goes. A sub-goal is
+    explored; a loop's first round is explored and later rounds replay
+    the steps it recorded. False when it stopped (a sub-goal not reached,
+    a failed round, Stop). -/
+partial def Studio.runItems (s : Studio) (items : List Plan.Item) : IO Bool := do
+  for item in items do
+    if ← s.stopReq.get then
+      s.push [("kind", "finished"), ("ok", .bool false), ("text", .str "stopped")]
+      return false
+    match item with
+    | .goal g =>
+      s.push [("kind", "note"), ("text", .str s!"▶ {g}")]
+      if !(← s.exploreGoal g) then
+        s.push [("kind", "finished"), ("ok", .bool false),
+                ("text", .str s!"plan stopped at: {g} — help with a hint or a click on the screen, or edit the plan and run the rest")]
+        return false
+    | .loop q mx body =>
+      let tag := some s!"repeat until {q}"
+      let startIdx := (← s.state.get).steps.length
+      s.record { act := .repeatStart q mx, goal := tag }
+      if ← s.askNow q then
+        s.push [("kind", "note"), ("text", .str s!"repeat: already done ({q}), 0 rounds")]
+        s.record { act := .repeatEnd, goal := tag }
+        continue
+      s.push [("kind", "note"), ("text", .str s!"repeat round 1 (exploring) until: {q}")]
+      if !(← s.runItems body) then return false
+      s.record { act := .repeatEnd, goal := tag }
+      let all := (← s.state.get).steps
+      let bodySteps := ((all.drop (startIdx + 1)).dropLast).toArray
+      let mut finished := false
+      for r in [1:mx + 1] do
+        if ← s.stopReq.get then
+          s.push [("kind", "finished"), ("ok", .bool false), ("text", .str "stopped")]
+          return false
+        if ← s.askNow q then
+          finished := true
+          break
+        if r == mx then break
+        s.push [("kind", "note"), ("text", .str s!"repeat round {r + 1}: replaying the {bodySteps.size} recorded steps")]
+        let ctx ← s.ctx all
+        let (ok, _, _) ← runSteps ctx bodySteps 0 (fun _ res => s.pushResult res) s.stopReq.get
+        if !ok then
+          s.push [("kind", "finished"), ("ok", .bool false),
+                  ("text", .str s!"repeat round {r + 1} failed — edit the step in the test (or the plan) and run again")]
+          return false
+      if !finished then
+        s.push [("kind", "finished"), ("ok", .bool false), ("text", .str s!"repeat: still not done after {mx} rounds — {q}")]
+        return false
+      s.push [("kind", "note"), ("text", .str s!"repeat done: {q}")]
+  return true
+
+/-- Turn a broad instruction into an editable plan (not run yet). -/
+def Studio.makePlan (s : Studio) (instruction : String) : IO Unit := do
+  let st ← s.state.get
+  let ctx ← s.ctx st.steps
+  let (_, img) ← ctx.shot st.steps.length "plan"
+  s.push [("kind", "thinking"), ("text", .str "planning…")]
+  let notes := (← s.rules) ++ st.goals.reverse.map (s!"Already done: " ++ ·)
+  let items ← Plan.make ctx img instruction notes
+  let text := Plan.render items
+  s.state.modify ({ · with plan := text, instruction })
+  s.push [("kind", "plan"), ("text", .str text)]
+
+def Studio.runPlan (s : Studio) (text : String) : IO Unit := do
+  let items ← IO.ofExcept (Plan.parse text)
+  s.state.modify ({ · with plan := text })
+  s.push [("kind", "note"), ("text", .str s!"running the plan ({items.length} items)")]
+  if ← s.runItems items then
+    s.push [("kind", "finished"), ("ok", .bool true), ("text", .str "plan done — Replay to check it runs by itself")]
 
 /-! ## HTTP -/
 
@@ -394,7 +501,12 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
         ("total", .num (Int.ofNat st.events.size)),
         ("busy", .bool st.busy),
         ("url", .str st.startUrl),
-        ("steps", .arr (st.steps.toArray.map fun step => .str (Explore.describe step.act))),
+        ("steps", .arr (st.steps.toArray.map fun step => Json.mkObj [
+          ("text", .str (Explore.describe step.act)),
+          ("goal", (step.goal.map Json.str).getD .null),
+          ("kind", .str (match step.act with
+            | .repeatStart .. => "repeat" | .repeatEnd => "end" | _ => "step"))])),
+        ("plan", .str st.plan),
         ("script", (s.script st "qa_studio.draft").toJson),
         ("verified", match st.verified with | some b => .bool b | none => .null),
         ("saved", match st.saved? with
@@ -446,13 +558,41 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
       s.state.modify fun st => { st with steps := [], goals := [], verified := none, saved? := none }
       s.push [("kind", "note"), ("text", .str "reset: start page reloaded, recorded steps cleared")]
     return if started then ok else busyErr
+  | "POST", "/api/plan" =>
+    let text := (str (jsonBody req) "text").trimAscii.toString
+    if text.isEmpty then return err 400 "empty instruction"
+    s.push [("kind", "user"), ("text", .str s!"plan: {text}")]
+    return if ← s.background (s.makePlan text) then ok else busyErr
+  | "POST", "/api/runplan" =>
+    let text := str (jsonBody req) "plan"
+    match Plan.parse text with
+    | .error e => return err 400 s!"plan: {e}"
+    | .ok [] => return err 400 "the plan is empty"
+    | .ok _ => return if ← s.background (s.runPlan text) then ok else busyErr
+  | "POST", "/api/script" =>
+    if (← s.state.get).busy then return busyErr
+    match Script.fromJson ((jsonBody req).getObjValD "script") with
+    | .error e => return err 400 s!"script: {e}"
+    | .ok sc =>
+      s.state.modify fun st => { st with steps := sc.steps, verified := none }
+      s.push [("kind", "note"), ("text", .str s!"test edited: {sc.steps.length} steps")]
+      s.persist
+      return ok
+  | "POST", "/api/delete" =>
+    if (← s.state.get).busy then return busyErr
+    let j := jsonBody req
+    let some i := (j.getObjValD "index").getNat?.toOption | return err 400 "index needed"
+    s.state.modify fun st => { st with steps := st.steps.eraseIdx i, verified := none }
+    s.persist
+    return ok
   | "POST", "/api/undo" =>
     s.state.modify fun st => { st with steps := st.steps.dropLast, verified := none }
     s.persist
     return ok
   | "POST", "/api/replay" =>
     if (← s.state.get).steps.isEmpty then return err 400 "nothing recorded yet"
-    return if ← s.background s.replay then ok else busyErr
+    let start := ((jsonBody req).getObjValD "from").getNat?.toOption.getD 0
+    return if ← s.background (s.replay start) then ok else busyErr
   | "POST", "/api/save" =>
     let st ← s.state.get
     if st.steps.isEmpty then return err 400 "nothing recorded yet"

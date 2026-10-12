@@ -258,6 +258,54 @@ passed (10 steps, 12 s) and the saved
 `vision_qa` — and fails at the welcome check when the password is
 changed to a wrong one.
 
+#### Broad instructions: plan, run, then edit
+
+A 4B model explores one short goal well and loses its way on a broad
+one ("clear every stage of chapter 1"). Type the broad instruction and
+press **Plan** instead of Send. The model looks at the screen and writes
+a plan (`LeanTea.Vision.Plan`): sub-goals one per line, with loops.
+The plan appears in the Plan panel as editable text:
+
+```
+Open Quest, then Main Story, and check that Chapter 1 is shown
+repeat until "Does the screen say All stages cleared?" max 4:
+  Sortie, skip the story and check that the battle is won
+  Click Next, then open Quest and Main Story, and check that Chapter 1 is shown
+end
+```
+
+Edit it and press **Run plan**. Each sub-goal is explored in turn and
+its steps are recorded under it. A loop becomes `repeat` …
+`end_repeat` steps in the script (`{"act": "repeat", "until": "…",
+"max": 4}`, `{"act": "end_repeat"}`):
+
+- before each round the question is asked, and yes leaves the loop;
+- the first round is explored;
+- later rounds replay the steps that round recorded;
+- more than `max` rounds fails.
+
+`vision_qa` runs the loop the same way. A plan that stops (a sub-goal
+not reached) can be helped with a hint or a click on the screen, or
+edited (drop the lines already done) and run again: recording goes on
+from where it is.
+
+To tune the recorded test afterwards:
+
+- the steps are listed under their sub-goals; hover a step for
+  **▶** (replay from that step on the current screen) and **×**
+  (delete it);
+- **Script JSON** is editable: change a target, a question or a loop's
+  `max`, then **Apply edits**.
+
+The model's own plans are drafts. For "clear every stage of chapter 1"
+it wrote a loop, but also a first round outside the loop and a guess
+at screens it couldn't see yet. Hence the editor. With the hand-edited plan above on `/demo-game`
+(now three stages, then "All stages cleared!"), round 1 was explored
+(8 steps), rounds 2 and 3 replayed them, and the loop ended on the
+cleared screen. The whole 15-step test replayed from the start page
+(33 steps run, 140 s). With `max` edited down to 2 it failed with
+"still not done after 2 rounds".
+
 #### Browser games and sites behind a login
 
 ```

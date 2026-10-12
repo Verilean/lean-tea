@@ -61,6 +61,17 @@
     .rowbtns { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; align-items: center; }
     #name { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; width: 180px; }
     pre { background: var(--bg); padding: 8px; border-radius: 6px; overflow: auto; font-size: 12px; }
+    .planmsg pre { margin: 6px 0 0; white-space: pre-wrap; }
+    #plan, #json { width: 100%; box-sizing: border-box; font: 12px/1.45 ui-monospace, Menlo, monospace; padding: 8px;
+                   border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); resize: vertical; }
+    #plan { min-height: 120px; }
+    #json { min-height: 160px; }
+    .help { color: var(--muted); font-size: 12px; margin: 4px 0; }
+    #steps li.group { list-style: none; margin: 8px 0 2px -22px; font-weight: 600; font-size: 12px; color: var(--muted); }
+    #steps li .ops { float: right; visibility: hidden; }
+    #steps li:hover .ops { visibility: visible; }
+    #steps li .ops button { padding: 0 6px; font-size: 11px; margin-left: 2px; }
+    #steps li.loop { color: var(--acc); }
     .badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); }
     .badge.ok { color: var(--ok); border-color: var(--ok); }
     .badge.bad { color: var(--bad); border-color: var(--bad); }
@@ -90,6 +101,14 @@
           <i>"sign in as alice with password secret and check the welcome message"</i>.
           I'll try steps one at a time, learn from failures, and record the ones that work as a replayable test.</div>
       </div>
+      <details id="planbox" hidden>
+        <summary>Plan</summary>
+        <div class="help">One sub-goal per line. <code>repeat until "&lt;yes/no question&gt;" max N:</code> … <code>end</code>
+          repeats the lines between until the answer is yes. Edit it, then run. A stopped plan can be edited
+          (drop the lines already done) and run again: recording continues.</div>
+        <textarea id="plan" spellcheck="false"></textarea>
+        <div class="rowbtns"><button id="runplan" class="primary">Run plan</button></div>
+      </details>
       <details id="testbox" open>
         <summary>Recorded test <span id="count">(0 steps)</span> <span id="verified"></span></summary>
         <ol id="steps"></ol>
@@ -100,12 +119,17 @@
           <button id="save" class="primary">Save test</button>
         </div>
         <div id="saved"></div>
-        <details><summary>Script JSON</summary><pre id="json"></pre></details>
+        <details><summary>Script JSON (editable)</summary>
+          <textarea id="json" spellcheck="false"></textarea>
+          <div class="rowbtns"><button id="applyjson">Apply edits</button>
+            <span class="help">Change a target, a question, a loop's max…; steps carry the goal they belong to.</span></div>
+        </details>
       </details>
       <div class="composer">
         <textarea id="input" placeholder="What should be tested?"></textarea>
         <div class="btns">
-          <button id="send" class="primary">Send</button>
+          <button id="send" class="primary" title="Explore this one goal now">Send</button>
+          <button id="plannew" title="Turn a broad instruction into sub-goals you can edit, then run">Plan</button>
           <button id="stop" disabled>Stop</button>
         </div>
       </div>
@@ -113,7 +137,7 @@
   </div>
   <script>
     const $ = (id) => document.getElementById(id);
-    let since = 0, busy = false, shotW = 0, lastLive = '';
+    let since = 0, busy = false, shotW = 0, lastLive = '', serverPlan = null, serverJson = '', jsonDirty = false;
 
     async function api(path, body) {
       const r = await fetch(path, { method: body === undefined ? 'GET' : 'POST',
@@ -154,6 +178,8 @@
           if (ev.shot) showLive(ev.shot, ev.point);
           break;
         case 'note': node = el('div', 'note', ev.text); break;
+        case 'plan': node = el('div', 'msg agent planmsg');
+          node.append(el('div', '', 'Plan — edit it in the Plan panel below, then Run plan:'), el('pre', '', ev.text)); break;
         case 'finished': node = el('div', 'msg agent final ' + (ev.ok ? 'ok' : 'fail'), (ev.ok ? '✓ ' : '✗ ') + ev.text); break;
         default: node = el('div', 'msg agent', ev.text || '');
       }
@@ -163,12 +189,35 @@
     function renderState(s) {
       busy = s.busy;
       $('send').disabled = busy; $('stop').disabled = !busy;
-      ['replay', 'undo', 'save', 'reset', 'go'].forEach(id => $(id).disabled = busy);
+      ['replay', 'undo', 'save', 'reset', 'go', 'plannew', 'runplan', 'applyjson'].forEach(id => $(id).disabled = busy);
       $('status').textContent = (busy ? '● working — ' : '') + s.url;
       const ol = $('steps'); ol.innerHTML = '';
-      s.steps.forEach(t => ol.append(el('li', '', t)));
+      let lastGoal = null, depth = 0;
+      s.steps.forEach((st, i) => {
+        if (st.kind === 'end') depth = Math.max(0, depth - 1);
+        if (st.goal && st.goal !== lastGoal && st.kind === 'step') ol.append(el('li', 'group', st.goal));
+        lastGoal = st.goal;
+        const li = el('li', st.kind === 'step' ? '' : 'loop');
+        li.value = i + 1;
+        li.style.marginLeft = (depth * 14) + 'px';
+        li.append(document.createTextNode(st.text));
+        const ops = el('span', 'ops');
+        const from = el('button', '', '▶'); from.title = 'Replay from this step on the current screen';
+        from.onclick = async () => { const r = await api('/api/replay', { from: i }); if (r.error) alertLine(r.error); };
+        const del = el('button', '', '×'); del.title = 'Delete this step';
+        del.onclick = () => api('/api/delete', { index: i }).then(() => setTimeout(poll, 50));
+        ops.append(from, del); li.append(ops);
+        ol.append(li);
+        if (st.kind === 'repeat') depth++;
+      });
       $('count').textContent = '(' + s.steps.length + ' step' + (s.steps.length === 1 ? '' : 's') + ')';
-      $('json').textContent = JSON.stringify(s.script, null, 2);
+      const js = JSON.stringify(s.script, null, 2);
+      if (js !== serverJson && !jsonDirty) { $('json').value = js; }
+      serverJson = js;
+      if (s.plan !== serverPlan) {
+        if (s.plan) { $('plan').value = s.plan; $('planbox').hidden = false; $('planbox').open = true; }
+        serverPlan = s.plan;
+      }
       const v = $('verified');
       v.className = 'badge' + (s.verified === true ? ' ok' : s.verified === false ? ' bad' : '');
       v.textContent = s.verified === true ? 'replay passed' : s.verified === false ? 'replay failed' : '';
@@ -204,6 +253,27 @@
     function alertLine(t) { $('chat').append(el('div', 'note', t)); scrollChat(); }
 
     $('send').onclick = send;
+    $('plannew').onclick = async () => {
+      const text = $('input').value.trim();
+      if (!text || busy) return;
+      $('input').value = '';
+      const r = await api('/api/plan', { text });
+      if (r.error) alertLine(r.error);
+      setTimeout(poll, 100);
+    };
+    $('runplan').onclick = async () => {
+      const r = await api('/api/runplan', { plan: $('plan').value });
+      if (r.error) alertLine(r.error);
+      setTimeout(poll, 100);
+    };
+    $('json').oninput = () => { jsonDirty = true; };
+    $('applyjson').onclick = async () => {
+      let script;
+      try { script = JSON.parse($('json').value); } catch (e) { alertLine('JSON: ' + e.message); return; }
+      const r = await api('/api/script', { script });
+      if (r.error) alertLine(r.error); else jsonDirty = false;
+      setTimeout(poll, 50);
+    };
     $('input').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
     $('stop').onclick = () => api('/api/stop', {});
     $('go').onclick = async () => { const r = await api('/api/navigate', { url: $('url').value }); if (r.error) alertLine(r.error); lastLive = ''; };

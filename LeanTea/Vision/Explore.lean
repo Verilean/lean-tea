@@ -116,6 +116,8 @@ def describe : Action → String
   | .assertPixel x y rgb _ => s!"assert pixel ({x}, {y}) is {rgb}"
   | .wait ms => s!"wait {ms} ms"
   | .waitUntil q _ => s!"wait until \"{q}\""
+  | .repeatStart q mx => s!"repeat until \"{q}\" (max {mx})"
+  | .repeatEnd => "end repeat"
   | _ => "other step"
 
 /-- The per-turn prompt. -/
