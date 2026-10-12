@@ -100,12 +100,18 @@ with async await extern js class instance`.
 -7            -- numbers can be signed
 0xff          -- hex literal — emits 255
 3.14          -- float (text copied verbatim — no rounding at parse)
-"hello"       -- string — emits "hello"
+"hello"       -- string — emits "hello"; escapes \n \t \r \" \\, may span lines
 true / false  -- boolean — emits true / false
 null          -- null — emits null
 [1, 2, 3]     -- array literal — emits [1,2,3]
 {x: 1, y: 2}  -- object literal (unquoted keys) — emits {x:1,y:2}
+{ p with y := 5 }  -- copy of p with y replaced — emits ({...p,y:5})
 ```
+
+`{ p with f := v, … }` is the functional way to "change" a record:
+`p` is left alone and a new object comes back (Lean's own structure
+update syntax, so it also round-trips through `LeanEmit` / `Eval`).
+`f: v` is accepted too.
 
 ### Variables and access
 
@@ -125,9 +131,13 @@ property access use `obj["some key"]`.
 ### Assignment
 
 ```text
-obj.field <- value      -- emits (obj.field = value)
-arr[i]    <- value      -- emits (arr[i]    = value)
+obj.field := value      -- emits (obj.field = value)
+arr[i]    := value      -- emits (arr[i]    = value)
+x <- value              -- `<-` is the same assignment (older spelling)
 ```
+
+`:=` assigns anywhere an expression can go — a `do` statement, an
+`if` branch, a lambda body.
 
 The assignment expression evaluates to the RHS, so it composes
 inside `let _ := … ;` to chain side effects:
@@ -160,8 +170,10 @@ By precedence (lowest first):
 | 5     | `+` `-`                | arithmetic add / subtract      |
 | 6     | `*` `/` `%`            | multiply / divide / modulo     |
 
-Unary minus is parsed only as part of a literal (`-7`). For
-`-expression` use `0 - expression` or wrap the literal.
+Unary minus works on any operand (`-x`, `-f(y)`, `-(a + b)`) and
+binds tighter than `*`. A `-` directly before a digit stays part of
+the number literal (`-7`). In space application `f -x` still means
+`f - x`; write `f(-x)`.
 
 Equality emits as `==` (JS loose equality), not `===`. Programs
 relying on strict equality should compare types explicitly.
@@ -204,7 +216,24 @@ def drawGrid(ctx, w, h) := do
   `range(lo, hi, step)` helper, so one loop form covers everything
 - `while c do <stmt>` — statement loop
 - multiple statements in a loop/branch body go in parentheses `( … ; … )`
+  (`if c then (a := 1; b := 2)`; a nested `do` also works)
 - the final statement (no trailing `;`) is the block's value
+
+A nested `do` or parenthesised sequence in statement position is
+emitted as a plain `{ … }` block, not another IIFE, so loop bodies
+don't allocate a closure per iteration.
+
+### Lines and top-level forms
+
+Space application (`f a b`) may continue onto the next line, but a
+token at **column 0** always starts a new top-level form. So
+
+```text
+def boot() := raf(frame)
+boot()
+```
+
+is a definition followed by a boot call — not `raf(frame, boot)`.
 
 `async def` bodies are statement blocks too (no `do` keyword needed), so
 `await`, `for`, and `let mut` compose there directly.
@@ -216,7 +245,15 @@ if x == 0 then "zero" else "nonzero"
 ```
 
 emits a ternary `(x == 0) ? "zero" : "nonzero"`. The `else` branch
-is mandatory.
+may be left out; it is then `null`, which in a statement block means
+"do nothing":
+
+```text
+def tick(p) := do
+  if p.hp <= 0 then p.dead := true;
+  if p.dead then (respawn(p); log("respawned"));
+  p
+```
 
 ### `fun`
 
@@ -272,9 +309,33 @@ emits `const None = {tag: "None"};` and `const Some = (v) => ({tag:
 "Some", $0: v});`. So you write `None` (not `None()`) for the value
 and `Some(42)` to construct.
 
-`match` lowers to a chain of ternaries that read the `tag` field and
-bind `$0`, `$1`, … in order. A constructor name not in any branch
-falls through to `null`.
+Patterns nest, and can also be literals, variables or `_`:
+
+```text
+def describe(o) := match o with
+  | Some(Rect(w, h)) => w * h
+  | Some(Circle(r))  => 3 * r * r
+  | Some(_)          => 0
+  | None             => -1
+
+def fib(n) := match n with | 0 => 0 | 1 => 1 | k => fib(k - 1) + fib(k - 2)
+```
+
+A bare name in a pattern is a **constructor if it starts with an
+uppercase letter** (`None`) and a variable otherwise (`k`); a name
+followed by `( … )` is always a constructor.
+
+`match` lowers to a chain of ternaries: each branch tests the `tag`
+fields along its pattern (`__m.tag == "Some" && __m.$0.tag == "Rect"`)
+and binds its variables to the matching `$k` paths.
+
+`LeanJs.Check` makes `match` safe:
+
+- every constructor in a pattern must be declared, with the right
+  number of fields (`unknown constructor `Rectt` (did you mean `Rect`?)`);
+- the arms must be **exhaustive**. A gap is reported as the missing
+  pattern — ``in `def describe`: `match` is missing a case: `Some(Circle(_))` `` —
+  and a match on string / number literals needs a `_` or variable arm.
 
 ---
 
@@ -468,8 +529,7 @@ Deliberate omissions, with the rationale and the workaround:
 |---------------------|----------------------------------------------------|----------------------------------------------|
 | Template literals   | keeps the string story single-quoted + `+`         | `"a" + x + "b"` (or a small `sconcat` extern) |
 | Ternary `cond ? a : b` | use `if cond then a else b`                     | n/a                                          |
-| Unary `-expr` (standalone) | only parsed as part of a literal           | `0 - expr` for negation                      |
-| Type checking       | optional annotations exist but aren't enforced     | rely on `node` / `lean --run` at runtime; the arity check catches the cheap class |
+| Type checking       | optional annotations exist but aren't enforced     | `LeanJs.Check` catches the cheap classes: arity, record fields, unknown identifiers, fields of top-level object literals (see below) |
 | Source maps         | none                                               | column-1 errors in node's stack trace        |
 
 Things you *can* express now (since the imperative extension landed):
@@ -485,8 +545,35 @@ Things you *can* express now (since the imperative extension landed):
   end of a `.leanjs` file)
 
 The combination is enough to write Three.js / VRM game loops
-directly in `.leanjs` — see a `.leanjs` game source for the
-worked example.
+directly in `.leanjs` — see `examples/Breezehollow/` for the worked
+example (a pure `Physics.leanjs` plus a three.js shell).
+
+## Checks and error messages
+
+**Parse errors** point at the deepest position the parser reached —
+usually the actual mistake, even inside a long `do` block — with the
+source line and a caret:
+
+```text
+error at line 4, col 16: unexpected `;`
+    let b := a + ;
+                 ^
+```
+
+**`LeanJs.Check`** (run by `compileChecked`, the CLIs and the demo
+servers) names the enclosing definition and reports:
+
+- calls with the wrong number of arguments (known `def`s,
+  constructors, `extern`s whose JS is an arrow);
+- `Record { … }` with a missing or unknown field;
+- unknown identifiers, with the closest name in scope —
+  ``in `def step`: unknown identifier `heigthAt` (did you mean `heightAt`?)``.
+  Standard JS / browser globals (`Math`, `document`, `fetch`, typed
+  arrays, …) are known; anything else needs an `extern`;
+- fields of top-level object literals:
+  `def P := {x: 0, stamina: 100}` fixes `P`'s fields, so `P.stamna`,
+  `P.y := 1` and `{ P with z := 1 }` are errors. An empty literal
+  (`def keys := {}`) is a dictionary and isn't checked.
 
 ---
 

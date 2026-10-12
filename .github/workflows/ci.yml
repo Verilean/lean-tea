@@ -88,7 +88,7 @@ jobs:
       - name: Build CI test binaries
         env:
           LEANTEA_POSTGRES: "1"
-        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve valkey_smoke s3_smoke postgres_smoke webdav_serve webdav_smoke leanjs_spec vision_spec s3_serve s3_serve_spec site_spec gen_site tui_spec tui_mouse
+        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve valkey_smoke s3_smoke postgres_smoke webdav_serve webdav_smoke leanjs_spec vision_spec s3_serve s3_serve_spec site_spec gen_site tui_spec tui_mouse breezehollow breezehollow_spec
 
       # ──────────────────────────────────────────────────────────────
       # Self-contained smoke binaries. Each one is an LSpec-shaped
@@ -133,7 +133,7 @@ jobs:
       - name: WebDAV server (OPTIONS / MKCOL / PUT / GET / PROPFIND / DELETE round-trip via spawned subprocess, 11 LSpec assertions)
         run: ./.lake/build/bin/webdav_smoke
 
-      - name: LeanJs spec runner (parser + check + codegen + eval cross-check)
+      - name: LeanJs spec runner (parser + check + codegen + eval cross-check + ergonomics — error positions, checks, record update, patterns)
         run: ./.lake/build/bin/leanjs_spec
 
       - name: Vision QA offline (coord parsing + frames + stb image FFI + ANSI render + cache replay, ~39 LSpec assertions)
@@ -144,6 +144,9 @@ jobs:
 
       - name: TUI widget kit (layout, combinators, elements, app loop, raw-mode ANSI, wide chars, input decoding, mouse, repaint; 67 LSpec assertions)
         run: ./.lake/build/bin/tui_spec
+
+      - name: Breezehollow three.js demo (World.leanjs compiles + checks, node --check, page ids, Physics.step properties under node; 23 LSpec assertions)
+        run: ./.lake/build/bin/breezehollow_spec
 
       - name: Stop s3_serve
         if: always()

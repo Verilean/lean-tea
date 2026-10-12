@@ -480,6 +480,126 @@ def runIncludeSpec : IO LSpec := do
       if r == "43" then return it s!"include ✓ {r}" true
       else return it "include" false s!"expected 43, got {r}"
 
+/-! ## 6. Language ergonomics
+
+Error positions, the column-0 rule for space application, optional
+`else`, `:=` assignment in expressions, `( a; b )` sequences, unary
+minus, string escapes, inlined nested `do` blocks, and check errors
+that name the enclosing definition. -/
+
+def has (h n : String) : Bool := (h.splitOn n).length > 1
+
+def parseErr (src : String) : String :=
+  match parseProgramString src with
+  | .error e => e
+  | .ok _ => "<parsed>"
+
+def compileErr (src : String) : String :=
+  match parseProgramString src with
+  | .error e => s!"parse: {e}"
+  | .ok p => match compileChecked p with
+    | .error e => e
+    | .ok _ => "<compiled>"
+
+def compiled (src : String) : String :=
+  match parseProgramString src with
+  | .error e => s!"parse: {e}"
+  | .ok p => compileToString p
+
+def ergonomicNodeCases : List NodeCase := [
+  { label := "col0-stops-space-app", jsOnly := true, source :=
+      "def logged := []\ndef push1(v) := logged.push(v)\ndef boot() := push1(1)\nboot()\n"
+   ++ "def main := logged.length",
+    expected := "1" },
+  { label := "if-without-else", jsOnly := true, source :=
+      "def f(x) := do\n  let mut n := 0;\n  if x > 1 then n := 5;\n  n\n"
+   ++ "def main := f(3) + f(0)",
+    expected := "5" },
+  { label := "paren-sequence-in-branch", jsOnly := true, source :=
+      "def f(x) := do\n  let mut a := 0;\n  let mut b := 0;\n"
+   ++ "  if x then (a := 1; b := 2) else (a := 10);\n  a + b\n"
+   ++ "def main := f(true) * 100 + f(false)",
+    expected := "310" },
+  { label := "unary-minus", jsOnly := true, source :=
+      "def neg(x) := -x * 2\ndef main := neg(3) + -(1 + 1)",
+    expected := "-8" },
+  { label := "record-update", source :=
+      "def p := {x: 1, y: 2}\ndef q := { p with y := 5 }\n"
+   ++ "def main := p.y * 100 + q.y * 10 + q.x",
+    expected := "251" },
+  { label := "nested-patterns", source :=
+      "inductive Shape where | Circle(r) | Rect(w, h) | Empty\n"
+   ++ "inductive Opt where | None | Some(v)\n"
+   ++ "def describe(o) := match o with\n"
+   ++ "  | Some(Rect(w, h)) => w * h\n  | Some(Circle(r)) => r\n  | Some(Empty) => 5\n  | None => 0\n"
+   ++ "def main := describe(Some(Rect(3, 4))) * 100 + describe(Some(Circle(7))) * 10 + describe(None)",
+    expected := "1270" },
+  { label := "literal-and-variable-patterns", source :=
+      "def fib(n) := match n with | 0 => 0 | 1 => 1 | k => fib(k - 1) + fib(k - 2)\n"
+   ++ "def main := fib(10)",
+    expected := "55" },
+  { label := "string-escapes", jsOnly := true, source :=
+      "def main := \"a\\\"b\\\\c\".length * 10 + \"x\\ny\".length",
+    expected := "53" }
+]
+
+def ergonomicSpecs : LSpec := group "ergonomics" [
+  it "parse error points at the line inside the do block"
+    (has (parseErr "def ok := 1\ndef f(x) := do\n  let a := x;\n  let b := a + ;\n  b\n") "line 4"),
+  it "parse error shows the source line and a caret"
+    (has (parseErr "def x := (1 + \n") "^"),
+  it "line numbers survive multi-byte characters"
+    (has (parseErr "-- a — b — c\n-- ✓ é\ndef x := )\n") "line 3"),
+  it "nested do in an if branch is inlined, not an IIFE"
+    (let js := compiled "def f(x) := do\n  if x then (do let y := 1; g(y));\n  0\ndef g(v) := v";
+     has js "{const y=1;" && !has js "(()=>{const y"),
+  it "check errors name the enclosing def"
+    (has (compileErr "def g(a) := a\ndef f() := g(1, 2)") "in `def f`"),
+  it "unknown identifier, with the closest name suggested"
+    (has (compileErr "def heightAt(x) := x\ndef f() := heigthAt(1)")
+      "unknown identifier `heigthAt` (did you mean `heightAt`?)"),
+  it "field typo on a top-level object literal (read or write)"
+    (has (compileErr "def P := {x: 0, stamina: 1}\ndef f() := P.stamna")
+      "`P` has no field `stamna` (did you mean `stamina`?)" &&
+     has (compileErr "def P := {x: 0}\ndef f() := do\n  P.y := 1;\n  null") "`P` has no field `y`"),
+  it "binders, JS globals, empty dictionaries and shadowing are fine"
+    (compileErr ("def keys := {}\ndef P := {x: 0}\n"
+      ++ "def f(xs) := do\n  for v in xs do (let w := v * 2; keys[w] := Math.max(w, P.x));\n"
+      ++ "  let P := {y: 1};\n  P.y\n"
+      ++ "def g(o) := match o with | Some(v) => v | _ => 0\ninductive Opt where | None | Some(v)")
+      == "<compiled>"),
+  it "record update can't add a field to a known-shape object"
+    (has (compileErr "def P := {x: 0}\ndef f() := { P with z := 1 }") "`P` has no field `z`"),
+  it "match: a missing constructor is reported"
+    (has (compileErr ("inductive Shape where | Circle(r) | Rect(w, h) | Empty\n"
+      ++ "def f(s) := match s with | Circle(r) => r | Rect(w, h) => w"))
+      "in `def f`: `match` is missing a case: `Empty`"),
+  it "match: a missing nested case is reported as a pattern"
+    (has (compileErr ("inductive Shape where | Circle(r) | Rect(w, h)\ninductive Opt where | None | Some(v)\n"
+      ++ "def f(o) := match o with | Some(Rect(w, h)) => w | None => 0"))
+      "missing a case: `Some(Circle(_))`"),
+  it "match: literals need a catch-all arm"
+    (has (compileErr "def f(s) := match s with | \"a\" => 1 | \"b\" => 2") "missing a case: `_`"),
+  it "match: complete nested coverage passes"
+    (compileErr ("inductive Shape where | Circle(r) | Rect(w, h)\ninductive Opt where | None | Some(v)\n"
+      ++ "def f(o) := match o with | Some(Rect(_, h)) => h | Some(Circle(r)) => r | None => 0")
+      == "<compiled>"),
+  it "pattern: unknown constructor, with a suggestion"
+    (has (compileErr "inductive Shape where | Circle(r) | Rect(w, h)\ndef f(s) := match s with | Rectt(w, h) => w | _ => 0")
+      "unknown constructor `Rectt` in pattern (did you mean `Rect`?)"),
+  it "pattern: wrong number of fields"
+    (has (compileErr "inductive Shape where | Circle(r) | Rect(w, h)\ndef f(s) := match s with | Rect(w) => w | _ => 0")
+      "`Rect` has 2 field(s), the pattern gives 1"),
+  it "pattern: a lowercase constructor name gets a hint"
+    (has (compileErr "inductive Msg where | inc | dec\ndef f(m) := match m with | inc => 1 | _ => 0")
+      "`inc` is a constructor"),
+  it "every node-case program passes the checks (no false positives)"
+    ((nodeCases ++ ergonomicNodeCases).all fun c =>
+      match parseProgramString c.source with
+      | .ok p => (match LeanJs.Check.check p with | .ok _ => true | .error _ => false)
+      | .error _ => true)
+]
+
 def main : IO UInt32 := do
   IO.println "── LeanJs pure tests ─────────────────────────────────────"
   let pureCode ← lspecIO pureSpecs
@@ -506,4 +626,11 @@ def main : IO UInt32 := do
   IO.println "── LeanJs `include` resolution ───────────────────────────"
   let incCode ← lspecIO (group "include" [← runIncludeSpec])
 
-  return pureCode + nodeCode + dualCode + leanCode + incCode
+  IO.println ""
+  IO.println "── LeanJs ergonomics ─────────────────────────────────────"
+  let mut ergLeaves : List LSpec := [ergonomicSpecs]
+  for c in ergonomicNodeCases do
+    ergLeaves := ergLeaves ++ [(← runNodeCase c)]
+  let ergCode ← lspecIO (group "ergonomics" ergLeaves)
+
+  return pureCode + nodeCode + dualCode + leanCode + incCode + ergCode

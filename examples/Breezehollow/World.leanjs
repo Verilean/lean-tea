@@ -1,0 +1,1056 @@
+-- examples/Breezehollow/World.leanjs — the whole game client, in LeanJs.
+--
+-- An anime-style open-world vignette on three.js: cel-shaded hills,
+-- a lake, floating islands, a wind shrine and collectible motes. You
+-- run, sprint, jump, glide on updrafts and use a wind skill.
+--
+-- Served by examples/Breezehollow/Serve.lean, which parses this file
+-- with LeanJs.Parser, checks it (arity / records) and compiles it to an
+-- ES module at startup (`--dev` recompiles on every request). Every
+-- asset is generated here from primitives — no models or textures.
+--
+-- Controls: WASD move · Shift sprint · Space jump / glide · E wind
+-- skill · F attune shrine · T return to shrine · mouse look · wheel zoom
+
+import * as THREE from "three"
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js"
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js"
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js"
+
+-- ───────────────────────── host primitives ─────────────────────────
+
+extern js "globalThis.document" doc
+extern js "globalThis.window" win
+extern js "(a, b, s) => { const r = []; for (let i = a; i < b; i += s) r.push(i); return r; }" range
+extern js "(arr, v) => { arr.push(v); return arr; }" push
+extern js "(x, a, b) => Math.min(b, Math.max(a, x))" clamp
+extern js "(a, b, t) => a + (b - a) * t" lerp
+extern js "(x) => x - Math.floor(x)" fract
+extern js "(f) => requestAnimationFrame(f)" raf
+extern js "() => performance.now() / 1000" now
+extern js "(id) => document.getElementById(id)" byId
+extern js "(el, t) => { if (el.textContent !== t) el.textContent = t; }" setText
+extern js "(el, k, v) => el.style.setProperty(k, v)" setStyle
+extern js "(el, c, on) => el.classList.toggle(c, on)" toggleClass
+extern js "(el, ev, f) => el.addEventListener(ev, f, { passive: false })" listen
+extern js "(n) => n.toFixed(0)" fmt0
+extern js "(el) => { try { const p = el.requestPointerLock && el.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }" lockPointer
+
+def PI := Math.PI
+def TAU := Math.PI * 2
+
+def smoothstep(e0, e1, x) :=
+  let t := clamp((x - e0) / (e1 - e0), 0, 1);
+  t * t * (3 - 2 * t)
+
+-- ───────────────────────── terrain (pure) ─────────────────────────
+-- The same height function builds the mesh, drives collision, places
+-- props and paints the minimap.
+
+def hash2(x, z) := fract(Math.sin(x * 127.1 + z * 311.7) * 43758.5453)
+
+def vnoise(x, z) :=
+  let ix := Math.floor(x);
+  let iz := Math.floor(z);
+  let ux := smoothstep(0, 1, x - ix);
+  let uz := smoothstep(0, 1, z - iz);
+  lerp(lerp(hash2(ix, iz), hash2(ix + 1, iz), ux),
+       lerp(hash2(ix, iz + 1), hash2(ix + 1, iz + 1), ux), uz)
+
+def fbm(x, z) :=
+  vnoise(x, z) * 0.5 + vnoise(x * 2.03 + 17, z * 2.03 + 9) * 0.25 +
+  vnoise(x * 4.11 + 3, z * 4.11 + 41) * 0.125
+
+def LAKE_X := 70
+def LAKE_Z := -55
+def WORLD_R := 235
+
+def heightAt(x, z) :=
+  let d := Math.sqrt(x * x + z * z);
+  let hills := (fbm(x * 0.016, z * 0.016) - 0.35) * 22;
+  let near := smoothstep(10, 45, d);
+  let ridge := smoothstep(150, 225, d) * (fbm(x * 0.012 + 7, z * 0.012 + 3) * 75 + 25);
+  let ld := Math.sqrt((x - LAKE_X) * (x - LAKE_X) + (z - LAKE_Z) * (z - LAKE_Z));
+  let lake := (1 - smoothstep(8, 42, ld)) * 10;
+  hills * (0.25 + 0.75 * near) + ridge - lake + 2.6
+
+def WATER_Y := 0
+
+-- Terrain colour by height + a little noise: sand, two greens, rock, snow.
+def terrainColor(x, y, z) :=
+  let n := fbm(x * 0.05 + 100, z * 0.05);
+  if y < WATER_Y + 0.7 then [0.93, 0.86, 0.62]
+  else if y < 16 then
+    (if n > 0.5 then [0.42, 0.74, 0.30] else [0.53, 0.82, 0.34])
+  else if y < 28 then [0.40, 0.66, 0.38]
+  else if y < 52 then (if n > 0.45 then [0.50, 0.55, 0.72] else [0.58, 0.62, 0.78])
+  else [0.96, 0.97, 1.0]
+
+-- ───────────────────────── renderer + scene ─────────────────────────
+
+def canvas := byId("world")
+def renderer := new THREE.WebGLRenderer({canvas: canvas, antialias: true})
+def scene := new THREE.Scene()
+def camera := new THREE.PerspectiveCamera(55, 1, 0.1, 1200)
+def FOG_COLOR := 0xcde8ff
+
+def setupRenderer() := do
+  renderer.setPixelRatio(Math.min(win.devicePixelRatio, 2));
+  renderer.shadowMap.enabled := true;
+  renderer.shadowMap.type := THREE.PCFSoftShadowMap;
+  scene.fog := new THREE.Fog(FOG_COLOR, 140, 520);
+  scene.background := new THREE.Color(FOG_COLOR);
+  null
+
+-- Three-step light ramp: the cel-shading look.
+def toonRamp := do
+  let data := new Uint8Array([140, 205, 255]);
+  let t := new THREE.DataTexture(data, 3, 1, THREE.RedFormat);
+  t.minFilter := THREE.NearestFilter;
+  t.magFilter := THREE.NearestFilter;
+  t.needsUpdate := true;
+  t
+
+def toon(color) := new THREE.MeshToonMaterial({color: color, gradientMap: toonRamp})
+def OUTLINE := new THREE.MeshBasicMaterial({color: 0x2a2440, side: THREE.BackSide})
+
+-- A mesh plus an inverted-hull outline (a slightly larger back-face copy).
+def outlined(geo, color, thick) := do
+  let g := new THREE.Group();
+  let body := new THREE.Mesh(geo, toon(color));
+  body.castShadow := true;
+  body.receiveShadow := true;
+  let hull := new THREE.Mesh(geo, OUTLINE);
+  hull.scale.setScalar(thick);
+  g.add(body);
+  g.add(hull);
+  g
+
+def placed(obj, x, y, z) := do
+  obj.position.set(x, y, z);
+  scene.add(obj);
+  obj
+
+-- ───────────────────────── sky, sun, clouds ─────────────────────────
+
+def SKY_VS := "
+varying vec3 vDir;
+void main() {
+  vDir = normalize(position);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}"
+
+def SKY_FS := "
+uniform vec3 uSun;
+varying vec3 vDir;
+void main() {
+  float h = clamp(vDir.y, -0.2, 1.0);
+  vec3 top = vec3(0.16, 0.45, 0.92);
+  vec3 mid = vec3(0.45, 0.72, 1.0);
+  vec3 hor = vec3(0.80, 0.91, 1.0);
+  vec3 col = mix(hor, mid, smoothstep(0.0, 0.25, h));
+  col = mix(col, top, smoothstep(0.25, 0.9, h));
+  float s = max(dot(normalize(vDir), uSun), 0.0);
+  col += vec3(1.0, 0.95, 0.8) * (pow(s, 600.0) * 3.0 + pow(s, 12.0) * 0.25);
+  gl_FragColor = vec4(pow(col, vec3(2.2)), 1.0);
+}"
+
+def SUN_DIR := do
+  let v := new THREE.Vector3(0.5, 0.75, 0.35);
+  v.normalize();
+  v
+
+def buildSky() := do
+  let mat := new THREE.ShaderMaterial({
+    vertexShader: SKY_VS, fragmentShader: SKY_FS, side: THREE.BackSide,
+    depthWrite: false, fog: false, uniforms: {uSun: {value: SUN_DIR}}});
+  let sky := new THREE.Mesh(new THREE.SphereGeometry(900, 32, 16), mat);
+  scene.add(sky);
+  sky
+
+def sun := new THREE.DirectionalLight(0xfff4e0, 2.4)
+def hemi := new THREE.HemisphereLight(0xd6ecff, 0x7fa25a, 1.25)
+
+def setupLights() := do
+  sun.castShadow := true;
+  sun.shadow.mapSize.set(2048, 2048);
+  let sc := sun.shadow.camera;
+  sc.left := -45; sc.right := 45; sc.top := 45; sc.bottom := -45;
+  sc.near := 1; sc.far := 200;
+  sun.shadow.bias := -0.0006;
+  scene.add(sun);
+  scene.add(sun.target);
+  scene.add(hemi);
+  null
+
+def CLOUD := new THREE.MeshToonMaterial({color: 0xffffff, gradientMap: toonRamp, emissive: 0x3a4a5e})
+def clouds := []
+
+def buildClouds() := do
+  for i in range(0, 26, 1) do (
+    let g := new THREE.Group();
+    let a := hash2(i, 3) * TAU;
+    let r := 120 + hash2(i, 5) * 300;
+    for k in range(0, 6, 1) do (
+      let s := 9 + hash2(i, k) * 12;
+      let puff := new THREE.Mesh(new THREE.SphereGeometry(s, 12, 8), CLOUD);
+      puff.position.set((k - 2.5) * 10 + hash2(k, i) * 6, hash2(i + k, 1) * 5, hash2(k, i + 7) * 12);
+      puff.scale.y := 0.55;
+      g.add(puff)
+    );
+    g.position.set(Math.cos(a) * r, 95 + hash2(i, 9) * 50, Math.sin(a) * r);
+    scene.add(g);
+    push(clouds, g)
+  );
+  null
+
+-- ───────────────────────── ground + water ─────────────────────────
+
+def buildTerrain() := do
+  let size := 520;
+  let seg := 200;
+  let geo := new THREE.PlaneGeometry(size, size, seg, seg);
+  geo.rotateX(-PI / 2);
+  let pos := geo.attributes.position;
+  let colors := new Float32Array(pos.count * 3);
+  for i in range(0, pos.count, 1) do (
+    let x := pos.getX(i);
+    let z := pos.getZ(i);
+    let y := heightAt(x, z);
+    pos.setY(i, y);
+    let c := terrainColor(x, y, z);
+    colors[i * 3] := c[0];
+    colors[i * 3 + 1] := c[1];
+    colors[i * 3 + 2] := c[2]
+  );
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  let mat := new THREE.MeshToonMaterial({vertexColors: true, gradientMap: toonRamp});
+  let mesh := new THREE.Mesh(geo, mat);
+  mesh.receiveShadow := true;
+  scene.add(mesh);
+  mesh
+
+def water := new THREE.Mesh(
+  new THREE.PlaneGeometry(520, 520, 1, 1),
+  new THREE.MeshPhongMaterial({color: 0x39b6e8, transparent: true, opacity: 0.78,
+                               shininess: 120, specular: 0xffffff}))
+
+def buildWater() := do
+  water.rotation.x := -PI / 2;
+  water.position.y := WATER_Y;
+  scene.add(water);
+  water
+
+-- ───────────────────────── grass (instanced, wind shader) ─────────────────────────
+
+def GRASS_VS := "
+uniform float uTime;
+varying float vH;
+varying float vDist;
+varying float vTone;
+void main() {
+  vec4 wp = modelMatrix * instanceMatrix * vec4(position, 1.0);
+  float h = position.y;
+  float gust = sin(uTime * 1.7 + wp.x * 0.07 + wp.z * 0.05) * 0.5 + 0.5;
+  float w = (sin(uTime * 2.6 + wp.x * 0.35 + wp.z * 0.21) * 0.25 + gust * 0.45) * h * h;
+  wp.x += w;
+  wp.z += w * 0.6;
+  vH = h;
+  vTone = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
+  vec4 mv = viewMatrix * wp;
+  vDist = -mv.z;
+  gl_Position = projectionMatrix * mv;
+}"
+
+def GRASS_FS := "
+uniform vec3 uFog;
+varying float vH;
+varying float vDist;
+varying float vTone;
+void main() {
+  vec3 base = vec3(0.20, 0.47, 0.17);
+  vec3 tip = mix(vec3(0.62, 0.90, 0.38), vec3(0.80, 0.92, 0.42), vTone);
+  vec3 col = mix(base, tip, smoothstep(0.0, 1.0, vH));
+  col = pow(col, vec3(2.2));
+  col = mix(col, uFog, smoothstep(140.0, 520.0, vDist));
+  gl_FragColor = vec4(col, 1.0);
+}"
+
+def grassMat := new THREE.ShaderMaterial({
+  vertexShader: GRASS_VS, fragmentShader: GRASS_FS, side: THREE.DoubleSide,
+  uniforms: {uTime: {value: 0}, uFog: {value: new THREE.Color(FOG_COLOR)}}})
+
+def bladeGeo() := do
+  let g := new THREE.BufferGeometry();
+  let v := new Float32Array([-0.07, 0, 0,  0.07, 0, 0,  0, 1, 0]);
+  g.setAttribute("position", new THREE.BufferAttribute(v, 3));
+  g
+
+def buildGrass(count) := do
+  let mesh := new THREE.InstancedMesh(bladeGeo(), grassMat, count);
+  let m := new THREE.Matrix4();
+  let q := new THREE.Quaternion();
+  let s := new THREE.Vector3();
+  let p := new THREE.Vector3();
+  let up := new THREE.Vector3(0, 1, 0);
+  let mut n := 0;
+  let mut tries := 0;
+  while n < count && tries < count * 4 do (
+    tries := tries + 1;
+    let r := Math.sqrt(Math.random()) * 120;
+    let a := Math.random() * TAU;
+    let x := Math.cos(a) * r;
+    let z := Math.sin(a) * r;
+    let y := heightAt(x, z);
+    if y > WATER_Y + 1 && y < 15 then (
+      p.set(x, y - 0.05, z);
+      q.setFromAxisAngle(up, Math.random() * TAU);
+      let h := 0.35 + Math.random() * 0.55;
+      s.set(1.4, h, 1.4);
+      m.compose(p, q, s);
+      mesh.setMatrixAt(n, m);
+      n := n + 1)
+  );
+  mesh.count := n;
+  mesh.frustumCulled := false;
+  scene.add(mesh);
+  mesh
+
+-- Little flowers: instanced spheres in a few anime-bright colours.
+def buildFlowers(count) := do
+  let colors := [0xff7eb6, 0xfff275, 0xffffff, 0x9ad0ff];
+  for ci in range(0, 4, 1) do (
+    let mesh := new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.16, 0),
+                                        toon(colors[ci]), count);
+    let m := new THREE.Matrix4();
+    for k in range(0, count, 1) do (
+      let r := Math.sqrt(Math.random()) * 110;
+      let a := Math.random() * TAU;
+      let x := Math.cos(a) * r;
+      let z := Math.sin(a) * r;
+      let y := heightAt(x, z);
+      m.makeTranslation(x, (if y > WATER_Y + 1 && y < 14 then y + 0.35 else -50), z);
+      mesh.setMatrixAt(k, m)
+    );
+    scene.add(mesh)
+  );
+  null
+
+-- ───────────────────────── props: trees, rocks, islands ─────────────────────────
+
+-- Spawn point and shrine stay clear of trees and rocks.
+def clearing(x, z) :=
+  Math.hypot(x, z - 30) < 14 || Math.hypot(x + 14, z - 18) < 9
+
+-- Colliders: {x, z, r} cylinders you can't walk through.
+def colliders := []
+-- Platforms: {x, z, r, top} flat tops you can stand on.
+def platforms := []
+
+def makeTree(x, z, scale) := do
+  let y := heightAt(x, z);
+  let t := new THREE.Group();
+  let trunk := outlined(new THREE.CylinderGeometry(0.35 * scale, 0.5 * scale, 3.2 * scale, 7), 0x8a5a3b, 1.08);
+  trunk.position.y := 1.6 * scale;
+  t.add(trunk);
+  let shades := [0x3f9e4a, 0x52b45a, 0x6cc96a];
+  for k in range(0, 3, 1) do (
+    let r := (2.6 - k * 0.6) * scale;
+    let crown := outlined(new THREE.IcosahedronGeometry(r, 0), shades[k], 1.06);
+    crown.position.set(0, (3.4 + k * 1.5) * scale, 0);
+    crown.rotation.y := k * 0.7;
+    t.add(crown)
+  );
+  placed(t, x, y - 0.2, z);
+  push(colliders, {x: x, z: z, r: 0.7 * scale})
+
+def makeRock(x, z, scale) := do
+  let y := heightAt(x, z);
+  let rock := outlined(new THREE.DodecahedronGeometry(scale, 0), 0x9aa0a8, 1.05);
+  rock.rotation.set(hash2(x, z) * 3, hash2(z, x) * 3, 0);
+  rock.scale.y := 0.7;
+  placed(rock, x, y + scale * 0.25, z);
+  push(colliders, {x: x, z: z, r: scale * 0.9})
+
+def buildForest() := do
+  let mut placedN := 0;
+  for i in range(0, 900, 1) do (
+    let a := hash2(i, 11) * TAU;
+    let r := 18 + hash2(i, 13) * 170;
+    let x := Math.cos(a) * r;
+    let z := Math.sin(a) * r;
+    let y := heightAt(x, z);
+    let clump := fbm(x * 0.03 + 50, z * 0.03);
+    if placedN < 150 && y > WATER_Y + 1.2 && y < 14 && clump > 0.48 && !clearing(x, z) then (
+      makeTree(x, z, 0.8 + hash2(i, 17) * 0.7);
+      placedN := placedN + 1)
+  );
+  for i in range(0, 60, 1) do (
+    let a := hash2(i, 21) * TAU;
+    let r := 15 + hash2(i, 23) * 180;
+    let x := Math.cos(a) * r;
+    let z := Math.sin(a) * r;
+    if heightAt(x, z) > WATER_Y + 0.5 && !clearing(x, z) then makeRock(x, z, 0.6 + hash2(i, 27) * 1.6)
+  );
+  null
+
+-- Floating islands: a grassy disc on an upside-down rocky cone.
+def ISLANDS := [
+  {x: -38, z: -30, r: 7, top: 22},
+  {x: -60, z: 10, r: 6, top: 34},
+  {x: 30, z: 48, r: 8, top: 27},
+  {x: 5, z: -95, r: 7, top: 40},
+  {x: 95, z: 25, r: 6, top: 31}
+]
+
+def buildIslands() := do
+  for isl in ISLANDS do (
+    let g := new THREE.Group();
+    let top := outlined(new THREE.CylinderGeometry(isl.r, isl.r * 0.92, 1.4, 14), 0x5cc15a, 1.03);
+    g.add(top);
+    let cone := outlined(new THREE.ConeGeometry(isl.r * 0.9, isl.r * 1.8, 9), 0x8f8578, 1.03);
+    cone.rotation.x := PI;
+    cone.position.y := -isl.r * 0.9 - 0.7;
+    g.add(cone);
+    placed(g, isl.x, isl.top - 0.7, isl.z);
+    push(platforms, isl)
+  );
+  null
+
+-- ───────────────────────── shrine, motes, updrafts ─────────────────────────
+
+def SHRINE := {x: -14, z: 18, attuned: false}
+def shrineGem := new THREE.Mesh(new THREE.OctahedronGeometry(1.1, 0),
+  new THREE.MeshStandardMaterial({color: 0x7ff3ff, emissive: 0x3fe3ff, emissiveIntensity: 2.2}))
+def shrineBeam := new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 120, 16, 1, true),
+  new THREE.MeshBasicMaterial({color: 0xffe28a, transparent: true, opacity: 0.0,
+                               blending: THREE.AdditiveBlending, depthWrite: false}))
+
+def buildShrine() := do
+  let y := heightAt(SHRINE.x, SHRINE.z);
+  let g := new THREE.Group();
+  let base := outlined(new THREE.CylinderGeometry(2.6, 3.0, 0.8, 8), 0xd9d4c7, 1.04);
+  base.position.y := 0.4;
+  g.add(base);
+  let pillar := outlined(new THREE.CylinderGeometry(0.55, 0.75, 4.2, 8), 0xe9e4d6, 1.06);
+  pillar.position.y := 2.9;
+  g.add(pillar);
+  let ring := new THREE.Mesh(new THREE.TorusGeometry(1.7, 0.09, 8, 40), toon(0xc9a84a));
+  ring.position.y := 6.4;
+  ring.rotation.x := PI / 2;
+  g.add(ring);
+  shrineGem.position.y := 6.4;
+  g.add(shrineGem);
+  shrineBeam.position.y := 66;
+  g.add(shrineBeam);
+  placed(g, SHRINE.x, y - 0.1, SHRINE.z);
+  push(colliders, {x: SHRINE.x, z: SHRINE.z, r: 2.6})
+
+def motes := []
+def MOTE_SPOTS := [
+  [6, 26], [-25, -8], [40, 12], [-38, -30], [-60, 10], [30, 48], [5, -95], [95, 25],
+  [70, -55], [-90, -60], [-120, 40], [140, -10], [10, 150], [-30, 120]
+]
+
+-- Mote height: above an island when one is there, else floating over ground.
+def moteY(x, z) := do
+  let mut y := Math.max(heightAt(x, z), WATER_Y) + 2.2;
+  for isl in ISLANDS do (
+    if Math.hypot(x - isl.x, z - isl.z) < isl.r then (y := isl.top + 1.8)
+  );
+  y
+
+def buildMotes() := do
+  let geo := new THREE.OctahedronGeometry(0.45, 0);
+  for spot in MOTE_SPOTS do (
+    let mat := new THREE.MeshStandardMaterial({color: 0xa8fff0, emissive: 0x52ffd8, emissiveIntensity: 2.5});
+    let mesh := new THREE.Mesh(geo, mat);
+    let y := moteY(spot[0], spot[1]);
+    placed(mesh, spot[0], y, spot[1]);
+    let halo := new THREE.Mesh(new THREE.TorusGeometry(0.75, 0.04, 6, 24),
+      new THREE.MeshBasicMaterial({color: 0xb8fff4, transparent: true, opacity: 0.7}));
+    mesh.add(halo);
+    push(motes, {mesh: mesh, halo: halo, x: spot[0], y: y, z: spot[1], got: false})
+  );
+  null
+
+-- Updraft columns: glide into one to be carried up.
+def UPDRAFTS := [
+  {x: -30, z: -22, r: 5.5, top: 46},
+  {x: 22, z: 40, r: 5.5, top: 48},
+  {x: 0, z: -80, r: 5.5, top: 56},
+  {x: 85, z: 30, r: 5.0, top: 50}
+]
+def draftParts := []
+
+def buildUpdrafts() := do
+  for d in UPDRAFTS do (
+    let n := 140;
+    let geo := new THREE.BufferGeometry();
+    let pos := new Float32Array(n * 3);
+    let seeds := new Float32Array(n * 3);
+    for k in range(0, n, 1) do (
+      seeds[k * 3] := Math.random() * TAU;
+      seeds[k * 3 + 1] := Math.random();
+      seeds[k * 3 + 2] := 0.4 + Math.random() * 0.6
+    );
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    let mat := new THREE.PointsMaterial({color: 0xd8fff6, size: 0.5, map: dotTexture, transparent: true, opacity: 0.85,
+                                         blending: THREE.AdditiveBlending, depthWrite: false});
+    let pts := new THREE.Points(geo, mat);
+    pts.frustumCulled := false;
+    scene.add(pts);
+    let base := Math.max(heightAt(d.x, d.z), WATER_Y);
+    push(draftParts, {d: d, geo: geo, seeds: seeds, n: n, base: base})
+  );
+  null
+
+def updateUpdrafts(t) := do
+  for u in draftParts do (
+    let arr := u.geo.attributes.position.array;
+    let h := u.d.top - u.base;
+    for k in range(0, u.n, 1) do (
+      let a := u.seeds[k * 3] + t * 1.6 * u.seeds[k * 3 + 2];
+      let f := fract(u.seeds[k * 3 + 1] + t * 0.18 * u.seeds[k * 3 + 2]);
+      let rr := u.d.r * (0.35 + 0.65 * u.seeds[k * 3 + 2]);
+      arr[k * 3] := u.d.x + Math.cos(a) * rr;
+      arr[k * 3 + 1] := u.base + f * h;
+      arr[k * 3 + 2] := u.d.z + Math.sin(a) * rr
+    );
+    u.geo.attributes.position.needsUpdate := true
+  );
+  null
+
+-- ───────────────────────── sparkle particles ─────────────────────────
+
+-- Soft round sprite for every particle system (points are squares otherwise).
+def dotTexture := do
+  let c := doc.createElement("canvas");
+  c.width := 64;
+  c.height := 64;
+  let ctx := c.getContext("2d");
+  let g := ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.35, "rgba(255,255,255,0.85)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle := g;
+  ctx.fillRect(0, 0, 64, 64);
+  new THREE.CanvasTexture(c)
+
+def SPARK_N := 600
+def sparkGeo := new THREE.BufferGeometry()
+def sparkPos := new Float32Array(SPARK_N * 3)
+def sparkVel := new Float32Array(SPARK_N * 3)
+def sparkLife := new Float32Array(SPARK_N)
+def sparks := { next: 0 }
+
+def buildSparks() := do
+  for k in range(0, SPARK_N, 1) do (sparkPos[k * 3 + 1] := -999);
+  sparkGeo.setAttribute("position", new THREE.BufferAttribute(sparkPos, 3));
+  let mat := new THREE.PointsMaterial({color: 0xbfffee, size: 0.45, map: dotTexture, transparent: true,
+                                       blending: THREE.AdditiveBlending, depthWrite: false});
+  let pts := new THREE.Points(sparkGeo, mat);
+  pts.frustumCulled := false;
+  scene.add(pts);
+  pts
+
+def emit(x, y, z, vx, vy, vz, life) := do
+  let k := sparks.next;
+  sparks.next := (k + 1) % SPARK_N;
+  sparkPos[k * 3] := x; sparkPos[k * 3 + 1] := y; sparkPos[k * 3 + 2] := z;
+  sparkVel[k * 3] := vx; sparkVel[k * 3 + 1] := vy; sparkVel[k * 3 + 2] := vz;
+  sparkLife[k] := life;
+  null
+
+def burst(x, y, z, n, speed) := do
+  for k in range(0, n, 1) do (
+    let a := Math.random() * TAU;
+    let e := Math.random() * 2 - 1;
+    let s := speed * (0.4 + Math.random() * 0.6);
+    let c := Math.sqrt(1 - e * e);
+    emit(x, y, z, Math.cos(a) * c * s, e * s + 2, Math.sin(a) * c * s, 0.7 + Math.random() * 0.6)
+  );
+  null
+
+-- Flat expanding ring (the wind skill).
+def ringBurst(x, y, z, n, speed) := do
+  for k in range(0, n, 1) do (
+    let a := k / n * TAU;
+    emit(x + Math.cos(a) * 0.8, y + 0.3, z + Math.sin(a) * 0.8,
+         Math.cos(a) * speed, 1.5 + Math.random() * 2, Math.sin(a) * speed, 0.6 + Math.random() * 0.3)
+  );
+  null
+
+def updateSparks(dt) := do
+  for k in range(0, SPARK_N, 1) do (
+    if sparkLife[k] > 0 then (
+      sparkLife[k] := sparkLife[k] - dt;
+      sparkVel[k * 3 + 1] := sparkVel[k * 3 + 1] - 3 * dt;
+      sparkPos[k * 3] := sparkPos[k * 3] + sparkVel[k * 3] * dt;
+      sparkPos[k * 3 + 1] := (if sparkLife[k] > 0 then sparkPos[k * 3 + 1] + sparkVel[k * 3 + 1] * dt else -999);
+      sparkPos[k * 3 + 2] := sparkPos[k * 3 + 2] + sparkVel[k * 3 + 2] * dt)
+  );
+  sparkGeo.attributes.position.needsUpdate := true;
+  null
+
+-- ───────────────────────── the hero ─────────────────────────
+-- An original chibi traveller: navy hair, teal coat, white cape, and a
+-- pair of leaf-shaped glider wings that unfold in the air.
+
+def SKIN := 0xffe1cf
+def HAIR := 0x263a6b
+def COAT := 0x1fa6a0
+def TRIM := 0xf4f1e8
+
+def capsule(r, len) := new THREE.CapsuleGeometry(r, len, 4, 10)
+
+def limb(r, len, color, x, y) := do
+  let pivot := new THREE.Group();
+  let part := outlined(capsule(r, len), color, 1.1);
+  part.position.y := -len / 2 - r * 0.5;
+  pivot.add(part);
+  pivot.position.set(x, y, 0);
+  pivot
+
+def wingGeo() := do
+  let s := new THREE.Shape();
+  s.moveTo(0, 0);
+  s.quadraticCurveTo(1.2, 0.9, 2.6, 0.5);
+  s.quadraticCurveTo(1.6, -0.1, 0, -0.4);
+  new THREE.ShapeGeometry(s)
+
+def hero := do
+  let root := new THREE.Group();
+  let body := new THREE.Group();
+  root.add(body);
+  let legL := limb(0.17, 0.45, 0x2b2b3d, -0.18, 0.78);
+  let legR := limb(0.17, 0.45, 0x2b2b3d, 0.18, 0.78);
+  body.add(legL); body.add(legR);
+  let torso := outlined(capsule(0.34, 0.42), COAT, 1.08);
+  torso.position.y := 1.12;
+  body.add(torso);
+  let belt := new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.05, 6, 20), toon(0xc9a84a));
+  belt.rotation.x := PI / 2;
+  belt.position.y := 0.98;
+  body.add(belt);
+  let collar := outlined(new THREE.CylinderGeometry(0.22, 0.3, 0.16, 12), TRIM, 1.08);
+  collar.position.y := 1.5;
+  body.add(collar);
+  let armL := limb(0.11, 0.42, COAT, -0.44, 1.42);
+  let armR := limb(0.11, 0.42, COAT, 0.44, 1.42);
+  body.add(armL); body.add(armR);
+  -- cape: a thin box hinged at the shoulders
+  let capePivot := new THREE.Group();
+  capePivot.position.set(0, 1.5, -0.28);
+  let cape := new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.46, 0.9, 12, 1, true, PI - 0.9, 1.8),
+    new THREE.MeshToonMaterial({color: 0xdcefff, gradientMap: toonRamp, side: THREE.DoubleSide}));
+  cape.position.set(0, -0.45, 0.28);
+  capePivot.add(cape);
+  body.add(capePivot);
+  -- head
+  let head := new THREE.Group();
+  head.position.y := 1.98;
+  body.add(head);
+  let face := outlined(new THREE.SphereGeometry(0.42, 20, 16), SKIN, 1.05);
+  face.children[0].material.emissive.set(0x4a3028);
+  head.add(face);
+  let hairCap := outlined(new THREE.SphereGeometry(0.46, 18, 14, 0, TAU, 0, 1.9), HAIR, 1.04);
+  hairCap.rotation.x := -0.35;
+  hairCap.position.set(0, 0.04, -0.03);
+  head.add(hairCap);
+  for k in range(0, 7, 1) do (
+    let spike := outlined(new THREE.ConeGeometry(0.1, 0.3, 6), HAIR, 1.06);
+    let a := (k - 3) * 0.32;
+    spike.position.set(Math.sin(a) * 0.3, 0.22, 0.33 + Math.cos(a) * 0.02);
+    spike.rotation.set(2.6, 0, a * 0.6);
+    head.add(spike)
+  );
+  let tail := outlined(new THREE.ConeGeometry(0.16, 0.8, 7), HAIR, 1.06);
+  tail.position.set(0, -0.15, -0.46);
+  tail.rotation.x := -2.6;
+  head.add(tail);
+  -- big anime eyes with highlights
+  for side in [-1, 1] do (
+    let eye := new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 10), new THREE.MeshBasicMaterial({color: 0x1d3f6e}));
+    eye.scale.set(0.8, 1.25, 0.4);
+    eye.position.set(side * 0.15, -0.02, 0.38);
+    head.add(eye);
+    let shine := new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), new THREE.MeshBasicMaterial({color: 0xffffff}));
+    shine.position.set(side * 0.15 + 0.025, 0.03, 0.415);
+    head.add(shine)
+  );
+  -- glider wings, hidden until gliding
+  let wings := new THREE.Group();
+  wings.position.set(0, 1.45, -0.32);
+  let wmat := new THREE.MeshToonMaterial({color: 0xf6fbff, gradientMap: toonRamp, side: THREE.DoubleSide,
+                                          emissive: 0x335566});
+  for side in [-1, 1] do (
+    let w := new THREE.Mesh(wingGeo(), wmat);
+    w.scale.set(side, 1, 1);
+    w.rotation.y := side * 0.25;
+    wings.add(w)
+  );
+  wings.visible := false;
+  body.add(wings);
+  -- cast shadows on the ground, but don't self-shadow (hair would darken the face)
+  root.traverse(fun (o) => if o.isMesh then (o.castShadow := true; o.receiveShadow := false));
+  scene.add(root);
+  {root: root, body: body, legL: legL, legR: legR, armL: armL, armR: armR,
+   cape: capePivot, head: head, wings: wings}
+
+-- ───────────────────────── game state ─────────────────────────
+-- The movement rules live in Physics.leanjs as a pure
+-- `step(player, input, world, dt)`; this file owns everything else.
+
+include "Physics.leanjs"
+
+def G := {p: newPlayer(0, 4, 30), phase: 0, motes: 0, toastT: 0}
+def CAM := {yaw: 0.2, pitch: 0.32, dist: 10, x: 0, y: 8, z: 40, dragging: false}
+def keys := {}
+def pressed := {}
+
+def keyDown(e) := do
+  let k := e.key.toLowerCase();
+  if !keys[k] then pressed[k] := true;
+  keys[k] := true;
+  if k == " " then e.preventDefault();
+  null
+
+def keyUp(e) := do
+  keys[e.key.toLowerCase()] := false;
+  null
+
+-- Was `k` pressed since the last frame? (edge-triggered keys)
+def consume(k) := do
+  let was := pressed[k] == true;
+  pressed[k] := false;
+  was
+
+-- Highest standing surface under (x, z) for someone at height y.
+def groundAt(x, z, y) := do
+  let mut g := Math.max(heightAt(x, z), WATER_Y - 0.9);
+  for isl in platforms do (
+    if Math.hypot(x - isl.x, z - isl.z) < isl.r && y >= isl.top - 0.6 then g := Math.max(g, isl.top)
+  );
+  g
+
+def inUpdraft(x, z, y) := do
+  let mut lift := 0;
+  for d in UPDRAFTS do (
+    if Math.hypot(x - d.x, z - d.z) < d.r && y < d.top then lift := 1
+  );
+  lift
+
+-- (x, z) pushed out of every collider it overlaps, kept inside the world.
+def pushOut(x, z, y) := do
+  let mut px := x;
+  let mut pz := z;
+  for c in colliders do (
+    let dx := px - c.x;
+    let dz := pz - c.z;
+    let d := Math.hypot(dx, dz);
+    let minD := c.r + 0.45;
+    if d < minD && d > 0.0001 && y < heightAt(c.x, c.z) + 9 then (
+      px := c.x + dx / d * minD;
+      pz := c.z + dz / d * minD)
+  );
+  let rr := Math.hypot(px, pz);
+  if rr > WORLD_R then (px := px / rr * WORLD_R; pz := pz / rr * WORLD_R);
+  [px, pz]
+
+-- What Physics.step may ask about the terrain.
+def WORLD := {
+  ground: fun (x, z, y) => groundAt(x, z, y),
+  lift: fun (x, z, y) => inUpdraft(x, z, y),
+  wade: fun (x, z) => heightAt(x, z) < WATER_Y - 0.4,
+  push: fun (x, z, y) => pushOut(x, z, y) }
+
+def readInput() := {
+  kx: (if keys["d"] then 1 else 0) - (if keys["a"] then 1 else 0),
+  kz: (if keys["w"] then 1 else 0) - (if keys["s"] then 1 else 0),
+  yaw: CAM.yaw,
+  sprint: keys["shift"] == true,
+  jump: consume(" "),
+  skill: consume("e") }
+
+def toast(msg) := do
+  let el := byId("toast");
+  setText(el, msg);
+  toggleClass(el, "show", true);
+  G.toastT := 2.6;
+  null
+
+-- ───────────────────────── per-frame update ─────────────────────────
+
+def updatePlayer(dt) := do
+  let r := step(G.p, readInput(), WORLD, dt);
+  G.p := r.player;
+  let p := G.p;
+  for ev in r.events do (
+    if ev == "glide" then burst(p.x, p.y + 1.4, p.z, 14, 3);
+    if ev == "skill" then ringBurst(p.x, p.y, p.z, 90, 9);
+    if ev == "land" then burst(p.x, p.y + 0.1, p.z, 6, 2)
+  );
+  -- shrine: attune with F, return with T
+  let ds := Math.hypot(p.x - SHRINE.x, p.z - SHRINE.z);
+  setStyle(byId("prompt"), "opacity", (if ds < 6 && !SHRINE.attuned then "1" else "0"));
+  if consume("f") && ds < 6 && !SHRINE.attuned then (
+    SHRINE.attuned := true;
+    shrineGem.material.color.set(0xffe28a);
+    shrineGem.material.emissive.set(0xffb83f);
+    burst(SHRINE.x, heightAt(SHRINE.x, SHRINE.z) + 6.4, SHRINE.z, 120, 9);
+    toast("Wind Shrine attuned — press T to return here"));
+  if consume("t") && SHRINE.attuned then (
+    let tx := SHRINE.x + 4;
+    let tz := SHRINE.z + 4;
+    G.p := { G.p with x := tx, z := tz, y := heightAt(tx, tz) + 0.5, vy := 0, gliding := false };
+    burst(tx, G.p.y + 1, tz, 60, 6));
+  -- motes
+  for m in motes do (
+    if !m.got && Math.hypot(G.p.x - m.x, G.p.z - m.z) < 1.6 && Math.abs(G.p.y + 1 - m.y) < 2.2 then (
+      m.got := true;
+      m.mesh.visible := false;
+      G.motes := G.motes + 1;
+      burst(m.x, m.y, m.z, 70, 7);
+      toast(if G.motes == motes.length then "All Breeze Motes found!"
+            else "Breeze Mote " + G.motes + " / " + motes.length))
+  );
+  null
+
+def animateHero(dt, t) := do
+  let speed := Math.hypot(G.p.vx, G.p.vz);
+  let amt := if G.p.onGround then Math.min(1, speed / 7) else 0;
+  G.phase := G.phase + dt * (4 + speed * 1.1);
+  let s := Math.sin(G.phase);
+  hero.root.position.set(G.p.x, G.p.y, G.p.z);
+  hero.root.rotation.y := G.p.facing;
+  hero.legL.rotation.x := if G.p.onGround then s * 0.9 * amt else -0.6;
+  hero.legR.rotation.x := if G.p.onGround then -s * 0.9 * amt else 0.3;
+  hero.armL.rotation.x := if G.p.gliding then 0 else -s * 0.8 * amt;
+  hero.armR.rotation.x := if G.p.gliding then 0 else s * 0.8 * amt;
+  hero.armL.rotation.z := if G.p.gliding then -1.3 else -0.12;
+  hero.armR.rotation.z := if G.p.gliding then 1.3 else 0.12;
+  hero.body.position.y := if G.p.onGround then Math.abs(s) * 0.08 * amt else 0;
+  hero.body.rotation.x := lerp(hero.body.rotation.x, (if G.p.gliding then 0.9 else speed * 0.025), Math.min(1, 8 * dt));
+  hero.cape.rotation.x := 0.15 + speed * 0.06 + Math.sin(t * 7) * 0.06 * (0.3 + amt) + (if G.p.onGround then 0 else 0.5);
+  hero.head.rotation.z := Math.sin(t * 1.3) * 0.03;
+  hero.wings.visible := G.p.gliding;
+  hero.wings.scale.setScalar(if G.p.gliding then 1 else 0.01);
+  null
+
+def updateCamera(dt) := do
+  let tx := G.p.x;
+  let ty := G.p.y + 1.7;
+  let tz := G.p.z;
+  let cp := Math.cos(CAM.pitch);
+  let wx := tx + Math.sin(CAM.yaw) * cp * CAM.dist;
+  let wz := tz + Math.cos(CAM.yaw) * cp * CAM.dist;
+  let wy := Math.max(ty + Math.sin(CAM.pitch) * CAM.dist, Math.max(heightAt(wx, wz), WATER_Y) + 0.8);
+  let k := Math.min(1, 10 * dt);
+  CAM.x := lerp(CAM.x, wx, k);
+  CAM.y := lerp(CAM.y, wy, k);
+  CAM.z := lerp(CAM.z, wz, k);
+  camera.position.set(CAM.x, CAM.y, CAM.z);
+  camera.lookAt(tx, ty, tz);
+  sun.position.set(tx + SUN_DIR.x * 80, ty + SUN_DIR.y * 80, tz + SUN_DIR.z * 80);
+  sun.target.position.set(tx, ty, tz);
+  null
+
+def updateWorld(dt, t) := do
+  grassMat.uniforms.uTime.value := t;
+  shrineGem.rotation.y := t * 1.2;
+  shrineGem.position.y := 6.4 + Math.sin(t * 2) * 0.15;
+  shrineBeam.material.opacity := if SHRINE.attuned then 0.22 + Math.sin(t * 3) * 0.06 else 0;
+  for m in motes do (
+    if !m.got then (
+      m.mesh.position.y := m.y + Math.sin(t * 2.2 + m.x) * 0.25;
+      m.mesh.rotation.y := t * 1.8;
+      m.halo.rotation.x := t * 1.1;
+      if Math.random() < dt * 3 then
+        emit(m.x + (Math.random() - 0.5), m.y, m.z + (Math.random() - 0.5), 0, 1.2, 0, 0.9))
+  );
+  for c in clouds do (
+    c.position.x := c.position.x + dt * 1.5;
+    if c.position.x > 420 then (c.position.x := -420)
+  );
+  -- wind streaks around the hero while gliding or sprinting
+  if (G.p.gliding || Math.hypot(G.p.vx, G.p.vz) > 11) && Math.random() < dt * 30 then
+    emit(G.p.x + (Math.random() - 0.5) * 3, G.p.y + Math.random() * 2, G.p.z + (Math.random() - 0.5) * 3,
+         -G.p.vx * 0.3, 0.5, -G.p.vz * 0.3, 0.5);
+  null
+
+-- ───────────────────────── HUD + minimap ─────────────────────────
+
+def MAP := { img: null, size: 160, span: 480 }
+
+def buildMinimap() := do
+  let c := doc.createElement("canvas");
+  c.width := MAP.size;
+  c.height := MAP.size;
+  let ctx := c.getContext("2d");
+  let img := ctx.createImageData(MAP.size, MAP.size);
+  for py in range(0, MAP.size, 1) do (
+    for px in range(0, MAP.size, 1) do (
+      let x := (px / MAP.size - 0.5) * MAP.span;
+      let z := (py / MAP.size - 0.5) * MAP.span;
+      let y := heightAt(x, z);
+      let col := if y < WATER_Y then [0.27, 0.66, 0.88] else terrainColor(x, y, z);
+      let o := (py * MAP.size + px) * 4;
+      img.data[o] := col[0] * 255;
+      img.data[o + 1] := col[1] * 255;
+      img.data[o + 2] := col[2] * 255;
+      img.data[o + 3] := 255
+    )
+  );
+  ctx.putImageData(img, 0, 0);
+  MAP.img := c;
+  null
+
+def mapXY(x, z) := [(x / MAP.span + 0.5) * MAP.size, (z / MAP.span + 0.5) * MAP.size]
+
+def drawMinimap() := do
+  let cv := byId("minimap");
+  let ctx := cv.getContext("2d");
+  let half := cv.width / 2;
+  let me := mapXY(G.p.x, G.p.z);
+  let zoom := 2.2;
+  ctx.save();
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.beginPath();
+  ctx.arc(half, half, half, 0, TAU);
+  ctx.clip();
+  ctx.translate(half, half);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-me[0], -me[1]);
+  ctx.drawImage(MAP.img, 0, 0);
+  for m in motes do (
+    if !m.got then (
+      let p := mapXY(m.x, m.z);
+      ctx.fillStyle := "#5fffe0";
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], 1.6, 0, TAU);
+      ctx.fill())
+  );
+  let sp := mapXY(SHRINE.x, SHRINE.z);
+  ctx.fillStyle := if SHRINE.attuned then "#ffd36a" else "#e8f6ff";
+  ctx.fillRect(sp[0] - 1.8, sp[1] - 1.8, 3.6, 3.6);
+  ctx.restore();
+  -- player arrow, always centered and pointing where the hero faces
+  ctx.save();
+  ctx.translate(half, half);
+  ctx.rotate(PI - G.p.facing);
+  ctx.fillStyle := "#ffffff";
+  ctx.strokeStyle := "#26304a";
+  ctx.lineWidth := 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0, -8); ctx.lineTo(6, 6); ctx.lineTo(0, 3); ctx.lineTo(-6, 6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+  null
+
+def updateHud(dt) := do
+  let frac := G.p.stamina / MAX_STAMINA;
+  let ring := byId("stamina-ring");
+  setStyle(ring, "stroke-dashoffset", "" + (1 - frac) * 163);
+  setStyle(byId("stamina"), "opacity", (if frac < 0.995 then "1" else "0"));
+  toggleClass(byId("stamina"), "tired", G.p.exhausted);
+  setText(byId("motes"), "" + G.motes + " / " + motes.length);
+  setText(byId("skill-cd"), (if G.p.skillCd > 0 then fmt0(Math.ceil(G.p.skillCd)) else ""));
+  toggleClass(byId("skill"), "cooling", G.p.skillCd > 0);
+  setText(byId("state"), (if G.p.gliding then "Gliding" else if !G.p.onGround then "Airborne" else if Math.hypot(G.p.vx, G.p.vz) > 11 then "Sprinting" else ""));
+  if G.toastT > 0 then (
+    G.toastT := G.toastT - dt;
+    if G.toastT <= 0 then toggleClass(byId("toast"), "show", false));
+  drawMinimap();
+  null
+
+-- ───────────────────────── input wiring ─────────────────────────
+
+def setupInput() := do
+  listen(win, "keydown", keyDown);
+  listen(win, "keyup", keyUp);
+  listen(win, "blur", fun (e) => do
+    for k in Object.keys(keys) do (keys[k] := false);
+    null);
+  listen(canvas, "mousedown", fun (e) => do
+    CAM.dragging := true;
+    lockPointer(canvas);
+    toggleClass(byId("help"), "hidden", true);
+    null);
+  listen(win, "mouseup", fun (e) => (CAM.dragging := false));
+  listen(win, "mousemove", fun (e) => do
+    if doc.pointerLockElement == canvas || CAM.dragging then (
+      CAM.yaw := CAM.yaw - e.movementX * 0.0032;
+      CAM.pitch := clamp(CAM.pitch + e.movementY * 0.0026, -0.25, 1.25));
+    null);
+  listen(canvas, "wheel", fun (e) => do
+    e.preventDefault();
+    CAM.dist := clamp(CAM.dist + e.deltaY * 0.01, 4, 22);
+    null);
+  null
+
+-- ───────────────────────── boot ─────────────────────────
+
+def composer := new EffectComposer(renderer)
+def bloom := new UnrealBloomPass(new THREE.Vector2(256, 256), 0.45, 0.4, 0.96)
+
+def resize() := do
+  let w := win.innerWidth;
+  let h := win.innerHeight;
+  renderer.setSize(w, h, false);
+  composer.setSize(w, h);
+  camera.aspect := w / h;
+  camera.updateProjectionMatrix();
+  null
+
+def clock := { last: 0, fps: 60 }
+
+def frame(ms) := do
+  let t := now();
+  let dt := Math.min(0.05, Math.max(0.001, t - clock.last));
+  clock.last := t;
+  clock.fps := lerp(clock.fps, 1 / dt, 0.05);
+  updatePlayer(dt);
+  animateHero(dt, t);
+  updateWorld(dt, t);
+  updateUpdrafts(t);
+  updateSparks(dt);
+  updateCamera(dt);
+  updateHud(dt);
+  composer.render();
+  win.__breezehollow := {x: G.p.x, y: G.p.y, z: G.p.z, stamina: G.p.stamina, gliding: G.p.gliding,
+                         motes: G.motes, fps: clock.fps, attuned: SHRINE.attuned};
+  raf(frame)
+
+def boot() := do
+  setupRenderer();
+  setupLights();
+  buildSky();
+  buildClouds();
+  buildTerrain();
+  buildWater();
+  buildGrass(70000);
+  buildFlowers(500);
+  buildForest();
+  buildIslands();
+  buildShrine();
+  buildMotes();
+  buildUpdrafts();
+  buildSparks();
+  buildMinimap();
+  composer.addPass(new RenderPass(scene, camera));
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+  setupInput();
+  listen(win, "resize", fun (e) => resize());
+  resize();
+  G.p := { G.p with y := heightAt(G.p.x, G.p.z) + 0.1 };
+  clock.last := now();
+  toggleClass(byId("loading"), "hidden", true);
+  raf(frame)
+
+boot()

@@ -1,0 +1,98 @@
+-- examples/Breezehollow/PhysicsTest.leanjs — property checks for Physics.step.
+--
+-- Because `step` is a pure function of (player, input, world, dt), each
+-- check is just "start here, feed these inputs for n frames, look at the
+-- result" on a toy world. breezehollow_spec compiles this file and runs it
+-- under node; every line of output is `PASS <name>` or `FAIL <name> …`.
+
+include "Physics.leanjs"
+
+extern js "(a, b) => { const r = []; for (let i = a; i < b; i++) r.push(i); return r; }" range
+
+def DT := 1 / 60
+
+-- flat ground at y = 0, no updrafts, no water, no obstacles
+def flat := {
+  ground: fun (x, z, y) => 0,
+  lift: fun (x, z, y) => 0,
+  wade: fun (x, z) => false,
+  push: fun (x, z, y) => [x, z] }
+def updraft := { flat with lift := fun (x, z, y) => 1 }
+def wall := { flat with push := fun (x, z, y) => [Math.min(x, 3), z] }
+
+def idle := {kx: 0, kz: 0, yaw: 0, sprint: false, jump: false, skill: false}
+def forward := { idle with kz := 1 }
+
+-- Run `n` frames holding `inp` (edge keys only on the first frame).
+def hold(p, inp, world, n) := do
+  let mut q := p;
+  for i in range(0, n) do (
+    q := step(q, (if i == 0 then inp else { inp with jump := false, skill := false }), world, DT).player
+  );
+  q
+
+def standing := hold(newPlayer(0, 0, 0), idle, flat, 2)
+
+-- Highest point reached over `n` frames after one input.
+def peak(p, inp, world, n) := do
+  let mut q := step(p, inp, world, DT).player;
+  let mut top := q.y;
+  for i in range(0, n) do (
+    q := step(q, idle, world, DT).player;
+    top := Math.max(top, q.y)
+  );
+  top
+
+def jumpApex := peak(standing, { idle with jump := true }, flat, 90)
+
+-- 0.35 s after a jump (≈ the apex), open the glider and coast for 0.5 s
+def airborne := hold(standing, { idle with jump := true }, flat, 21)
+def gliding := hold(airborne, { idle with jump := true }, flat, 30)
+
+def sprinted := hold(standing, { forward with sprint := true }, flat, 60)
+def walked := hold(standing, forward, flat, 60)
+def spent := hold({ standing with stamina := 5 }, { forward with sprint := true }, flat, 30)
+-- standing still refills REGEN per second; you stay exhausted below RECOVER_AT
+def rested1 := hold(spent, idle, flat, 30)
+def rested2 := hold(spent, idle, flat, 60)
+
+def lifted := hold(airborne, { idle with jump := true }, updraft, 60)
+def skilled := step(standing, { idle with skill := true }, flat, DT)
+def skillAgain := step(skilled.player, { idle with skill := true }, flat, DT)
+
+def blocked := hold({ standing with facing := Math.PI / 2 }, { idle with kx := 1 }, wall, 120)
+
+-- Collect every event over a jump, until well after landing.
+def jumpEvents := do
+  let mut q := standing;
+  let mut evs := [];
+  for i in range(0, 90) do (
+    let r := step(q, (if i == 0 then { idle with jump := true } else idle), flat, DT);
+    evs := evs.concat(r.events);
+    q := r.player
+  );
+  evs.join(",")
+
+def near(a, b, tol) := Math.abs(a - b) <= tol
+
+def check(name, ok, detail) := if ok then "PASS " + name else "FAIL " + name + " " + detail
+
+def main := [
+  check("jump apex ≈ v²/2g", near(jumpApex, JUMP_V * JUMP_V / (2 * GRAVITY), 0.15), "" + jumpApex),
+  check("glider opens in the air", gliding.gliding, JSON.stringify(gliding)),
+  check("glider sinks no faster than GLIDE_SINK", gliding.vy >= -GLIDE_SINK - 0.001, "" + gliding.vy),
+  check("glider is still airborne after 0.5 s", gliding.y > 0.5, "" + gliding.y),
+  check("can't glide right after take-off", !hold(standing, { idle with jump := true }, flat, 2).gliding
+        && !step(hold(standing, { idle with jump := true }, flat, 2), { idle with jump := true }, flat, DT).player.gliding, ""),
+  check("sprint drains SPRINT_DRAIN per second", near(sprinted.stamina, MAX_STAMINA - SPRINT_DRAIN, 1), "" + sprinted.stamina),
+  check("sprint is faster than walking", sprinted.z < walked.z - 3, "" + sprinted.z + " vs " + walked.z),
+  check("empty stamina exhausts and stops the sprint", spent.exhausted && spent.stamina < RECOVER_AT, JSON.stringify(spent)),
+  check("exhausted until RECOVER_AT", rested1.exhausted && !rested2.exhausted, "" + rested1.stamina + " / " + rested2.stamina),
+  check("updraft carries a glider up", lifted.y > airborne.y + 5, "" + lifted.y),
+  check("wind skill launches and starts the cooldown",
+        skilled.player.vy > 15 && near(skilled.player.skillCd, SKILL_CD, 0.01) && skilled.events.includes("skill"), JSON.stringify(skilled)),
+  check("wind skill is ignored while cooling down", !skillAgain.events.includes("skill"), JSON.stringify(skillAgain.events)),
+  check("obstacles stop you", near(blocked.x, 3, 0.001), "" + blocked.x),
+  check("a jump emits jump then land once", jumpEvents == "jump,land", jumpEvents),
+  check("step does not mutate its input", standing.y == 0 && standing.vy == 0 && standing.onGround, JSON.stringify(standing))
+].join("\n")

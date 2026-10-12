@@ -97,6 +97,10 @@ partial def compileExpr : Ast.Expr → LeanTea.Js.Expr
   | .doBlock body =>
     -- `do <stmts>` → synchronous IIFE `(() => { <block> })()`.
     call (arrow [] (compileStmts true body)) []
+  | .updE base fields =>
+    -- `({...base, k: v})` — a fresh object; `base` is not mutated.
+    let kvs := fields.map fun (k, v) => s!",{k}:{LeanTea.Js.renderExpr (compileExpr v)}"
+    E.raw s!"(\{...{LeanTea.Js.renderExpr (compileExpr base)}{String.join kvs}})"
   | .letMutE name value body =>
     -- Reachable only if a `let mut` shows up in pure-expression
     -- position (outside a block). Mutability is moot there, so treat
@@ -108,30 +112,38 @@ partial def compileExpr : Ast.Expr → LeanTea.Js.Expr
   | .whileE c body =>
     call (arrow [] [whileS (compileExpr c) (compileStmts false body)]) []
 
-/-- One branch of a `match` lowered into a guarded value.
-    Three pattern shapes:
-      * `ctor C(a, b)` — `__m.tag === "C"`, binds field projections
-      * `strLit "s"`   — `__m === "s"`, no bindings
-      * `wildcard`     — no guard; collapses the rest of the chain -/
+/-- The test a pattern makes on the value at `e` (`none` = always
+    matches). Nested constructor fields are reached through `e.$k`. -/
+partial def patGuard (e : LeanTea.Js.Expr) : Pattern → Option LeanTea.Js.Expr
+  | .wildcard | .var _ => none
+  | .strLit s' => some (eq e (E.s s'))
+  | .numLit n => some (eq e (E.n n))
+  | .ctor name args =>
+    let here := eq (dot e "tag") (E.s name)
+    let subs := (args.zipIdx.filterMap fun (p, k) => patGuard (idx e (E.s s!"${k}")) p)
+    some (subs.foldl (fun acc g => binop "&&" acc g) here)
+
+/-- The variables a pattern binds, with the expression for each value. -/
+partial def patBinds (e : LeanTea.Js.Expr) : Pattern → List (String × LeanTea.Js.Expr)
+  | .var x => [(x, e)]
+  | .ctor _ args => (args.zipIdx.flatMap fun (p, k) => patBinds (idx e (E.s s!"${k}")) p)
+  | _ => []
+
+/-- `match` branches as a chain of guarded values on `__m`:
+    `guard ? ((x, y) => body)(__m.$0, __m.$1.$0) : <rest>`. A branch
+    whose pattern always matches ends the chain; running off the end
+    yields `null` (`LeanJs.Check` rejects non-exhaustive matches). -/
 partial def compileMatchChain : List MatchBranch → LeanTea.Js.Expr
   | []            => E.nul
   | b :: rest     =>
     let body' := compileExpr b.body
-    match b.pat with
-    | .wildcard => body'
-    | .strLit s' =>
-      let guard := eq (i "__m") (E.s s')
-      tern guard body' (compileMatchChain rest)
-    | .ctor name args =>
-      let guard := eq (dot (i "__m") "tag") (E.s name)
-      let consumed :=
-        if args.isEmpty then body'
-        else
-          let actuals : List LeanTea.Js.Expr :=
-            args.length.fold (init := []) fun k _ acc =>
-              acc ++ [idx (i "__m") (E.s s!"${k}")]
-          call (arrow args [retE body']) actuals
-      tern guard consumed (compileMatchChain rest)
+    let binds := patBinds (i "__m") b.pat
+    let value :=
+      if binds.isEmpty then body'
+      else call (arrow (binds.map (·.1)) [retE body']) (binds.map (·.2))
+    match patGuard (i "__m") b.pat with
+    | none => value
+    | some g => tern g value (compileMatchChain rest)
 
 /-- Flatten a statement-chain expression into a JS statement block.
     Shared by `do` blocks (sync IIFE) and `async def` bodies (async
@@ -166,6 +178,12 @@ partial def compileStmts (tail : Bool) : Ast.Expr → Block
     -- A `null` terminal means "no value" — emit nothing so a void
     -- block doesn't end with a spurious `return null`.
     []
+  | .doBlock body =>
+    -- A nested `do` in statement position (an `if` branch, a loop
+    -- body) is inlined as a `{ … }` block instead of an IIFE: same
+    -- scoping (const/let are block-scoped), no closure per iteration,
+    -- and a tail `return` still returns the enclosing block's value.
+    [.rawS ("{" ++ (compileStmts tail body).render ++ "}")]
   | terminal =>
     if tail then [retE (compileExpr terminal)]
     else [doE (compileExpr terminal)]

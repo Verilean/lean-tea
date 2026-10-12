@@ -34,16 +34,34 @@ output composes with everything else the framework ships. -/
 
 namespace LeanJs.Ast
 
-/-- One arm of a `match` head. Three forms:
-    * `ctor (name) (args)` — inductive constructor with named field
-      binders. The legacy form; arity check applies.
-    * `strLit "literal"` — matches a string scrutinee literally.
-    * `wildcard` — matches anything; acts as the fall-through. -/
+/-- A `match` pattern. Patterns nest: `Some(Rect(w, _))`.
+    * `ctor C [p…]` — constructor `C` whose fields match `p…`
+      (a name starting with an uppercase letter, or followed by `(…)`)
+    * `var x` — binds the value to `x` (a lowercase name)
+    * `strLit "s"` / `numLit n` — matches that literal
+    * `wildcard` — `_`, matches anything -/
 inductive Pattern where
-  | ctor    (name : String) (args : List String) : Pattern
+  | ctor    (name : String) (args : List Pattern) : Pattern
+  | var     (name : String) : Pattern
   | strLit  (s : String) : Pattern
+  | numLit  (n : Int) : Pattern
   | wildcard : Pattern
   deriving Inhabited
+
+/-- Every variable a pattern binds, left to right. -/
+partial def Pattern.binders : Pattern → List String
+  | .ctor _ args => args.flatMap Pattern.binders
+  | .var x => [x]
+  | _ => []
+
+/-- Source-like rendering, for error messages. -/
+partial def Pattern.show : Pattern → String
+  | .ctor c [] => c
+  | .ctor c args => c ++ "(" ++ String.intercalate ", " (args.map Pattern.show) ++ ")"
+  | .var x => x
+  | .strLit s => "\"" ++ s ++ "\""
+  | .numLit n => toString n
+  | .wildcard => "_"
 
 mutual
 
@@ -116,6 +134,10 @@ inductive Expr where
       Same shape as `letE` but lowers to `let` (not `const`) so later
       `name := …` reassignments in the same block are legal. -/
   | letMutE (name : String) (value body : Expr) : Expr
+  /-- `{ base with f1 := v1, f2 := v2 }` — a copy of `base` with some
+      fields replaced; `base` is untouched. The functional way to
+      "change" a record: lowers to `{...base, f1: v1, f2: v2}`. -/
+  | updE (base : Expr) (fields : List (String × Expr))
 
 /-- One arm of a `match`. `pat` carries either a constructor
     pattern (with named field binders), a string literal, or a

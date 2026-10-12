@@ -196,6 +196,16 @@ partial def eval (globals env : Env) : Ast.Expr → Except String Value
     let vs ← xs.foldlM
       (fun acc e => do return acc ++ [(← eval globals env e)]) []
     .ok (.arr vs)
+  | .updE base kv => do
+    match ← eval globals env base with
+    | .dict old =>
+      let mut out := old
+      for (k, e) in kv do
+        let v ← eval globals env e
+        out := if out.any (·.1 == k) then out.map (fun (k', v') => if k' == k then (k, v) else (k', v'))
+               else out ++ [(k, v)]
+      .ok (.dict out)
+    | _ => .error "`{ … with … }` on a non-object"
   | .objE kv => do
     let pairs ← kv.foldlM
       (fun acc (k, e) => do return acc ++ [(k, (← eval globals env e))]) []
@@ -253,31 +263,26 @@ partial def apply (globals : Env) : Value → List Value → Except String Value
     .error s!"cannot invoke foreign value `{rawJs}` from Lean eval"
   | _, _ => .error "value isn't callable"
 
-/-- Walk the branches looking for one whose pattern matches the
-    scrutinee. Wildcards always match; ctor patterns require the
-    scrutinee to be a `.ctor` value with the same tag; strLit
-    patterns require a `.str` scrutinee with matching contents. -/
+/-- Match one (possibly nested) pattern; the bindings on success. -/
+partial def matchPat : Pattern → Value → Option (List (String × Value))
+  | .wildcard, _ => some []
+  | .var x, v => some [(x, v)]
+  | .strLit s', .str v => if v == s' then some [] else none
+  | .numLit n, .int v => if v == n then some [] else none
+  | .ctor name args, .ctor tag fields =>
+    if name != tag || args.length != fields.length then none
+    else (args.zip fields).foldlM (fun acc (p, f) => (matchPat p f).map (acc ++ ·)) []
+  | _, _ => none
+
+/-- Walk the branches; the first whose pattern matches the scrutinee
+    runs with its bindings in scope. -/
 partial def matchOn (globals env : Env) (sv : Value)
     : List MatchBranch → Except String Value
   | [] => .error s!"no match arm fired"
   | b :: rest =>
-    match b.pat with
-    | .wildcard => eval globals env b.body
-    | .strLit s' =>
-      match sv with
-      | .str v => if v == s' then eval globals env b.body
-                  else matchOn globals env sv rest
-      | _      => matchOn globals env sv rest
-    | .ctor name args =>
-      match sv with
-      | .ctor tag fields =>
-        if name != tag then matchOn globals env sv rest
-        else if args.length != fields.length then
-          .error s!"branch arity mismatch on {tag}"
-        else
-          let env' := (args.zip fields).reverse ++ env
-          eval globals env' b.body
-      | _ => matchOn globals env sv rest
+    match matchPat b.pat sv with
+    | some binds => eval globals (binds.reverse ++ env) b.body
+    | none => matchOn globals env sv rest
 
 end
 

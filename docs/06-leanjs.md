@@ -47,8 +47,8 @@ byte-equal stdout.
 ## What .leanjs gives you over hand-written JS
 
 - `--` line comments
-- `match` over inductive constructors *and* over string literals (with
-  `_` wildcard fall-through)
+- `match` with nested constructor patterns, literals, variables and `_`,
+  checked for exhaustiveness (a gap is reported as the missing pattern)
 - `record Name where field : Type, …` plus `Name { field: value, … }`
   named-args constructor — `LeanJs.Check` verifies the field set so
   typos surface at compile time
@@ -94,6 +94,65 @@ The whole game — board representation, move validation, flipping,
 scoring, view rendering — is in the subset. The Lean side parses,
 compiles, and serves the JS at startup (see
 `examples/Reversi/Serve.lean`).
+
+## Worked example — Breezehollow (three.js)
+
+`examples/Breezehollow/World.leanjs` is a whole 3D game client: an
+anime-style open-world vignette with cel-shaded terrain, instanced
+grass with a wind shader, floating islands, a wind shrine,
+collectible motes, updrafts, a chibi hero who runs, jumps and glides,
+bloom post-processing and a canvas minimap.
+
+```text
+import * as THREE from "three"
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
+
+def toon(color) := new THREE.MeshToonMaterial({color: color, gradientMap: toonRamp})
+
+def updatePlayer(dt) := do
+  let kx := (if keys["d"] then 1 else 0) - (if keys["a"] then 1 else 0);
+  …
+  if P.gliding then (do
+    P.vy <- Math.max(P.vy, -2.4);
+    if inUpdraft(P.x, P.z, P.y) == 1 then (P.vy <- Math.min(P.vy + 42 * dt, 13)) else null) else null;
+  …
+```
+
+`examples/Breezehollow/Serve.lean` compiles it once at startup
+(`--dev` recompiles per request) and serves it as `/world.js` next to
+a HUD page whose import map points `three` at a CDN:
+
+```bash
+$ lake exe breezehollow          # http://localhost:8010/
+$ lake exe breezehollow_spec     # offline: compiles, node --check, page ids
+```
+
+The movement rules are a separate, pure file, `Physics.leanjs`:
+
+```text
+def step(p, inp, world, dt) :=
+  let jumped := inp.jump && p.onGround;
+  …
+  { player: { p with x := at[0], z := at[1], vy := (if landed then 0 else vy), … },
+    events: events }
+```
+
+`World.leanjs` `include`s it and is only the shell: it reads the keys,
+calls `step`, stores the new player and turns the returned events
+(`"jump"`, `"glide"`, `"skill"`, `"land"`) into particles. Because
+`step` is a plain function, `PhysicsTest.leanjs` checks jump height,
+glide sink rate, stamina, updrafts and the wind skill on toy worlds
+under node, and `breezehollow_spec` turns each result into a test.
+
+Shader source fits in ordinary string literals, which may span lines.
+
+## Errors and checks
+
+Parse errors give the line, column, the source line and a caret at
+the deepest point the parser reached. `LeanJs.Check` names the
+enclosing `def` and catches wrong arity, bad record fields, unknown
+identifiers (suggesting the closest name) and typos in the fields of
+top-level object literals — see the LeanJs README for the details.
 
 ## CLI trio
 
