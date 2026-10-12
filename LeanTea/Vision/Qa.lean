@@ -108,6 +108,17 @@ def runAction (c : Ctx) (idx : Nat) : Action → IO (Option String × Option Str
     if d r er > tol || d g eg > tol || d b eb > tol then
       throw <| IO.userError s!"assert_pixel: ({x}, {y}) is {got}, wanted {rgb} ±{tol}"
     return (some got, some p.toString)
+  | .waitUntil q timeoutMs => do
+    let t0 ← IO.monoMsNow
+    let mut last := ""
+    repeat
+      let (p, img) ← c.shot idx "wait"
+      let v ← ask c.vlm img q
+      last := v.answer
+      if v.yes? == some true then return (some s!"yes after {(← IO.monoMsNow) - t0}ms", some p.toString)
+      if (← IO.monoMsNow) - t0 > timeoutMs then break
+      IO.sleep 1000
+    throw <| IO.userError s!"wait_until: still no after {timeoutMs}ms — {q} (last answer: {last})"
   | .waitForScreen screen timeoutMs => do
     let t0 ← IO.monoMsNow
     let mut last := "unknown"
@@ -119,8 +130,92 @@ def runAction (c : Ctx) (idx : Nat) : Action → IO (Option String × Option Str
       IO.sleep 1000
     throw <| IO.userError s!"wait_for_screen: timed out waiting for {screen} (last: {last})"
 
+/-- How many sampled pixels (every 2nd in each direction) differ between
+    two screenshots; the sample count if the sizes differ. Small on
+    purpose: six password dots or a caret must still register. -/
+def changedPixels (a b : Image) : Nat := Id.run do
+  if a.width != b.width || a.height != b.height then return a.width * a.height / 4
+  let mut diff := 0
+  for y in [0:a.height:2] do
+    for x in [0:a.width:2] do
+      if a.pixel x y != b.pixel x y then diff := diff + 1
+  return diff
+
+/-- `changedPixels` restricted to a window (clamped to the image). -/
+def changedPixelsIn (a b : Image) (x0 y0 w h : Nat) : Nat := Id.run do
+  if a.width != b.width || a.height != b.height then return w * h / 4
+  let mut diff := 0
+  for y in [y0:min (y0 + h) a.height:2] do
+    for x in [x0:min (x0 + w) a.width:2] do
+      if a.pixel x y != b.pixel x y then diff := diff + 1
+  return diff
+
+/-- Restrict a driver to a region of its screen: screenshots are cropped
+    to it and clicks are offset into it, so the model only ever sees
+    (and points into) e.g. the game's canvas. `region` is asked on every
+    screenshot, so a layout that moves is followed; `none` = whole screen. -/
+def _root_.LeanTea.Vision.Driver.clipTo (d : Driver) (region : IO (Option (Nat × Nat × Nat × Nat))) : IO Driver := do
+  let origin ← IO.mkRef ((0, 0) : Nat × Nat)
+  return { d with
+    name := d.name ++ "+clip"
+    screenshot := fun p => do
+      d.screenshot p
+      match ← region with
+      | some (x, y, w, h) =>
+        if w > 0 && h > 0 then
+          let img ← Image.load p
+          (img.crop x y w h).save p
+          origin.set (x, y)
+        else origin.set (0, 0)
+      | none => origin.set (0, 0)
+    click := fun x y => do
+      let (ox, oy) ← origin.get
+      d.click (ox + x) (oy + y) }
+
+/-- Resolve a `--clip` spec in a browser page:
+    `"x,y,w,h"` (fixed), `"auto"` (the largest visible iframe / canvas /
+    embed — a browser game's frame), or a CSS selector. Asked per
+    screenshot; `none` when nothing matches (whole page). -/
+def browserRegion (s : LeanTea.Browser.Session) (spec : String) : IO (Option (Nat × Nat × Nat × Nat)) := do
+  match spec.splitOn "," |>.map (·.trimAscii.toString.toNat?) with
+  | [some x, some y, some w, some h] => return some (x, y, w, h)
+  | _ =>
+    let sel := if spec == "auto" then "" else spec.replace "\\" "\\\\" |>.replace "'" "\\'"
+    let js := "(() => { const vw = innerWidth, vh = innerHeight; let best = null, area = 0;" ++
+      s!" const els = '{sel}' ? [document.querySelector('{sel}')] : document.querySelectorAll('iframe,canvas,embed,object');" ++
+      " for (const e of els) { if (!e) continue; const r = e.getBoundingClientRect();" ++
+      " const x = Math.max(0, r.left), y = Math.max(0, r.top), w = Math.min(vw, r.right) - x, h = Math.min(vh, r.bottom) - y;" ++
+      " if (w > 0 && h > 0 && w * h > area) { area = w * h; best = [x, y, w, h].map(Math.round); } }" ++
+      " return best; })()"
+    match ← s.evaluate js with
+    | .arr #[x, y, w, h] =>
+      match x.getNat?, y.getNat?, w.getNat?, h.getNat? with
+      | .ok x, .ok y, .ok w, .ok h => return some (x, y, w, h)
+      | _, _, _, _ => return none
+    | _ => return none
+
+/-- Share of sampled pixels that changed between two screenshots taken
+    `gapMs` apart, repeated until it falls below `quiet` or `maxMs`
+    passes. Returns the last ratio: ≥ `quiet` means the page never
+    settled (an animated game screen). -/
+def settle (c : Ctx) (maxMs : Nat := 5000) (quiet : Float := 0.01) (gapMs : Nat := 350) : IO Float := do
+  let t0 ← IO.monoMsNow
+  let a := c.dir / "settle.a.png"
+  let b := c.dir / "settle.b.png"
+  c.drv.screenshot a
+  let mut last := 1.0
+  repeat
+    IO.sleep gapMs.toUInt32
+    c.drv.screenshot b
+    let (ia, ib) := (← Image.load a, ← Image.load b)
+    let samples := max 1 ((ib.width / 2) * (ib.height / 2))
+    last := (changedPixels ia ib).toFloat / samples.toFloat
+    if last < quiet || (← IO.monoMsNow) - t0 ≥ maxMs then break
+    IO.FS.writeBinFile a (← IO.FS.readBinFile b)
+  return last
+
 def isAssertion : Action → Bool
-  | .assertVisual .. | .assertText .. | .assertPixel .. | .screenshot .. | .waitForScreen .. => true
+  | .assertVisual .. | .assertText .. | .assertPixel .. | .screenshot .. | .waitForScreen .. | .waitUntil .. => true
   | _ => false
 
 def runStep (c : Ctx) (idx : Nat) (step : Step) : IO StepResult := do
@@ -130,7 +225,10 @@ def runStep (c : Ctx) (idx : Nat) (step : Step) : IO StepResult := do
     let (obs, ev) ← runAction c idx step.act
     -- Let the UI settle, then capture the post-action state as evidence.
     let ev ← if isAssertion step.act then pure ev else do
-      IO.sleep 300
+      IO.sleep 150
+      -- wait for transitions / loading to finish (bounded: animated
+      -- screens never go fully quiet)
+      let _ ← settle c
       let (p, img) ← c.shot idx "after"
       if let some expected := step.expect then
         let got ← classify c.vlm img [expected]
@@ -171,16 +269,5 @@ def runScript (c : Ctx) (onStep : Nat → StepResult → IO Unit := fun _ _ => p
   let path := runs / s!"{c.script.name}.{← IO.monoMsNow}.json"
   IO.FS.writeFile path (res.toJson.pretty 2)
   return { res with reportPath := some path.toString }
-
-/-- How many sampled pixels (every 2nd in each direction) differ between
-    two screenshots; the sample count if the sizes differ. Small on
-    purpose: six password dots or a caret must still register. -/
-def changedPixels (a b : Image) : Nat := Id.run do
-  if a.width != b.width || a.height != b.height then return a.width * a.height / 4
-  let mut diff := 0
-  for y in [0:a.height:2] do
-    for x in [0:a.width:2] do
-      if a.pixel x y != b.pixel x y then diff := diff + 1
-  return diff
 
 end LeanTea.Vision.Qa

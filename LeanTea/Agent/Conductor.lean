@@ -106,7 +106,7 @@ use clickXy or wrap the lookup in a tool_call to ui_recall"
   | .toolCall tool args _ _ =>
     orch.callTool tool args
   | .clickDescribed .. | .assertVisual .. | .assertText .. | .assertPixel ..
-  | .key .. | .typeText .. =>
+  | .key .. | .typeText .. | .waitUntil .. =>
     throw <| IO.userError "vision actions are not supported by the Conductor — run the script with vision_qa"
 
 private def runPlaybookSteps (orch : Orchestrator) (pb : Playbook)

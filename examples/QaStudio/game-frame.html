@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Starfall Tactics</title>
+<style>html,body{margin:0;height:100%;background:#0b1020;overflow:hidden}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="c" width="960" height="540"></canvas>
+<script>
+// A stand-in for a browser game, for trying qa_studio's game mode: one
+// canvas (no DOM to read), a slow loading screen, an always-animated
+// background, and Japanese buttons. Screens: loading → title → home →
+// quest select → main story → battle → victory → home.
+const cv = document.getElementById('c'), g = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+let screen = 'loading', t0 = performance.now(), entered = t0, stamina = 30, buttons = [];
+const stars = Array.from({ length: 90 }, () => ({ x: Math.random() * W, y: Math.random() * H, v: 0.3 + Math.random() * 1.2 }));
+
+function go(s) { screen = s; entered = performance.now(); }
+function button(label, x, y, w, h, onClick, color = '#e8b04a') {
+  buttons.push({ x, y, w, h, onClick });
+  g.fillStyle = color; roundRect(x, y, w, h, 14); g.fill();
+  g.fillStyle = '#1b1530'; g.font = 'bold 26px "Hiragino Sans", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(label, x + w / 2, y + h / 2 + 1);
+}
+function roundRect(x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+function text(s, x, y, size = 30, color = '#fff') { g.fillStyle = color; g.font = `bold ${size}px "Hiragino Sans", sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(s, x, y); }
+function hud() { g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(0, 0, W, 48); text(`スタミナ ${stamina}/30`, 120, 24, 20, '#9fe6ff'); text('Lv.12  アリス', W - 120, 24, 20, '#ffe39a'); }
+
+function frame(now) {
+  buttons = [];
+  const grad = g.createLinearGradient(0, 0, 0, H); grad.addColorStop(0, '#1a1f4a'); grad.addColorStop(1, '#3b1e4f');
+  g.fillStyle = grad; g.fillRect(0, 0, W, H);
+  for (const s of stars) { s.y += s.v; if (s.y > H) { s.y = 0; s.x = Math.random() * W; } g.fillStyle = 'rgba(255,255,255,.7)'; g.fillRect(s.x, s.y, 2, 2); }
+  const since = now - entered;
+  if (screen === 'loading') {
+    const p = Math.min(1, (now - t0) / 2500);
+    text('Starfall Tactics', W / 2, H / 2 - 40, 44, '#ffe39a');
+    g.fillStyle = '#333a66'; g.fillRect(W / 2 - 200, H / 2 + 20, 400, 14); g.fillStyle = '#7ad7ff'; g.fillRect(W / 2 - 200, H / 2 + 20, 400 * p, 14);
+    text(`読み込み中… ${Math.round(p * 100)}%`, W / 2, H / 2 + 60, 20, '#bcd');
+    if (p >= 1) go('title');
+  } else if (screen === 'title') {
+    text('Starfall Tactics', W / 2, H / 2 - 60, 54, '#ffe39a');
+    if (Math.floor(now / 600) % 2 === 0) text('TAP TO START', W / 2, H / 2 + 60, 28);
+    buttons.push({ x: 0, y: 0, w: W, h: H, onClick: () => go('home') });
+  } else if (screen === 'home') {
+    hud(); text('ホーム', W / 2, 100, 40);
+    button('クエスト', W / 2 - 330, 260, 200, 70, () => go('quest'));
+    button('ガチャ', W / 2 - 100, 260, 200, 70, () => {}, '#c58cff');
+    button('編成', W / 2 + 130, 260, 200, 70, () => {}, '#7fd6a1');
+  } else if (screen === 'quest') {
+    hud(); text('クエスト選択', W / 2, 100, 40);
+    button('メインストーリー', W / 2 - 240, 200, 480, 70, () => go('story'));
+    button('イベント', W / 2 - 240, 290, 480, 70, () => {}, '#c58cff');
+    button('戻る', 40, H - 100, 140, 60, () => go('home'), '#9aa4c4');
+  } else if (screen === 'story') {
+    hud(); text('第1章 星降る丘', W / 2, 110, 36);
+    text('消費スタミナ 10', W / 2, 170, 22, '#9fe6ff');
+    button('出撃', W / 2 - 110, 250, 220, 80, () => { if (stamina >= 10) { stamina -= 10; go('battle'); } }, '#ff8f6b');
+    button('戻る', 40, H - 100, 140, 60, () => go('quest'), '#9aa4c4');
+  } else if (screen === 'battle') {
+    hud();
+    const k = Math.min(1, since / 3000);
+    text(k < 1 ? 'バトル中…' : '', W / 2, 120, 36);
+    g.fillStyle = '#552'; g.fillRect(W / 2 - 250, 300, 500, 18); g.fillStyle = '#ff6b6b'; g.fillRect(W / 2 - 250, 300, 500 * (1 - k), 18);
+    text('敵HP', W / 2 - 290, 309, 18, '#fbb');
+    if (k >= 1) go('victory');
+  } else if (screen === 'victory') {
+    hud(); text('勝利！', W / 2, 180, 72, '#ffe39a');
+    text('報酬: 星のかけら ×3', W / 2, 260, 24);
+    button('次へ', W / 2 - 100, 340, 200, 70, () => go('home'));
+  }
+  requestAnimationFrame(frame);
+}
+cv.addEventListener('click', (e) => {
+  const r = cv.getBoundingClientRect(), x = (e.clientX - r.left) * W / r.width, y = (e.clientY - r.top) * H / r.height;
+  for (const b of buttons.slice().reverse()) if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) { b.onClick(); break; }
+});
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -96,7 +96,11 @@ def parseProposal (reply : String) : Except String Proposal := do
     let want := (str j "expect").toLower != "no"
     return .step (.assertVisual q want) why
   | "assert_text" => return .step (.assertText (str j "target") (str j "equals")) why
-  | "wait" => return .step (.wait 1000) why
+  | "wait" =>
+    let secs := match (j.getObjValD "seconds") with
+      | .num n => (n.mantissa.toNat / 10 ^ n.exponent)
+      | _ => 2
+    return .step (.wait ((max 1 (min 10 secs)) * 1000)) why
   | "done" => return .done (if why.isEmpty then str j "summary" else why)
   | "fail" => return .fail (str j "reason")
   | a => throw s!"unknown action \"{a}\" (use click / type / key / assert / done / fail)"
@@ -111,6 +115,7 @@ def describe : Action → String
   | .assertText t e => s!"assert \"{t}\" reads \"{e}\""
   | .assertPixel x y rgb _ => s!"assert pixel ({x}, {y}) is {rgb}"
   | .wait ms => s!"wait {ms} ms"
+  | .waitUntil q _ => s!"wait until \"{q}\""
   | _ => "other step"
 
 /-- The per-turn prompt. -/
@@ -131,10 +136,12 @@ def promptFor (goal : String) (notes : List String) (worked : List Action)
   "{\"action\": \"fill\", \"target\": \"<the input field, e.g. the Username field>\", \"text\": \"<text to enter>\", \"why\": \"<short>\"}\n" ++
   "{\"action\": \"click\", \"target\": \"<the element to click, described by its visible text, colour and position>\", \"why\": \"<short>\"}\n" ++
   "{\"action\": \"key\", \"key\": \"Enter\", \"why\": \"<short>\"}\n" ++
+  "{\"action\": \"wait\", \"seconds\": 3, \"why\": \"<short — e.g. the screen is still loading>\"}\n" ++
   "{\"action\": \"assert\", \"question\": \"<a yes/no question about what is visible now that checks the goal>\", \"expect\": \"yes\", \"why\": \"<short>\"}\n" ++
   "{\"action\": \"done\", \"why\": \"<what was verified>\"}   (only after an assert proved the goal)\n" ++
   "{\"action\": \"fail\", \"reason\": \"<why the goal cannot be done on this page>\"}\n" ++
-  "Fill every field the goal mentions before submitting. Check the goal with an assert that expects yes."
+  "Fill every field the goal mentions before submitting. Check the goal with an assert that expects yes.\n" ++
+  "If the screen ALREADY shows what the goal asks you to check, assert it NOW — do not click anything else first."
 
 /-! ## The loop -/
 
@@ -179,7 +186,8 @@ def propose (c : Ctx) (img : Image) (prompt : String) (temperature : Float) (max
 
 /-- Run one action, insisting that clicks / typing / keys change the
     screen. `.ok (observed, evidence, point)` or `.error (msg, evidence, point)`. -/
-def attempt (c : Ctx) (cfg : Config) (idx : Nat) (act : Action) (why : String) (requireChange := true) :
+def attempt (c : Ctx) (cfg : Config) (idx : Nat) (act : Action) (why : String) (requireChange := true)
+    (animated := false) :
     IO (Except (String × Option String × Option (Nat × Nat)) (String × Option String × Option (Nat × Nat))) := do
   let (_, before) ← c.shot idx "pre"
   c.lastPoint.set none
@@ -190,7 +198,13 @@ def attempt (c : Ctx) (cfg : Config) (idx : Nat) (act : Action) (why : String) (
   | none =>
     if requireChange && mustChange act then
       if let some after := r.evidencePath then
-        let changed := changedPixels before (← Image.load after)
+        let afterImg ← Image.load after
+        -- on a screen that animates by itself the whole-screen diff is
+        -- meaningless; judge a click by the area around it instead
+        let changed := match act, point, animated with
+          | .clickDescribed .., some (x, y), true | .clickXy .., some (x, y), true =>
+            changedPixelsIn before afterImg (x - min x 120) (y - min y 120) 240 240
+          | _, _, _ => changedPixels before afterImg
         if changed < cfg.minChangedPixels then
           let what := match act with
             | .typeText _ => "typing changed nothing on the screen — the field probably doesn't have focus (use fill)"
@@ -215,6 +229,9 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
     if ← stop then
       emit (.finished false "stopped")
       return (steps, false)
+    -- let loading / transitions finish; a page that never goes quiet is animated
+    let motion ← settle c (maxMs := 4000)
+    let animated := motion ≥ 0.01
     let (_, img) ← c.shot idx "look"
     emit (.thinking s!"turn {turn + 1}: looking at the page…")
     let pageOutline ← try outline catch _ => pure ""
@@ -267,7 +284,7 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
           -- in a fill, the click may land on a field that already has focus
           -- (nothing visible changes); the typing that follows must show
           let requireChange := !(acts.length > 1 && k == 0)
-          match ← attempt c cfg (idx + done.length) act why requireChange with
+          match ← attempt c cfg (idx + done.length) act why requireChange animated with
           | .ok (obs, ev, pt) =>
             done := done ++ [{ act, note := why }]
             emit (.stepOk (describe act) obs ev pt)

@@ -243,6 +243,47 @@ passed (10 steps, 12 s) and the saved
 `vision_qa` — and fails at the welcome check when the password is
 changed to a wrong one.
 
+#### Browser games and sites behind a login
+
+```
+# once: log in by hand in the visible window; the profile keeps the session
+lake exe qa_studio --url https://example.com/game --profile ~/.cache/qa-profile --headed --clip auto
+# afterwards (headless is fine), and for the saved test:
+lake exe qa_studio --url https://example.com/game --profile ~/.cache/qa-profile --clip auto
+vision_qa test.json --target browser --url https://example.com/game --profile ~/.cache/qa-profile --clip auto
+```
+
+- `--profile DIR` keeps a persistent browser profile (cookies, local
+  storage). A profile can be open in one browser at a time: stop
+  `qa_studio` (or copy the directory) before `vision_qa` uses it.
+- `--clip auto` crops every screenshot to the largest iframe / canvas on
+  the page — the game — and offsets clicks into it (`--clip SELECTOR`
+  or `--clip x,y,w,h` also work). The model never sees the site around
+  it; the DOM outline is switched off (a game is a canvas, usually in a
+  cross-origin iframe).
+- Every action waits for the screen to settle (bounded — animated
+  screens never go quiet); the model can also `wait` N seconds, and the
+  wait is recorded. On a screen that animates by itself a click is
+  judged by the area around it instead of the whole screen.
+- A new test starts with `wait_until "Is <first click target> visible?"`
+  (a VLM poll), so a replay doesn't act while the game is still loading
+  — the loading and title screens differ too little for a pixel check.
+
+`/demo-game` is a stand-in to try this on (portal login, a canvas game
+in an iframe, 2.5 s loading, animated background, Japanese buttons).
+With `qwen/qwen3-vl-4b`: logging in through the portal by chat worked;
+after a restart the profile skipped the login; "start the game and open
+the quest screen, check クエスト選択" took 3 proposals / 11 s; "open
+メインストーリー, sortie with 出撃, wait for the battle and check 勝利！"
+3 proposals plus a self-chosen 3 s wait. The 8-step replay (gate waited
+6.9 s for the title) passed in 21 s, and the saved script passed under
+`vision_qa --profile … --clip auto`. One planning slip was fixed in the
+prompt: on the victory screen the model clicked 次へ before asserting
+勝利！ — it's now told to assert as soon as the goal is visible.
+
+Mind the site's terms of service: many game platforms forbid automated
+play. Use this on titles you build or are allowed to test.
+
 ### Choosing the model — `vision_bench`
 
 Which small model is "accurate enough" is measured, not assumed:

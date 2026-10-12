@@ -12,7 +12,7 @@ $ vision_qa script.json --target browser --url http://127.0.0.1:8003/ [--headed]
 $ vision_qa script.json --target desktop                # LEANTEA_DESKTOP=1 build
 $ vision_qa script.json --target tmux --tmux-target qa:0.0
       [--model qwen/qwen3-vl-4b] [--frame norm1000] [--zoom 3]
-      [--evidence-dir DIR] [--cache DIR]
+      [--evidence-dir DIR] [--cache DIR] [--profile DIR] [--clip auto|SELECTOR|x,y,w,h]
 ```
 
 Each step's screenshot is kept as evidence; the run manifest lands in
@@ -42,6 +42,8 @@ structure Args where
   evidenceDir : String := "/tmp/vision-qa"
   cache?      : Option String := none
   baseUrl     : String := "http://127.0.0.1:11211/v1"
+  profile?    : Option String := none
+  clip?       : Option String := none
 
 partial def parseArgs : List String → Args → Args
   | "--target" :: v :: r, a       => parseArgs r { a with target := v }
@@ -54,6 +56,8 @@ partial def parseArgs : List String → Args → Args
   | "--evidence-dir" :: v :: r, a => parseArgs r { a with evidenceDir := v }
   | "--cache" :: v :: r, a        => parseArgs r { a with cache? := some v }
   | "--base-url" :: v :: r, a     => parseArgs r { a with baseUrl := v }
+  | "--profile" :: v :: r, a      => parseArgs r { a with profile? := some v }
+  | "--clip" :: v :: r, a         => parseArgs r { a with clip? := some v }
   | p :: r, a => parseArgs r (if a.script?.isNone then { a with script? := some p } else a)
   | [], a => a
 
@@ -70,12 +74,14 @@ def main (argv : List String) : IO UInt32 := do
                      cacheDir? := a.cache?.map (·) }
   let session? ← if a.target == "desktop" then pure none else do
     let s ← LeanTea.Browser.Session.spawn
-    let _ ← s.open 1280 800 (headless := some !a.headed)
+    let _ ← s.open 1280 800 (headless := some !a.headed) (profile := a.profile?)
     pure (some s)
   let drv ← match a.target, session? with
     | "desktop", _ => Driver.desktop
     | "tmux", some s => pure (Driver.tmux a.tmuxTarget s dir)
-    | _, some s => pure (Driver.browser s)
+    | _, some s => match a.clip? with
+      | some spec => (Driver.browser s).clipTo (browserRegion s spec)
+      | none => pure (Driver.browser s)
     | t, none => throw <| IO.userError s!"unknown target {t}"
   if let (some url, some s) := (a.url?, session?) then
     if a.target == "browser" then let _ ← s.navigate url

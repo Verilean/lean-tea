@@ -31,6 +31,9 @@ const defaults = {
     || process.env.LEANTEA_BROWSER_HEADLESS === 'true',
   width:    1280,
   height:   800,
+  /** Persistent profile directory (cookies, logins, local storage).
+   *  Unset = a fresh throwaway profile per launch. */
+  profile:  process.env.LEANTEA_BROWSER_PROFILE || null,
 };
 
 /** Lazy-init the browser the first time a method needs it. Honours
@@ -40,15 +43,25 @@ async function ensurePage(opts = {}) {
   const headless = (opts.headless !== undefined) ? opts.headless : defaults.headless;
   const width    = opts.width  || defaults.width;
   const height   = opts.height || defaults.height;
-  browser = await chromium.launch({
-    headless,
-    args: ['--no-sandbox', '--disable-dev-shm-usage'],
-  });
-  context = await browser.newContext({
-    viewport: { width, height },
-    deviceScaleFactor: 1,
-  });
-  page = await context.newPage();
+  const profile  = (opts.profile !== undefined) ? opts.profile : defaults.profile;
+  const args = ['--no-sandbox', '--disable-dev-shm-usage'];
+  if (profile) {
+    // A persistent context keeps whatever the user did in it (e.g. a
+    // manual login in a headed window) for the next launch.
+    fs.mkdirSync(profile, { recursive: true });
+    browser = null;
+    context = await chromium.launchPersistentContext(profile, {
+      headless, args, viewport: { width, height }, deviceScaleFactor: 1,
+    });
+    page = context.pages()[0] || await context.newPage();
+  } else {
+    browser = await chromium.launch({ headless, args });
+    context = await browser.newContext({
+      viewport: { width, height },
+      deviceScaleFactor: 1,
+    });
+    page = await context.newPage();
+  }
   return page;
 }
 
@@ -67,6 +80,7 @@ const methods = {
     if (p.headless !== undefined) defaults.headless = !!p.headless;
     if (p.width)                  defaults.width    = p.width;
     if (p.height)                 defaults.height   = p.height;
+    if (p.profile !== undefined)  defaults.profile  = p.profile || null;
     if (page) { await closeAll(); }
     const pg = await ensurePage(p);
     return {
