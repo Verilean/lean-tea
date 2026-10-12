@@ -7,7 +7,15 @@ $ lake exe qa_studio                         # http://localhost:8020/ , tests th
 $ lake exe qa_studio --url http://127.0.0.1:8005/ [--model qwen/qwen3-vl-4b] [--headed]
       [--port 8020] [--out examples/VisionQa/scripts] [--base-url http://127.0.0.1:11211/v1]
       [--profile DIR] [--clip auto|SELECTOR|x,y,w,h]
+      [--browser-port 9333] [--dev] [--rules FILE]
 ```
+
+While working on the studio itself, `tools/qa-studio-dev.sh` rebuilds
+and restarts it whenever its sources change. `--browser-port` keeps the
+browser in its own process (the game stays on the same screen, still
+logged in), the recorded steps and chat are restored from
+`--dir`/state.json, `--dev` re-reads page.html on every load and
+`--rules FILE` (one piece of advice per line) is re-read every turn.
 
 For a site behind a login (a browser game), keep a browser profile and
 log in once in a visible window:
@@ -59,6 +67,9 @@ structure Args where
   dir     : String := "/tmp/qa-studio"
   profile? : Option String := none
   clip?   : Option String := none
+  browserPort? : Option Nat := none
+  dev     : Bool := false
+  rules?  : Option String := none
 
 partial def parseArgs : List String → Args → Args
   | "--port" :: v :: r, a     => parseArgs r { a with port := (v.toNat?.getD 8020).toUInt16 }
@@ -70,6 +81,9 @@ partial def parseArgs : List String → Args → Args
   | "--dir" :: v :: r, a      => parseArgs r { a with dir := v }
   | "--profile" :: v :: r, a  => parseArgs r { a with profile? := some v }
   | "--clip" :: v :: r, a     => parseArgs r { a with clip? := some v }
+  | "--browser-port" :: v :: r, a => parseArgs r { a with browserPort? := v.toNat? }
+  | "--dev" :: r, a           => parseArgs r { a with dev := true }
+  | "--rules" :: v :: r, a    => parseArgs r { a with rules? := some v }
   | _ :: r, a                 => parseArgs r a
   | [], a                     => a
 
@@ -103,6 +117,8 @@ structure Studio where
   /-- Where the user clicked the live view while a job runs: the job's
       next step clicks there. -/
   pointer : IO.Ref (Option (Nat × Nat))
+  /-- An explore run (the only job that takes hints and pointed clicks). -/
+  exploring : IO.Ref Bool
 
 def Studio.ctx (s : Studio) (steps : List Step) : IO Ctx := do
   return { drv := s.drv, vlm := s.vlm, zoom := 3, dir := s.dir,
@@ -147,6 +163,40 @@ def Studio.script (s : Studio) (st : State) (name : String) : Script :=
     description := s!"Recorded with qa_studio on {st.startUrl} (model {s.vlm.model}). Goals: " ++
       String.intercalate " / " st.goals.reverse }
 
+/-! ## Surviving a restart -/
+
+def Studio.statePath (s : Studio) : System.FilePath := s.dir / "state.json"
+
+/-- Write what a restart must not lose: the recorded steps, goals and chat. -/
+def Studio.persist (s : Studio) : IO Unit := do
+  let st ← s.state.get
+  let j := Json.mkObj [
+    ("startUrl", .str st.startUrl),
+    ("goals", .arr (st.goals.toArray.map Json.str)),
+    ("script", ({ name := "studio", steps := st.steps } : Script).toJson),
+    ("events", .arr st.events),
+    ("shotN", .num (Int.ofNat (← s.shotN.get))),
+    ("lastShot", (st.lastShot.map Json.str).getD .null)]
+  IO.FS.writeFile s.statePath j.compress
+
+/-- Bring back a session saved by `persist` for the same start page. -/
+def Studio.restore (s : Studio) : IO Bool := do
+  if !(← s.statePath.pathExists) then return false
+  let some j := (Json.parse (← IO.FS.readFile s.statePath)).toOption | return false
+  let url := (j.getObjValD "startUrl").getStr?.toOption.getD ""
+  if url != (← s.state.get).startUrl then return false
+  let steps := match Script.fromJson (j.getObjValD "script") with
+    | .ok sc => sc.steps
+    | .error _ => []
+  let goals := match j.getObjValD "goals" with
+    | .arr a => a.toList.filterMap (·.getStr?.toOption)
+    | _ => []
+  let events := match j.getObjValD "events" with | .arr a => a | _ => #[]
+  let lastShot := (j.getObjValD "lastShot").getStr?.toOption
+  if let .num n := j.getObjValD "shotN" then s.shotN.set n.mantissa.toNat
+  s.state.modify fun st => { st with steps, goals, events, lastShot }
+  return true
+
 /-- Mark a job as running; false if one already is. -/
 def Studio.claim (s : Studio) : IO Bool :=
   s.state.modifyGet fun st => if st.busy then (false, st) else (true, { st with busy := true })
@@ -173,6 +223,7 @@ def Studio.background (s : Studio) (job : IO Unit) : IO Bool := do
     try job catch e => s.push [("kind", "finished"), ("ok", .bool false), ("text", .str s!"error: {e}")]
     s.unlock
     s.release
+    try s.persist catch _ => pure ()
   return true
 
 /-- Hints sent since the last call (the running job picks them up). -/
@@ -223,14 +274,24 @@ def Studio.outline (s : Studio) : IO String := do
   | .str t => return t
   | _ => return ""
 
+/-- The lines of `--rules FILE`, read fresh (edit it while a run goes). -/
+def Studio.rules (s : Studio) : IO (List String) := do
+  let some path := s.args.rules? | return []
+  if !(← System.FilePath.pathExists path) then return []
+  return (← IO.FS.readFile path).splitOn "\n" |>.map (·.trimAscii.toString)
+    |>.filter (fun l => !l.isEmpty && !l.startsWith "#")
+
 def Studio.explore (s : Studio) (goal : String) : IO Unit := do
   let st ← s.state.get
   let ctx ← s.ctx st.steps
   let notes := st.goals.reverse.map (s!"Earlier goal, already done: " ++ ·)
   let _ ← s.drainHints
   s.pointer.set none
-  let (steps, _) ← Explore.explore ctx {} goal notes st.steps s.emit (s.stopReq.get) s.outline s.drainHints
-    (s.pointer.modifyGet fun p => (p, none))
+  s.exploring.set true
+  let (steps, _) ← try
+      Explore.explore ctx {} goal notes st.steps s.emit (s.stopReq.get) s.outline s.drainHints
+        (s.pointer.modifyGet fun p => (p, none)) s.rules
+    finally s.exploring.set false
   -- a fresh test opens the page and must not act before it's ready (a
   -- game takes a while to load): gate it on its first click target
   let steps := match st.steps, steps with
@@ -319,7 +380,7 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
     | some p => return png (← IO.FS.readBinFile p)
     | none => return err 503 "no screenshot yet"
   | "GET", path =>
-    if let some (_, html) := demos.find? (·.1 == path) then return Response.html 200 html
+    if let some (_, file) := demos.find? (·.1 == path) then return Response.html 200 (← IO.FS.readFile file)
     if path.startsWith "/shot/" then
       let name := (path.drop 6).toString
       if name.any (· == '/') || name.startsWith "." then return Response.notFound
@@ -330,6 +391,7 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
       let since := queryNat req.query "since"
       return Response.json 200 (Json.mkObj [
         ("events", .arr (st.events.extract since st.events.size)),
+        ("total", .num (Int.ofNat st.events.size)),
         ("busy", .bool st.busy),
         ("url", .str st.startUrl),
         ("steps", .arr (st.steps.toArray.map fun step => .str (Explore.describe step.act))),
@@ -347,12 +409,14 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
       s.hints.modify (·.push text)
       s.push [("kind", "note"), ("text", .str "passed to the running attempt as a hint")]
       return ok
-    if (← s.state.get).busy then return ← hint ()
+    if (← s.state.get).busy then
+      if ← s.exploring.get then return ← hint ()
+      return busyErr
     if isAck text then
       s.push [("kind", "note"), ("text", .str "OK — send the next thing to test (or Replay / Save the test).")]
       return ok
     if ← s.background (s.explore text) then return ok
-    else hint ()
+    else return busyErr
   | "POST", "/api/point" =>
     let j := jsonBody req
     let num := fun k => match j.getObjValD k with
@@ -361,6 +425,7 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
     let (some x, some y) := (num "x", num "y") | return err 400 "x and y needed"
     s.push [("kind", "user"), ("text", .str s!"(clicked the screen at {x}, {y})")]
     if (← s.state.get).busy then
+      if !(← s.exploring.get) then return busyErr
       s.pointer.set (some (x, y))
       s.push [("kind", "note"), ("text", .str "the running attempt clicks there next")]
       return ok
@@ -383,6 +448,7 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
     return if started then ok else busyErr
   | "POST", "/api/undo" =>
     s.state.modify fun st => { st with steps := st.steps.dropLast, verified := none }
+    s.persist
     return ok
   | "POST", "/api/replay" =>
     if (← s.state.get).steps.isEmpty then return err 400 "nothing recorded yet"
@@ -411,11 +477,11 @@ def main (argv : List String) : IO Unit := do
   let a := parseArgs argv {}
   let dir : System.FilePath := a.dir
   IO.FS.createDirAll dir
-  let page ← Template.mkProvider (← findFile "page.html") false
+  let page ← Template.mkProvider (← findFile "page.html") a.dev
   let demos ← [("/demo", "demo.html"), ("/demo-game", "game.html"), ("/demo-game/frame", "game-frame.html")].mapM
-    fun (route, file) => do return (route, ← IO.FS.readFile (← findFile file))
+    fun (route, file) => do return (route, ← findFile file)
   let session ← LeanTea.Browser.Session.spawn
-  let _ ← session.open 1280 800 (headless := some !a.headed) (profile := a.profile?)
+  let _ ← session.open 1280 800 (headless := some !a.headed) (profile := a.profile?) (cdpPort := a.browserPort?)
   let vlm : Vlm := { cfg := { baseUrl := a.baseUrl, timeoutSec := some 300 }, model := a.model,
                      frame := CoordFrame.guess a.model }
   let startUrl := a.url?.getD s!"http://127.0.0.1:{a.port}/demo"
@@ -424,14 +490,26 @@ def main (argv : List String) : IO Unit := do
     | none => pure (Driver.browser session)
   let s : Studio := { args := a, session, drv, vlm, dir,
                       state := ← IO.mkRef { startUrl }, stopReq := ← IO.mkRef false, shotN := ← IO.mkRef 0,
-                      lock := ← IO.mkRef false, hints := ← IO.mkRef #[], pointer := ← IO.mkRef none }
-  -- open the start page once the server below is answering (it may be /demo)
-  let _ ← IO.asTask (prio := .dedicated) do
-    IO.sleep 700
-    let _ ← s.background (s.goto startUrl)
+                      lock := ← IO.mkRef false, hints := ← IO.mkRef #[], pointer := ← IO.mkRef none, exploring := ← IO.mkRef false }
+  let restored ← s.restore
+  if restored then
+    IO.println s!"  restored {(← s.state.get).steps.length} recorded steps from {s.statePath}"
+  -- a kept browser already showing a page stays where it is (that's
+  -- the point of keeping it); otherwise open the start page once the
+  -- server below is answering (it may be /demo)
+  let here ← try (match ← session.evaluate "location.href" with | .str u => pure u | _ => pure "")
+    catch _ => pure ""
+  let keep := a.browserPort?.isSome && !here.isEmpty && here != "about:blank"
+  if keep then
+    s.push [("kind", "note"), ("text", .str s!"restarted — the browser kept its page ({here})")]
+  else
+    let _ ← IO.asTask (prio := .dedicated) do
+      IO.sleep 700
+      let _ ← s.background (s.goto startUrl)
   IO.println s!"qa_studio: http://127.0.0.1:{a.port}/   testing {startUrl} with {a.model}"
   if a.headed && a.profile?.isSome then
     IO.println "  log in in the Chromium window if the site asks — the profile keeps it for next time"
+  let _ ← IO.asTask (prio := .dedicated) (s.persist)
   -- concurrent: the headless browser keeps a keep-alive connection open
   -- (to /demo), which would block a one-connection-at-a-time server
   serveConcurrent a.port "127.0.0.1" (handler s page demos)

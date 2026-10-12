@@ -245,7 +245,8 @@ def attempt (c : Ctx) (cfg : Config) (idx : Nat) (act : Action) (why : String) (
 def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (worked : List Step)
     (emit : Event → IO Unit) (stop : IO Bool) (outline : IO String := pure "")
     (hints : IO (List String) := pure [])
-    (pointed : IO (Option (Nat × Nat)) := pure none) : IO (List Step × Bool) := do
+    (pointed : IO (Option (Nat × Nat)) := pure none)
+    (rules : IO (List String) := pure []) : IO (List Step × Bool) := do
   let mut notes := notes
   -- a check that passes before anything was done doesn't prove the goal
   let mut acted := false
@@ -292,7 +293,9 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
         emit (.stepFailed (describe act) e ev pt)
       continue
     let pageOutline ← try outline catch _ => pure ""
-    let prompt := promptFor goal notes (steps.map (·.act)) lastError (cfg.maxTurns - turn) pageOutline
+    -- standing advice, re-read every turn so it can be edited mid-run
+    let ruleNotes ← try rules catch _ => pure []
+    let prompt := promptFor goal (ruleNotes ++ notes) (steps.map (·.act)) lastError (cfg.maxTurns - turn) pageOutline
     let reply ← try propose c img prompt (if failures == 0 then 0.0 else 0.5) cfg.maxTokens
       catch e => do
         emit (.finished false s!"model call failed: {e}")

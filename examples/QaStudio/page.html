@@ -179,7 +179,12 @@
 
     async function poll() {
       try {
-        const s = await api('/api/state?since=' + since);
+        let s = await api('/api/state?since=' + since);
+        if (s.total !== undefined && s.total < since) {
+          // the studio restarted without its old chat: start the log over
+          $('chat').querySelectorAll('.msg:not(:first-child), .note, .thinking').forEach(n => n.remove());
+          since = 0; s = await api('/api/state?since=0');
+        }
         for (const ev of s.events) { addEvent(ev); since = ev.id + 1; }
         if (s.events.length) scrollChat();
         renderState(s);

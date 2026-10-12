@@ -285,6 +285,33 @@ vision_qa test.json --target browser --url https://example.com/game --profile ~/
   fixed point. On `/demo-game`, pointing at TAP TO START and Quest
   recorded 4 steps whose replay passed in 5 s.
 
+#### Working on the studio without losing the game
+
+```
+tools/qa-studio-dev.sh --url https://example.com/game --profile ~/.cache/qa-profile --clip auto --headed
+```
+
+rebuilds `qa_studio` when its sources (`LeanTea/`, `examples/QaStudio/`,
+the browser bridge) change and restarts it. A restart takes a few
+seconds and keeps:
+
+- the browser: `--browser-port N` (the script uses 9333, or
+  `QA_BROWSER_PORT`) runs it as its own process, which the bridge
+  attaches to over CDP and leaves open on exit. The game stays logged
+  in and on the same screen. Close it with
+  `pkill -f remote-debugging-port=9333`;
+- the recorded steps, goals and chat, from `--dir`/state.json (for the
+  same start URL);
+- the open studio tab, which reconnects by itself. `--dev` re-reads
+  page.html on every load, so a UI edit needs only a reload.
+
+A run in progress at the restart is lost, and a failed build leaves the
+running studio alone. `--rules FILE` (one piece of advice per line, `#`
+for comments) is re-read every turn, so the model's instructions can be
+tuned during a run without restarting. On `/demo-game`, after a restart
+the game was still on Quest Select with the 6 recorded steps, and the
+next goal ("open Main Story and check Chapter 1 is shown") passed.
+
 `/demo-game` is a stand-in to try this on (portal login, a canvas game
 in an iframe, 2.5 s loading, animated background).
 With `qwen/qwen3-vl-4b`: logging in through the portal by chat worked;

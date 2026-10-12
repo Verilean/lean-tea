@@ -183,11 +183,16 @@ private def getNat (j : Json) (key : String) : Nat :=
     currently has set; `some true` / `some false` flips it.
     `profile` is a directory for a persistent profile: cookies and
     logins survive to the next run (log in once with
-    `headless := some false`). -/
+    `headless := some false`).
+    `cdpPort` keeps the browser alive across restarts: the bridge attaches
+    to the browser listening on that remote-debugging port, or starts one
+    detached, and leaves it open when it exits. -/
 def Session.open (s : Session) (width height : Nat := 0)
-    (headless : Option Bool := none) (profile : Option String := none) : IO (Nat × Nat × Bool) := do
+    (headless : Option Bool := none) (profile : Option String := none)
+    (cdpPort : Option Nat := none) : IO (Nat × Nat × Bool) := do
   let mut p : List (String × Json) := []
   if let some dir := profile then p := p ++ [("profile", Json.str dir)]
+  if let some port := cdpPort then p := p ++ [("cdpPort", Json.num (Int.ofNat port))]
   if width  > 0 then p := p ++ [("width",  Json.num (Int.ofNat width))]
   if height > 0 then p := p ++ [("height", Json.num (Int.ofNat height))]
   if let some h := headless then p := p ++ [("headless", Json.bool h)]
