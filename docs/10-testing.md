@@ -234,6 +234,17 @@ trial and error (`LeanTea.Vision.Explore`):
   agrees. A 4B model tends to assert something easy once it has made
   some progress ("is the chapter ready to run?") and stop halfway. When it
   says no, the run goes on with what is left.
+  The same question is asked after every action and after a check that
+  misses: a small model otherwise keeps clicking past a finished goal
+  ("click Quest" went on to Main Story and Sortie), or checks for the
+  wrong thing and wanders off (looking for the battle after it was won,
+  then pressing Next). Once the answer is yes, the model is told to
+  assert what's on screen or reply done; if its own check fails anyway,
+  the goal ends as done without a check. The judge sees each step with
+  the model's reason for it, so "click the title (to tap to start)"
+  counts as the tap the goal asked for. On `/demo-game`, "Tap to start",
+  "Click Quest" and "Run the main story quest until the battle is won"
+  each stopped where the goal did.
 
 Later messages continue from there, so a test is built goal by goal.
 **Replay** reloads the start page and runs only the recorded steps;
