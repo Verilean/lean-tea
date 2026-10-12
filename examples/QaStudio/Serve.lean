@@ -562,7 +562,19 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
     let text := (str (jsonBody req) "text").trimAscii.toString
     if text.isEmpty then return err 400 "empty instruction"
     s.push [("kind", "user"), ("text", .str s!"plan: {text}")]
-    return if ← s.background (s.makePlan text) then ok else busyErr
+    -- text that is already a plan (several lines, or a loop) is taken as
+    -- written: asking the model would only rewrite it
+    let written := match Plan.parse text with
+      | .ok items => if items.length ≥ 2 || items.any (fun | .loop .. => true | _ => false) then some items else none
+      | .error _ => none
+    match written with
+    | some items =>
+      let plan := Plan.render items
+      s.state.modify ({ · with plan })
+      s.push [("kind", "plan"), ("text", .str plan)]
+      s.push [("kind", "note"), ("text", .str "that is already a plan — taken as written (press Run plan)")]
+      return ok
+    | none => return if ← s.background (s.makePlan text) then ok else busyErr
   | "POST", "/api/runplan" =>
     let text := str (jsonBody req) "plan"
     match Plan.parse text with

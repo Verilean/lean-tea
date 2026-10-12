@@ -149,6 +149,12 @@ def exploreGroup : LSpec :=
     it "wait → seconds, clamped to 1…10"
       (proposalIs "{\"action\":\"wait\",\"seconds\":3}" (fun | .step (.wait 3000) _ => true | _ => false) &&
        proposalIs "{\"action\":\"wait\",\"seconds\":60}" (fun | .step (.wait 10000) _ => true | _ => false)),
+    it "wait_until proposal, seconds clamped to 5..600"
+      (proposalIs "{\"action\":\"wait_until\",\"question\":\"Is the result shown?\",\"seconds\":180}"
+         (fun | .step (.waitUntil "Is the result shown?" 180000) _ => true | _ => false) &&
+       proposalIs "{\"action\":\"wait_until\",\"question\":\"q\",\"seconds\":9999}"
+         (fun | .step (.waitUntil "q" 600000) _ => true | _ => false) &&
+       proposalErr "{\"action\":\"wait_until\"}"),
     it "wait_until survives the script JSON round trip"
       (match Script.fromJson ({ name := "t", steps := [{ act := .waitUntil "Is TAP TO START visible?" 45000 }] } : Script).toJson with
        | .ok sc => match sc.steps with

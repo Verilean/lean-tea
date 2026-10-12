@@ -101,6 +101,13 @@ def parseProposal (reply : String) : Except String Proposal := do
       | .num n => (n.mantissa.toNat / 10 ^ n.exponent)
       | _ => 2
     return .step (.wait ((max 1 (min 10 secs)) * 1000)) why
+  | "wait_until" =>
+    let q := str j "question"
+    if q.isEmpty then throw "wait_until needs a \"question\"" else
+    let secs := match (j.getObjValD "seconds") with
+      | .num n => (n.mantissa.toNat / 10 ^ n.exponent)
+      | _ => 120
+    return .step (.waitUntil q ((max 5 (min 600 secs)) * 1000)) why
   | "done" => return .done (if why.isEmpty then str j "summary" else why)
   | "fail" => return .fail (str j "reason")
   | a => throw s!"unknown action \"{a}\" (use click / type / key / assert / done / fail)"
@@ -142,6 +149,7 @@ def promptFor (goal : String) (notes : List String) (worked : List Action)
   "{\"action\": \"click\", \"target\": \"<the element to click, described by its visible text, colour and position>\", \"why\": \"<short>\"}\n" ++
   "{\"action\": \"key\", \"key\": \"Enter\", \"why\": \"<short>\"}\n" ++
   "{\"action\": \"wait\", \"seconds\": 3, \"why\": \"<short — e.g. the screen is still loading>\"}\n" ++
+  "{\"action\": \"wait_until\", \"question\": \"<yes/no question, yes when the wait is over — e.g. Is the battle result shown?>\", \"seconds\": 180, \"why\": \"<short — e.g. the battle plays by itself>\"}\n" ++
   "{\"action\": \"assert\", \"question\": \"<a yes/no question about what is visible now that checks the goal>\", \"expect\": \"yes\", \"why\": \"<short>\"}\n" ++
   "{\"action\": \"done\", \"why\": \"<what was verified>\"}   (only after an assert proved the goal, or when told the goal looks achieved)\n" ++
   "{\"action\": \"fail\", \"reason\": \"<why the goal cannot be done on this page>\"}\n" ++
@@ -380,7 +388,8 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
       -- anything, means the goal was only that check
       -- (a click / key may well repeat: the same label on the next
       -- screen, e.g. Skip and then Skip in its confirmation dialog)
-      if acts.length == 1 && !acts.any mustChange && steps.getLast?.map (·.act |> describe) == some text then
+      let isWait := acts.any fun a => match a with | .wait _ | .waitUntil .. => true | _ => false
+      if acts.length == 1 && !acts.any mustChange && !isWait && steps.getLast?.map (·.act |> describe) == some text then
         if !acted && acts.all confirms && checkedThisGoal then
           let (_, now) ← c.shot idx "judge"
           let (whole, left) ← try goalReached c now goal (steps.drop worked.length) catch _ => pure (true, "")

@@ -274,7 +274,9 @@ repeat until "Does the screen say All stages cleared?" max 4:
 end
 ```
 
-Edit it and press **Run plan**. Each sub-goal is explored in turn and
+Text that is already a plan (several lines, or a `repeat until` block)
+is taken as written instead of being sent to the model. Edit it and
+press **Run plan**. Each sub-goal is explored in turn and
 its steps are recorded under it. A loop becomes `repeat` …
 `end_repeat` steps in the script (`{"act": "repeat", "until": "…",
 "max": 4}`, `{"act": "end_repeat"}`):
@@ -328,6 +330,9 @@ vision_qa test.json --target browser --url https://example.com/game --profile ~/
   screens never go quiet); the model can also `wait` N seconds, and the
   wait is recorded. On a screen that animates by itself a click is
   judged by the area around it instead of the whole screen.
+- For something that plays by itself for a while (a battle), the model
+  can propose `wait_until` with a yes/no question (up to 600 s); waits
+  may repeat.
 - `click_described` takes up to 3 looks (600 ms apart) to find its
   target and a yes-assertion up to 3 looks to pass, so a blinking
   "TAP TO START" or a screen mid-transition doesn't fail a run; a
