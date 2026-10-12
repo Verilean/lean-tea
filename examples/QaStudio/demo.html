@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Acme Notes</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, 'Segoe UI', sans-serif; background: #f4f6fb; color: #1f2937; }
+    header { background: #4f46e5; color: #fff; padding: 14px 28px; font-size: 20px; font-weight: 700; }
+    main { max-width: 520px; margin: 40px auto; background: #fff; border-radius: 12px; padding: 28px 32px;
+           box-shadow: 0 6px 24px rgba(31, 41, 55, .08); }
+    h2 { margin-top: 0; }
+    label { display: block; font-size: 14px; color: #4b5563; margin: 14px 0 6px; }
+    input { width: 100%; box-sizing: border-box; font-size: 16px; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; }
+    input:focus { outline: 2px solid #818cf8; border-color: #818cf8; }
+    button { margin-top: 18px; font-size: 16px; padding: 10px 22px; border: 0; border-radius: 8px; cursor: pointer; }
+    .primary { background: #4f46e5; color: #fff; }
+    .ghost { background: #e5e7eb; color: #111827; }
+    .error { color: #b91c1c; margin-top: 12px; min-height: 20px; }
+    .row { display: flex; gap: 10px; align-items: flex-end; }
+    .row input { flex: 1; }
+    .row button { margin-top: 0; }
+    ul { list-style: none; padding: 0; margin: 18px 0 0; }
+    li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #eef2f7; font-size: 16px; }
+    li.done span { text-decoration: line-through; color: #9ca3af; }
+    .count { margin-top: 14px; color: #6b7280; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <header>Acme Notes</header>
+  <main>
+    <section id="login">
+      <h2>Sign in</h2>
+      <label for="user">Username</label>
+      <input id="user" autocomplete="off">
+      <label for="pass">Password</label>
+      <input id="pass" type="password">
+      <button class="primary" id="signin">Sign in</button>
+      <div class="error" id="err"></div>
+      <p style="color:#6b7280;font-size:13px">Any username works; the password is <b>secret</b>.</p>
+    </section>
+    <section id="app" class="hidden">
+      <h2 id="welcome"></h2>
+      <div class="row">
+        <div style="flex:1"><label for="task">New task</label><input id="task" autocomplete="off"></div>
+        <button class="primary" id="add">Add</button>
+      </div>
+      <ul id="list"></ul>
+      <div class="count" id="count">No tasks yet</div>
+      <button class="ghost" id="logout">Sign out</button>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const tasks = [];
+    function render() {
+      $('list').innerHTML = '';
+      tasks.forEach((t, i) => {
+        const li = document.createElement('li');
+        if (t.done) li.className = 'done';
+        li.innerHTML = '<input type="checkbox" style="width:auto" ' + (t.done ? 'checked' : '') + '><span></span>';
+        li.querySelector('span').textContent = t.text;
+        li.querySelector('input').onchange = () => { t.done = !t.done; render(); };
+        $('list').appendChild(li);
+      });
+      const open = tasks.filter(t => !t.done).length;
+      $('count').textContent = tasks.length === 0 ? 'No tasks yet' : open + ' of ' + tasks.length + ' tasks open';
+    }
+    function signIn() {
+      if ($('pass').value !== 'secret') { $('err').textContent = 'Wrong password'; return; }
+      $('err').textContent = '';
+      $('welcome').textContent = 'Welcome, ' + ($('user').value || 'guest') + '!';
+      $('login').classList.add('hidden');
+      $('app').classList.remove('hidden');
+      $('task').focus();
+    }
+    function add() {
+      const v = $('task').value.trim();
+      if (!v) return;
+      tasks.push({ text: v, done: false });
+      $('task').value = '';
+      render();
+    }
+    $('signin').onclick = signIn;
+    $('pass').onkeydown = (e) => { if (e.key === 'Enter') signIn(); };
+    $('add').onclick = add;
+    $('task').onkeydown = (e) => { if (e.key === 'Enter') add(); };
+    $('logout').onclick = () => location.reload();
+  </script>
+</body>
+</html>

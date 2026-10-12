@@ -1,0 +1,296 @@
+import LeanTea.Vision.Qa
+
+/-! # LeanTea.Vision.Explore — let the VLM work out a UI test by trial and error
+
+Give it a goal in plain words ("log in as alice and check the welcome
+message"). Each turn the model sees the current screenshot, the goal,
+the user's notes, the steps that worked so far and the error from the
+last attempt, and proposes ONE next step as JSON. The step runs through
+the same kernel as `vision_qa` (`LeanTea.Vision.Qa.runStep`):
+
+  * it worked → it's appended to the recorded script
+  * it failed (target not found, assertion false, a click that changed
+    nothing on screen) → it's dropped and the error goes back to the
+    model, which tries something else
+
+A goal is reached as soon as an assertion that expects "yes" passes
+(small models rarely say `done` on their own and keep re-checking);
+`done` before that is refused — a test must check something. The turn
+also ends when the model says `fail`, runs out of turns / failures, or
+is stopped. What's left is a
+deterministic `Script`: replay it with `vision_qa`, no exploring.
+
+The proposal format is deliberately small so a 4B model can follow it:
+
+```json
+{"action": "click",  "target": "the blue Log in button", "why": "…"}
+{"action": "type",   "text": "alice"}
+{"action": "key",    "key": "Enter"}
+{"action": "assert", "question": "Does the page say Welcome, alice?", "expect": "yes"}
+{"action": "done"}
+{"action": "fail",   "reason": "…"}
+``` -/
+
+namespace LeanTea.Vision.Explore
+
+open Lean (Json)
+open LeanTea.Agent.Script
+open LeanTea.Vision
+open LeanTea.Vision.Qa
+open LeanTea.Llm.Openai (chat userTextAndImage)
+
+/-! ## Proposals -/
+
+inductive Proposal where
+  | step (act : Action) (why : String)
+  /-- Click a field, then type into it (recorded as those two steps). -/
+  | fill (target text : String) (why : String)
+  | done (summary : String)
+  | fail (reason : String)
+  deriving Inhabited
+
+/-- The first `{…}` object in a reply (models wrap JSON in prose or fences). -/
+def extractObject (s : String) : Option String := do
+  let cs := s.toList
+  let start ← cs.findIdx? (· == '{')
+  let mut depth := 0
+  let mut inStr := false
+  let mut esc := false
+  for (c, k) in (cs.drop start).zipIdx do
+    if inStr then
+      if esc then esc := false
+      else if c == '\\' then esc := true
+      else if c == '"' then inStr := false
+    else if c == '"' then inStr := true
+    else if c == '{' then depth := depth + 1
+    else if c == '}' then
+      depth := depth - 1
+      if depth == 0 then return String.ofList ((cs.drop start).take (k + 1))
+  none
+
+private def str (j : Json) (k : String) : String :=
+  (j.getObjValD k).getStr?.toOption.getD ""
+
+/-- Parse the model's reply into a proposal. -/
+def parseProposal (reply : String) : Except String Proposal := do
+  let some obj := extractObject reply | throw s!"no JSON object in the reply: {reply.take 200}"
+  let j ← Json.parse obj
+  let why := str j "why"
+  match (str j "action").toLower with
+  | "click" =>
+    let t := str j "target"
+    if t.isEmpty then throw "click needs a \"target\"" else return .step (.clickDescribed t) why
+  | "type" =>
+    let t := str j "text"
+    if t.isEmpty then throw "type needs a non-empty \"text\"" else return .step (.typeText t) why
+  | "fill" =>
+    let (t, x) := (str j "target", str j "text")
+    if t.isEmpty || x.isEmpty then throw "fill needs a \"target\" field and a \"text\""
+    else return .fill t x why
+  | "key" =>
+    let k := str j "key"
+    return .step (.key (if k.isEmpty then "Enter" else k)) why
+  | "assert" =>
+    let q := str j "question"
+    if q.isEmpty then throw "assert needs a \"question\"" else
+    let want := (str j "expect").toLower != "no"
+    return .step (.assertVisual q want) why
+  | "assert_text" => return .step (.assertText (str j "target") (str j "equals")) why
+  | "wait" => return .step (.wait 1000) why
+  | "done" => return .done (if why.isEmpty then str j "summary" else why)
+  | "fail" => return .fail (str j "reason")
+  | a => throw s!"unknown action \"{a}\" (use click / type / key / assert / done / fail)"
+
+/-- One line describing a step, as shown to the model and in the chat. -/
+def describe : Action → String
+  | .clickDescribed t _ => s!"click \"{t}\""
+  | .clickXy x y => s!"click at ({x}, {y})"
+  | .typeText t => s!"type \"{t}\""
+  | .key k => s!"press {k}"
+  | .assertVisual q w => s!"assert \"{q}\" is {if w then "yes" else "no"}"
+  | .assertText t e => s!"assert \"{t}\" reads \"{e}\""
+  | .assertPixel x y rgb _ => s!"assert pixel ({x}, {y}) is {rgb}"
+  | .wait ms => s!"wait {ms} ms"
+  | _ => "other step"
+
+/-- The per-turn prompt. -/
+def promptFor (goal : String) (notes : List String) (worked : List Action)
+    (lastError? : Option String) (turnsLeft : Nat) (outline : String := "") : String :=
+  let done := if worked.isEmpty then "(none yet)" else
+    String.intercalate "\n" (worked.zipIdx.map fun (a, k) => s!"{k + 1}. {describe a} — ok")
+  let noteText := if notes.isEmpty then "" else
+    "Notes from the user:\n" ++ String.intercalate "\n" (notes.map ("- " ++ ·)) ++ "\n"
+  let err := match lastError? with
+    | some e => s!"Your last step FAILED: {e}\nTry a different step (another description, another element, or another approach).\n"
+    | none => ""
+  let outlineText := if outline.isEmpty then "" else
+    s!"Elements on the page now (use their visible text to describe targets):\n{outline}\n"
+  s!"You are testing the web page in the screenshot.\nGoal: {goal}\n{noteText}" ++
+  s!"Steps that already worked:\n{done}\n{outlineText}{err}" ++
+  s!"You have {turnsLeft} steps left. Choose the ONE next step. Reply with ONLY a JSON object, one of:\n" ++
+  "{\"action\": \"fill\", \"target\": \"<the input field, e.g. the Username field>\", \"text\": \"<text to enter>\", \"why\": \"<short>\"}\n" ++
+  "{\"action\": \"click\", \"target\": \"<the element to click, described by its visible text, colour and position>\", \"why\": \"<short>\"}\n" ++
+  "{\"action\": \"key\", \"key\": \"Enter\", \"why\": \"<short>\"}\n" ++
+  "{\"action\": \"assert\", \"question\": \"<a yes/no question about what is visible now that checks the goal>\", \"expect\": \"yes\", \"why\": \"<short>\"}\n" ++
+  "{\"action\": \"done\", \"why\": \"<what was verified>\"}   (only after an assert proved the goal)\n" ++
+  "{\"action\": \"fail\", \"reason\": \"<why the goal cannot be done on this page>\"}\n" ++
+  "Fill every field the goal mentions before submitting. Check the goal with an assert that expects yes."
+
+/-! ## The loop -/
+
+/-- What the explorer reports while it works (the UI renders these). -/
+inductive Event where
+  | thinking (text : String)
+  | proposal (text : String) (why : String)
+  | stepOk (text : String) (observed : String) (shot? : Option String) (point? : Option (Nat × Nat))
+  | stepFailed (text : String) (error : String) (shot? : Option String) (point? : Option (Nat × Nat))
+  | note (text : String)
+  | finished (ok : Bool) (summary : String)
+  deriving Inhabited
+
+structure Config where
+  maxTurns    : Nat := 16
+  maxFailures : Nat := 6
+  maxTokens   : Nat := 300
+  /-- A click / typing / key whose before and after screenshots differ
+      in fewer sampled pixels than this "changed nothing" and fails. -/
+  minChangedPixels : Nat := 4
+
+/-- Assertions that can confirm a goal (a "no" can't). -/
+private def confirms : Action → Bool
+  | .assertVisual _ want => want
+  | .assertText .. | .assertPixel .. => true
+  | _ => false
+
+/-- Steps that must visibly change the page to count. -/
+private def mustChange : Action → Bool
+  | .clickDescribed .. | .clickXy .. | .typeText .. | .key .. => true
+  | _ => false
+
+/-- Ask the model for the next step (temperature rises after failures so
+    a retry isn't the same answer again). -/
+def propose (c : Ctx) (img : Image) (prompt : String) (temperature : Float) (maxTokens : Nat) : IO String := do
+  let res ← chat c.vlm.cfg {
+    model := c.vlm.model,
+    messages := [userTextAndImage prompt (← img.dataUrl)],
+    temperature := some temperature,
+    maxTokens := some maxTokens }
+  return stripThink res.content
+
+/-- Run one action, insisting that clicks / typing / keys change the
+    screen. `.ok (observed, evidence, point)` or `.error (msg, evidence, point)`. -/
+def attempt (c : Ctx) (cfg : Config) (idx : Nat) (act : Action) (why : String) (requireChange := true) :
+    IO (Except (String × Option String × Option (Nat × Nat)) (String × Option String × Option (Nat × Nat))) := do
+  let (_, before) ← c.shot idx "pre"
+  c.lastPoint.set none
+  let r ← runStep c idx { act, note := why }
+  let point ← c.lastPoint.get
+  match r.error with
+  | some e => return .error (e, r.evidencePath, point)
+  | none =>
+    if requireChange && mustChange act then
+      if let some after := r.evidencePath then
+        let changed := changedPixels before (← Image.load after)
+        if changed < cfg.minChangedPixels then
+          let what := match act with
+            | .typeText _ => "typing changed nothing on the screen — the field probably doesn't have focus (use fill)"
+            | .key k => s!"pressing {k} changed nothing on the screen"
+            | _ => s!"the click at {point.map (fun (x, y) => s!"({x}, {y})") |>.getD "?"} changed nothing on the screen — probably the wrong element"
+          return .error (what, r.evidencePath, point)
+    return .ok (r.observed.getD "", r.evidencePath, point)
+
+/-- Explore toward `goal`, starting from the steps that already worked
+    (`worked`, from earlier goals in the same session). Returns the
+    steps that worked — the recorded script so far — and whether the
+    goal was reached. `stop` is polled between turns. -/
+def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (worked : List Step)
+    (emit : Event → IO Unit) (stop : IO Bool) (outline : IO String := pure "") : IO (List Step × Bool) := do
+  let mut steps := worked
+  let mut lastError : Option String := none
+  let mut failures := 0
+  let mut tried : List (String × String) := []
+  let mut checkedThisGoal := false
+  let mut idx := worked.length
+  for turn in [0:cfg.maxTurns] do
+    if ← stop then
+      emit (.finished false "stopped")
+      return (steps, false)
+    let (_, img) ← c.shot idx "look"
+    emit (.thinking s!"turn {turn + 1}: looking at the page…")
+    let pageOutline ← try outline catch _ => pure ""
+    let prompt := promptFor goal notes (steps.map (·.act)) lastError (cfg.maxTurns - turn) pageOutline
+    let reply ← try propose c img prompt (if failures == 0 then 0.0 else 0.5) cfg.maxTokens
+      catch e => do
+        emit (.finished false s!"model call failed: {e}")
+        return (steps, false)
+    match parseProposal reply with
+    | .error e =>
+      failures := failures + 1
+      lastError := some s!"your reply was not a valid step ({e}). Reply with one JSON object."
+      emit (.note s!"unreadable reply: {e}")
+    | .ok (.fail reason) =>
+      emit (.finished false s!"the model gave up: {reason}")
+      return (steps, false)
+    | .ok (.done summary) =>
+      if checkedThisGoal then
+        emit (.finished true (if summary.isEmpty then "goal verified" else summary))
+        return (steps, true)
+      failures := failures + 1
+      lastError := some "you said done, but no assert has verified the goal yet. Add an assert step that checks the goal on screen."
+      emit (.note "done refused: no passing assert yet")
+    | .ok proposal =>
+      -- a `fill` is a click on the field followed by typing into it
+      let (acts, why) := match proposal with
+        | .fill t x why => ([Action.clickDescribed t, .typeText x], why)
+        | .step act why => ([act], why)
+        | _ => ([], "")
+      let text := match proposal with
+        | .fill t x _ => s!"fill \"{t}\" with \"{x}\""
+        | _ => String.intercalate ", then " (acts.map describe)
+      emit (.proposal text why)
+      -- the same step again right after it worked adds nothing
+      if acts.length == 1 && steps.getLast?.map (·.act |> describe) == some text then
+        failures := failures + 1
+        lastError := some s!"`{text}` was just done; choose the next step."
+        emit (.note s!"skipped a repeat of `{text}`")
+        continue
+      match tried.find? (·.1 == text) with
+      | some (_, prev) =>
+        failures := failures + 1
+        lastError := some s!"you already tried `{text}`; it failed with: {prev}. Choose something else."
+        emit (.stepFailed text "already tried and failed" none none)
+      | none =>
+        let mut done : List Step := []
+        let mut problem : Option String := none
+        for (act, k) in acts.zipIdx do
+          if problem.isSome then break
+          -- in a fill, the click may land on a field that already has focus
+          -- (nothing visible changes); the typing that follows must show
+          let requireChange := !(acts.length > 1 && k == 0)
+          match ← attempt c cfg (idx + done.length) act why requireChange with
+          | .ok (obs, ev, pt) =>
+            done := done ++ [{ act, note := why }]
+            emit (.stepOk (describe act) obs ev pt)
+          | .error (e, ev, pt) =>
+            problem := some e
+            emit (.stepFailed (describe act) e ev pt)
+        match problem with
+        | none =>
+          steps := steps ++ done
+          idx := idx + done.length
+          lastError := none
+          failures := 0
+          if acts.any confirms then
+            emit (.finished true s!"goal verified: {text}")
+            return (steps, true)
+        | some err =>
+          failures := failures + 1
+          tried := (text, err) :: tried
+          lastError := some err
+    if failures ≥ cfg.maxFailures then
+      emit (.finished false s!"stopped after {failures} failed attempts in a row")
+      return (steps, false)
+  emit (.finished false s!"out of turns ({cfg.maxTurns})")
+  return (steps, false)
+
+end LeanTea.Vision.Explore

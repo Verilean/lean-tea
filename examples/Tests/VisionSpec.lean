@@ -104,6 +104,47 @@ def ansiGroup : LSpec :=
     it "xterm cube corner" (xterm256 231 == "rgb(255,255,255)")
   ]
 
+/-! ## Explore (qa_studio's trial-and-error agent): proposals and change detection -/
+
+open LeanTea.Agent.Script in
+def proposalIs (reply : String) (f : Explore.Proposal → Bool) : Bool :=
+  match Explore.parseProposal reply with
+  | .ok p => f p
+  | .error _ => false
+
+def proposalErr (reply : String) : Bool :=
+  match Explore.parseProposal reply with
+  | .ok _ => false
+  | .error _ => true
+
+open LeanTea.Agent.Script in
+def exploreGroup : LSpec :=
+  group "Explore proposals" [
+    it "JSON object pulled out of prose / fences"
+      (Explore.extractObject "Sure!\n```json\n{\"action\": \"key\", \"key\": \"Enter\"}\n```" ==
+        some "{\"action\": \"key\", \"key\": \"Enter\"}"),
+    it "braces inside strings don't end the object"
+      (Explore.extractObject "{\"action\":\"type\",\"text\":\"a}b\"} tail" == some "{\"action\":\"type\",\"text\":\"a}b\"}"),
+    it "click → click_described"
+      (proposalIs "{\"action\":\"click\",\"target\":\"the Add button\",\"why\":\"submit\"}"
+        fun | .step (.clickDescribed "the Add button" none) "submit" => true | _ => false),
+    it "fill → target + text"
+      (proposalIs "{\"action\":\"fill\",\"target\":\"the Username field\",\"text\":\"alice\"}"
+        fun | .fill "the Username field" "alice" _ => true | _ => false),
+    it "assert expect no → want false"
+      (proposalIs "{\"action\":\"assert\",\"question\":\"Is there an error?\",\"expect\":\"no\"}"
+        fun | .step (.assertVisual "Is there an error?" false) _ => true | _ => false),
+    it "done / fail" (proposalIs "{\"action\":\"done\",\"why\":\"ok\"}" (fun | .done "ok" => true | _ => false) &&
+      proposalIs "{\"action\":\"fail\",\"reason\":\"no form\"}" (fun | .fail "no form" => true | _ => false)),
+    it "empty type text, missing target, unknown action are rejected"
+      (proposalErr "{\"action\":\"type\",\"text\":\"\"}" && proposalErr "{\"action\":\"click\"}" &&
+       proposalErr "{\"action\":\"scroll\"}" && proposalErr "no json here"),
+    it "prompt carries goal, notes, history, the last error and the page outline"
+      (let p := Explore.promptFor "sign in" ["be quick"] [.typeText "alice"] (some "typing changed nothing") 5 "button \"Sign in\"";
+       [ "Goal: sign in", "- be quick", "1. type \"alice\" — ok", "FAILED: typing changed nothing",
+         "button \"Sign in\"", "5 steps left" ].all (fun n => (p.splitOn n).length > 1))
+  ]
+
 def run : IO LSpec := do
   -- Image ops (C / stb)
   let png ← testImage.encodePng
@@ -136,7 +177,16 @@ def run : IO LSpec := do
     it "replayed latency" (r.ms == 7)
   ]
   IO.FS.removeDirAll dir
-  return group "LeanTea.Vision" [parseGroup, geometryGroup, yesNoGroup, scriptGroup, ansiGroup, imgGroup, replay]
+  -- change detection: one differing pixel on the sampling grid counts
+  let same := Qa.changedPixels testImage testImage
+  let poked : Image := ← Image.decode (← (testImage.crop 0 0 4 2).encodePng)
+  let changeGroup := group "Change detection" [
+    it "identical screenshots: 0 changed pixels" (same == 0),
+    it "different sizes count as changed" (Qa.changedPixels testImage (testImage.crop 0 0 2 2) > 0),
+    it "a re-encoded copy is still identical" (Qa.changedPixels testImage poked == 0)
+  ]
+  return group "LeanTea.Vision" [parseGroup, geometryGroup, yesNoGroup, scriptGroup, ansiGroup, imgGroup, replay,
+                                 exploreGroup, changeGroup]
 
 def main : IO Unit := do
   let code ← lspecIO (← run)

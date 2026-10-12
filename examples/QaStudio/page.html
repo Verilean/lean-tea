@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QA Studio</title>
+  <style>
+    :root {
+      --bg: #f5f6f8; --panel: #ffffff; --ink: #1d2330; --muted: #6b7280; --line: #e3e6eb;
+      --acc: #2563eb; --ok: #15803d; --bad: #b42318; --warn: #b45309; --bubble: #eef2ff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #111318; --panel: #181b22; --ink: #e6e8ee; --muted: #9aa1ad; --line: #2b3038;
+        --acc: #7aa2ff; --ok: #4ade80; --bad: #f87171; --warn: #fbbf24; --bubble: #1f2740;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+                 font: 14px/1.5 -apple-system, 'Segoe UI', 'Hiragino Sans', sans-serif; }
+    body { display: flex; flex-direction: column; }
+    header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line);
+             background: var(--panel); flex-wrap: wrap; }
+    header h1 { font-size: 16px; margin: 0 8px 0 0; }
+    header .model { color: var(--muted); font-size: 12px; }
+    #url { flex: 1; min-width: 220px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+           background: var(--bg); color: var(--ink); font: inherit; }
+    button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+             background: var(--panel); color: var(--ink); cursor: pointer; }
+    button.primary { background: var(--acc); border-color: var(--acc); color: #fff; }
+    button:disabled { opacity: .5; cursor: default; }
+    .layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr); min-height: 0; }
+    .page { padding: 14px; overflow: auto; }
+    .screen { position: relative; display: inline-block; max-width: 100%; border: 1px solid var(--line);
+              border-radius: 8px; overflow: hidden; background: #fff; }
+    .screen img { display: block; max-width: 100%; height: auto; }
+    .marker { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%;
+              border: 3px solid #f43f5e; box-shadow: 0 0 0 3px rgba(255,255,255,.8); pointer-events: none; }
+    .status { margin-top: 8px; color: var(--muted); font-size: 12px; }
+    aside { display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); min-height: 0; }
+    #chat { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .msg { padding: 8px 10px; border-radius: 8px; max-width: 100%; word-wrap: break-word; }
+    .user { align-self: flex-end; background: var(--acc); color: #fff; max-width: 85%; }
+    .agent { background: var(--bubble); }
+    .thinking { color: var(--muted); font-size: 12px; padding: 2px 4px; }
+    .ok { border-left: 3px solid var(--ok); }
+    .fail { border-left: 3px solid var(--bad); }
+    .note { color: var(--warn); font-size: 12px; padding: 2px 4px; }
+    .why { color: var(--muted); font-size: 12px; }
+    .err { color: var(--bad); font-size: 12px; }
+    .final { font-weight: 600; }
+    .msg img { display: block; max-width: 110px; margin-top: 6px; border-radius: 4px; border: 1px solid var(--line); cursor: zoom-in; }
+    .composer { border-top: 1px solid var(--line); padding: 10px; display: flex; gap: 8px; }
+    .composer textarea { flex: 1; resize: none; height: 58px; padding: 8px; border: 1px solid var(--line); border-radius: 6px;
+                         background: var(--bg); color: var(--ink); font: inherit; }
+    .composer .btns { display: flex; flex-direction: column; gap: 6px; }
+    details { border-top: 1px solid var(--line); padding: 8px 12px; max-height: 40%; overflow: auto; }
+    summary { cursor: pointer; font-weight: 600; }
+    ol { margin: 6px 0; padding-left: 22px; }
+    ol li { margin: 2px 0; }
+    .rowbtns { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; align-items: center; }
+    #name { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; width: 180px; }
+    pre { background: var(--bg); padding: 8px; border-radius: 6px; overflow: auto; font-size: 12px; }
+    .badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); }
+    .badge.ok { color: var(--ok); border-color: var(--ok); }
+    .badge.bad { color: var(--bad); border-color: var(--bad); }
+    @media (max-width: 860px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { border-left: 0; border-top: 1px solid var(--line); min-height: 60vh; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>QA Studio</h1>
+    <span class="model">model: {{model}}</span>
+    <input id="url" value="{{url}}" aria-label="Page URL">
+    <button id="go">Open</button>
+    <button id="reset" title="Reload the start page and clear the recorded steps">Reset</button>
+  </header>
+  <div class="layout">
+    <section class="page">
+      <div class="screen" id="screen"><img id="live" alt="page under test"><div class="marker" id="marker" hidden></div></div>
+      <div class="status" id="status">loading…</div>
+    </section>
+    <aside>
+      <div id="chat">
+        <div class="msg agent">Tell me what to test on this page, in plain words — e.g.
+          <i>"sign in as alice with password secret and check the welcome message"</i>.
+          I'll try steps one at a time, learn from failures, and record the ones that work as a replayable test.</div>
+      </div>
+      <details id="testbox" open>
+        <summary>Recorded test <span id="count">(0 steps)</span> <span id="verified"></span></summary>
+        <ol id="steps"></ol>
+        <div class="rowbtns">
+          <button id="replay" title="Reload the start page and run the recorded steps without the model's planning">Replay</button>
+          <button id="undo" title="Drop the last recorded step">Undo last</button>
+          <input id="name" placeholder="test name, e.g. notes.login">
+          <button id="save" class="primary">Save test</button>
+        </div>
+        <div id="saved"></div>
+        <details><summary>Script JSON</summary><pre id="json"></pre></details>
+      </details>
+      <div class="composer">
+        <textarea id="input" placeholder="What should be tested?"></textarea>
+        <div class="btns">
+          <button id="send" class="primary">Send</button>
+          <button id="stop" disabled>Stop</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let since = 0, busy = false, shotW = 0, lastLive = '';
+
+    async function api(path, body) {
+      const r = await fetch(path, { method: body === undefined ? 'GET' : 'POST',
+        headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+      const t = await r.text();
+      try { return JSON.parse(t); } catch { return { error: t }; }
+    }
+    function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+    function scrollChat() { const c = $('chat'); c.scrollTop = c.scrollHeight; }
+
+    function showLive(src, point) {
+      if (src && src !== lastLive) { $('live').src = src; lastLive = src; }
+      const m = $('marker');
+      if (point) {
+        const img = $('live');
+        const place = () => {
+          const k = img.clientWidth / (img.naturalWidth || 1);
+          m.style.left = (point[0] * k) + 'px'; m.style.top = (point[1] * k) + 'px'; m.hidden = false;
+        };
+        if (img.complete) place(); else img.onload = place;
+      } else m.hidden = true;
+    }
+
+    function addEvent(ev) {
+      const chat = $('chat');
+      let node;
+      switch (ev.kind) {
+        case 'user': node = el('div', 'msg user', ev.text); break;
+        case 'thinking': node = el('div', 'thinking', '… ' + ev.text); break;
+        case 'proposal': node = el('div', 'msg agent');
+          node.append(el('div', '', 'Trying: ' + ev.text)); if (ev.why) node.append(el('div', 'why', ev.why)); break;
+        case 'stepOk': case 'stepFailed':
+          node = el('div', 'msg agent ' + (ev.kind === 'stepOk' ? 'ok' : 'fail'));
+          node.append(el('div', '', (ev.kind === 'stepOk' ? '✓ ' : '✗ ') + ev.text));
+          if (ev.observed) node.append(el('div', 'why', ev.observed));
+          if (ev.error) node.append(el('div', 'err', ev.error));
+          if (ev.shot) { const im = el('img'); im.src = ev.shot; im.onclick = () => showLive(ev.shot, ev.point); node.append(im); }
+          if (ev.shot) showLive(ev.shot, ev.point);
+          break;
+        case 'note': node = el('div', 'note', ev.text); break;
+        case 'finished': node = el('div', 'msg agent final ' + (ev.ok ? 'ok' : 'fail'), (ev.ok ? '✓ ' : '✗ ') + ev.text); break;
+        default: node = el('div', 'msg agent', ev.text || '');
+      }
+      chat.append(node);
+    }
+
+    function renderState(s) {
+      busy = s.busy;
+      $('send').disabled = busy; $('stop').disabled = !busy;
+      ['replay', 'undo', 'save', 'reset', 'go'].forEach(id => $(id).disabled = busy);
+      $('status').textContent = (busy ? '● working — ' : '') + s.url;
+      const ol = $('steps'); ol.innerHTML = '';
+      s.steps.forEach(t => ol.append(el('li', '', t)));
+      $('count').textContent = '(' + s.steps.length + ' step' + (s.steps.length === 1 ? '' : 's') + ')';
+      $('json').textContent = JSON.stringify(s.script, null, 2);
+      const v = $('verified');
+      v.className = 'badge' + (s.verified === true ? ' ok' : s.verified === false ? ' bad' : '');
+      v.textContent = s.verified === true ? 'replay passed' : s.verified === false ? 'replay failed' : '';
+      v.hidden = s.verified === null;
+      if (s.saved) $('saved').innerHTML = 'Saved <code></code><br>Run it: <pre></pre>', $('saved').querySelector('code').textContent = s.saved.path,
+                     $('saved').querySelector('pre').textContent = s.saved.command;
+    }
+
+    async function poll() {
+      try {
+        const s = await api('/api/state?since=' + since);
+        for (const ev of s.events) { addEvent(ev); since = ev.id + 1; }
+        if (s.events.length) scrollChat();
+        renderState(s);
+        if (!s.busy && !s.events.some(e => e.shot)) showLive('/live.png?t=' + Date.now(), null);
+      } catch (e) { $('status').textContent = 'server unreachable'; }
+      setTimeout(poll, busy ? 700 : 2500);
+    }
+
+    async function send() {
+      const text = $('input').value.trim();
+      if (!text || busy) return;
+      $('input').value = '';
+      const r = await api('/api/chat', { text });
+      if (r.error) alertLine(r.error);
+      setTimeout(poll, 100);
+    }
+    function alertLine(t) { $('chat').append(el('div', 'note', t)); scrollChat(); }
+
+    $('send').onclick = send;
+    $('input').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
+    $('stop').onclick = () => api('/api/stop', {});
+    $('go').onclick = async () => { const r = await api('/api/navigate', { url: $('url').value }); if (r.error) alertLine(r.error); lastLive = ''; };
+    $('reset').onclick = async () => { await api('/api/reset', {}); lastLive = ''; };
+    $('replay').onclick = async () => { const r = await api('/api/replay', {}); if (r.error) alertLine(r.error); };
+    $('undo').onclick = () => api('/api/undo', {});
+    $('save').onclick = async () => {
+      const r = await api('/api/save', { name: $('name').value });
+      if (r.error) alertLine(r.error);
+    };
+    $('live').onerror = () => {};
+    poll();
+  </script>
+</body>
+</html>

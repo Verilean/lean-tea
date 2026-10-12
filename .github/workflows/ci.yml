@@ -88,7 +88,7 @@ jobs:
       - name: Build CI test binaries
         env:
           LEANTEA_POSTGRES: "1"
-        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve valkey_smoke s3_smoke postgres_smoke webdav_serve webdav_smoke leanjs_spec vision_spec s3_serve s3_serve_spec site_spec gen_site tui_spec tui_mouse breezehollow breezehollow_spec
+        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve valkey_smoke s3_smoke postgres_smoke webdav_serve webdav_smoke leanjs_spec vision_spec s3_serve s3_serve_spec site_spec gen_site tui_spec tui_mouse breezehollow breezehollow_spec qa_studio
 
       # ──────────────────────────────────────────────────────────────
       # Self-contained smoke binaries. Each one is an LSpec-shaped
@@ -136,7 +136,7 @@ jobs:
       - name: LeanJs spec runner (parser + check + codegen + eval cross-check + ergonomics — error positions, checks, record update, patterns)
         run: ./.lake/build/bin/leanjs_spec
 
-      - name: Vision QA offline (coord parsing + frames + stb image FFI + ANSI render + cache replay, ~39 LSpec assertions)
+      - name: Vision QA offline (coord parsing + frames + stb image FFI + ANSI render + cache replay, ~50 LSpec assertions)
         run: ./.lake/build/bin/vision_spec
 
       - name: Static site generator (LeanTea.Site fixture build — layouts, nav, listings, links, assets, sitemap, 22 LSpec assertions)
