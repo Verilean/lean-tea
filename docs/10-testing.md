@@ -324,7 +324,13 @@ battle starts" clicked the Skip in the corner, then "the Skip button in
 the dialog", and verified the battle. Before, the second click was
 refused as a repeat of the first, so a skip like that never got past the
 dialog. A click may now repeat, and a dialog's button
-is described as being in the dialog.
+is described as being in the dialog. Asked to locate a label that shows
+twice (the button behind a dialog and the same label inside it), Qwen-VL
+lists both boxes; the first one, which was used before, was the one
+behind, so the click landed outside the dialog and closed it like
+Cancel. `locate` now takes the brightest of several boxes, since a
+dialog dims what is behind it. On such a screenshot the click went from
+the dimmed corner button to the dialog's button, 3 times out of 3.
 With `qwen/qwen3-vl-4b`: logging in through the portal by chat worked;
 after a restart the profile skipped the login; "start the game and open
 the quest screen, check Quest Select is shown" took 3 proposals / 11 s;

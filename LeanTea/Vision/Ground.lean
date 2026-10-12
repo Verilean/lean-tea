@@ -140,6 +140,16 @@ def parseCoords (answer : String) : Option RawCoords :=
       | none => tryKeys rest
   tryKeys keyed
 
+/-- Every `bbox_2d` box in an answer. Asked for an element whose label
+    appears twice (a button and the same button in a dialog over it),
+    Qwen-VL lists both: `[{"bbox_2d": […]}, {"bbox_2d": […]}]`. -/
+def parseBoxes (answer : String) : List RawCoords :=
+  let parts := ((stripThink answer).splitOn "bbox_2d").drop 1
+  parts.filterMap fun part =>
+    match (scanNumbers part.toList).take 4 with
+    | [a, b, c, d] => some (.box a b c d)
+    | _ => none
+
 /-- Apply a frame. `w`/`h` are the dimensions of the image the model saw. -/
 def RawCoords.toRect (r : RawCoords) (frame : CoordFrame) (w h : Nat) : Rect :=
   let W := w.toFloat
@@ -218,8 +228,32 @@ def locateUrl (v : Vlm) (imgUrl : String) (w h : Nat) (target : String) : IO Loc
   let raw? := parseCoords a.text
   return { rect? := raw?.map (·.toRect v.frame w h), raw?, answer := a.text, ms := a.ms }
 
+/-- Mean brightness (0–255) of `r`, from a grid of up to 16×16 samples. -/
+def meanLuma (img : Image) (r : Rect) : Float := Id.run do
+  let n := 16
+  let mut sum := 0.0
+  let mut count := 0.0
+  for i in [0:n] do
+    for j in [0:n] do
+      let x := r.x + r.w * (i.toFloat + 0.5) / n.toFloat
+      let y := r.y + r.h * (j.toFloat + 0.5) / n.toFloat
+      if x ≥ 0 && y ≥ 0 then
+        let (pr, pg, pb, _) := img.pixel x.toUInt64.toNat y.toUInt64.toNat
+        sum := sum + 0.299 * pr.toNat.toFloat + 0.587 * pg.toNat.toFloat + 0.114 * pb.toNat.toFloat
+        count := count + 1
+  return if count == 0 then 0 else sum / count
+
+/-- Locate `target`. When the model lists several matches, take the
+    brightest: a dialog dims what is behind it, and the copy of the
+    label behind the dialog is the one that must not be clicked (a click
+    outside a dialog usually cancels it). -/
 def locate (v : Vlm) (img : Image) (target : String) : IO Located := do
-  locateUrl v (← img.dataUrl) img.width img.height target
+  let r ← locateUrl v (← img.dataUrl) img.width img.height target
+  let boxes := parseBoxes r.answer
+  if boxes.length < 2 then return r
+  let rects := boxes.map (·.toRect v.frame img.width img.height)
+  let best := rects.foldl (init := rects.head!) fun b c => if meanLuma img c > meanLuma img b then c else b
+  return { r with rect? := some best }
 
 /-- Window for the second pass: `1/zoom` of each dimension (at least
     `minSide` px), centred on `(cx, cy)`, clamped inside the image. -/
