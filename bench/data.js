@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791818177931,
+  "lastUpdate": 1791827194326,
   "repoUrl": "https://github.com/Verilean/lean-tea",
   "entries": {
     "HTTP throughput (lean-tea reactor vs nginx)": [
@@ -1620,6 +1620,85 @@ window.BENCHMARK_DATA = {
           {
             "name": "nginx /json",
             "value": 105114,
+            "unit": "RPS"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "junjihashimoto@users.noreply.github.com",
+            "name": "junji hashimoto",
+            "username": "junjihashimoto"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c7777d6f5a06cc3aed31654c63a5b843bcfb7720",
+          "message": "Merge pull request #29 from Verilean/feat/qa-studio-dev-loop\n\nQA Studio: restart without losing the browser or the recording",
+          "timestamp": "2026-10-13T02:43:15+09:00",
+          "tree_id": "184a29f88a794e026c57a3da7a7aefcacb1a1b4b",
+          "url": "https://github.com/Verilean/lean-tea/commit/c7777d6f5a06cc3aed31654c63a5b843bcfb7720"
+        },
+        "date": 1791827193350,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "lean-tea libuv /health",
+            "value": 2826,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /json",
+            "value": 2783,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /echo",
+            "value": 2867,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /health",
+            "value": 86209,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /json",
+            "value": 88970,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /echo",
+            "value": 70858,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /health",
+            "value": 104754,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /json",
+            "value": 105698,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /echo",
+            "value": 83052,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /health",
+            "value": 106829,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /json",
+            "value": 98065,
             "unit": "RPS"
           }
         ]
