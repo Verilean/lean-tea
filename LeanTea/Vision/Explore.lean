@@ -217,7 +217,7 @@ def nameAt (c : Ctx) (img : Image) (x y : Nat) : IO (Option String) := do
   let name := if name.endsWith "." then (name.dropEnd 1).toString else name
   -- "No button here", "There is nothing…": not a name to wait for
   let low := name.toLower
-  let nothing := ["no ", "none", "nothing", "there is", "there are", "i cannot", "i can't", "empty"].any low.startsWith
+  let nothing := ["no ", "none", "nothing", "there is", "there are", "i cannot", "i can't", "empty"].any (fun (p : String) => low.startsWith p)
   return if name.isEmpty || name.length > 60 || nothing then none else some name
 
 /-- The steps recorded for a click the user pointed at: wait until the
