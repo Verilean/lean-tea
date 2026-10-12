@@ -255,7 +255,7 @@ private def runAction (ctx : RunCtx) (script : Script) (idx : Nat) (act : Action
     let _ ← ctx.mcp.callTool tool args
     return none
   | .clickDescribed .. | .assertVisual .. | .assertText .. | .assertPixel ..
-  | .key .. | .typeText .. =>
+  | .key .. | .typeText .. | .waitUntil .. =>
     throw <| IO.userError "vision actions need the vision_qa runner (see docs/10-testing.md)"
   | .waitForScreen screen timeoutMs =>
     /- Polling loop. Without a classifier, this degrades to a single

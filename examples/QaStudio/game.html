@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Game Portal — Starfall Tactics</title>
+<style>
+  body { margin: 0; font-family: -apple-system, "Hiragino Sans", sans-serif; background: #f2f3f7; color: #222; }
+  header { background: #222; color: #eee; padding: 10px 24px; display: flex; gap: 24px; align-items: center; font-size: 14px; }
+  header b { font-size: 18px; color: #fff; margin-right: 12px; }
+  header a { color: #ccc; text-decoration: none; }
+  .wrap { display: flex; gap: 20px; padding: 16px 24px; }
+  aside { width: 200px; background: #fff; border-radius: 8px; padding: 12px; font-size: 13px; line-height: 2; }
+  .stage { background: #000; border-radius: 6px; }
+  iframe { display: block; width: 960px; height: 540px; border: 0; }
+  #login { background: #fff; width: 360px; margin: 60px auto; padding: 24px; border-radius: 10px; }
+  #login input { width: 100%; box-sizing: border-box; padding: 8px; margin: 6px 0 12px; font-size: 15px; }
+  #login button { padding: 8px 20px; font-size: 15px; background: #e2421d; color: #fff; border: 0; border-radius: 6px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <header><b>GAME PORTAL</b><a href="#">Games</a><a href="#">Ranking</a><a href="#">News</a><span id="who" style="margin-left:auto"></span></header>
+  <!-- A stand-in for a game portal: a login gate (remembered in
+       localStorage, so a persistent browser profile keeps it) and the game
+       in an iframe surrounded by site chrome that --clip auto cuts away. -->
+  <div id="login">
+    <h3>Log in</h3>
+    <label>ID <input id="id" autocomplete="off"></label>
+    <label>Password <input id="pw" type="password"></label>
+    <button id="enter">Log in</button>
+  </div>
+  <div class="wrap hidden" id="main">
+    <aside>News<br>- New event live<br>- Maintenance soon<br><br>Ranking<br>1. Alice<br>2. Bob</aside>
+    <div class="stage"><iframe id="game_frame" title="game"></iframe></div>
+  </div>
+  <script>
+    function show() {
+      document.getElementById('login').classList.add('hidden');
+      document.getElementById('main').classList.remove('hidden');
+      document.getElementById('who').textContent = 'Welcome, ' + localStorage.getItem('portalUser');
+      document.getElementById('game_frame').src = '/demo-game/frame';
+    }
+    document.getElementById('enter').onclick = () => {
+      localStorage.setItem('portalUser', document.getElementById('id').value || 'guest');
+      show();
+    };
+    if (localStorage.getItem('portalUser')) show();
+  </script>
+</body>
+</html>

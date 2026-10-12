@@ -139,6 +139,23 @@ def exploreGroup : LSpec :=
     it "empty type text, missing target, unknown action are rejected"
       (proposalErr "{\"action\":\"type\",\"text\":\"\"}" && proposalErr "{\"action\":\"click\"}" &&
        proposalErr "{\"action\":\"scroll\"}" && proposalErr "no json here"),
+    it "wait → seconds, clamped to 1…10"
+      (proposalIs "{\"action\":\"wait\",\"seconds\":3}" (fun | .step (.wait 3000) _ => true | _ => false) &&
+       proposalIs "{\"action\":\"wait\",\"seconds\":60}" (fun | .step (.wait 10000) _ => true | _ => false)),
+    it "wait_until survives the script JSON round trip"
+      (match Script.fromJson ({ name := "t", steps := [{ act := .waitUntil "Is TAP TO START visible?" 45000 }] } : Script).toJson with
+       | .ok sc => match sc.steps with
+         | [{ act := .waitUntil "Is TAP TO START visible?" 45000, .. }] => true
+         | _ => false
+       | .error _ => false),
+    it "a pointed click is gated on what is there"
+      (match Explore.pointedSteps (some "the Quest button") 250 295 with
+       | [{ act := .waitUntil "Is the Quest button visible on the screen?" _, .. }, { act := .clickXy 250 295, .. }] => true
+       | _ => false),
+    it "a pointed click with no name is just the click"
+      (match Explore.pointedSteps none 1 2 with
+       | [{ act := .clickXy 1 2, .. }] => true
+       | _ => false),
     it "prompt carries goal, notes, history, the last error and the page outline"
       (let p := Explore.promptFor "sign in" ["be quick"] [.typeText "alice"] (some "typing changed nothing") 5 "button \"Sign in\"";
        [ "Goal: sign in", "- be quick", "1. type \"alice\" — ok", "FAILED: typing changed nothing",
@@ -183,7 +200,9 @@ def run : IO LSpec := do
   let changeGroup := group "Change detection" [
     it "identical screenshots: 0 changed pixels" (same == 0),
     it "different sizes count as changed" (Qa.changedPixels testImage (testImage.crop 0 0 2 2) > 0),
-    it "a re-encoded copy is still identical" (Qa.changedPixels testImage poked == 0)
+    it "a re-encoded copy is still identical" (Qa.changedPixels testImage poked == 0),
+    it "window diff only looks inside the window"
+      (Qa.changedPixelsIn testImage testImage 0 0 4 2 == 0 && Qa.changedPixelsIn testImage testImage 3 1 50 50 == 0)
   ]
   return group "LeanTea.Vision" [parseGroup, geometryGroup, yesNoGroup, scriptGroup, ansiGroup, imgGroup, replay,
                                  exploreGroup, changeGroup]

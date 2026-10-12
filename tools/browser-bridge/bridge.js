@@ -21,6 +21,8 @@ import path from 'node:path';
 let browser = null;
 let context = null;
 let page    = null;
+/** Last URL `navigate` opened — restored if we have to start a new page. */
+let lastUrl = null;
 
 /** Default launch settings. `browser_open` (and the env var
  *  `LEANTEA_BROWSER_HEADLESS`) flips these — once set they persist
@@ -31,7 +33,31 @@ const defaults = {
     || process.env.LEANTEA_BROWSER_HEADLESS === 'true',
   width:    1280,
   height:   800,
+  /** Persistent profile directory (cookies, logins, local storage).
+   *  Unset = a fresh throwaway profile per launch. */
+  profile:  process.env.LEANTEA_BROWSER_PROFILE || null,
 };
+
+/** Make `p` the page we drive, and keep `page` pointing at a live one:
+ *  when it closes (the user shut the tab, a login flow replaced it) fall
+ *  back to the newest page still open in the context. */
+function adopt(p) {
+  page = p;
+  p.on('close', () => {
+    if (page !== p) return;
+    const open = context ? context.pages().filter((x) => !x.isClosed()) : [];
+    page = open.length ? open[open.length - 1] : null;
+  });
+  return p;
+}
+
+/** Track the context: a page the site opens (a popup, a login window,
+ *  a game launched in a new tab) becomes the one we drive; if the user
+ *  closes the whole browser, the next call relaunches it. */
+function watchContext(ctx) {
+  ctx.on('page', (p) => adopt(p));
+  ctx.on('close', () => { if (context === ctx) { page = null; context = null; browser = null; } });
+}
 
 /** Lazy-init the browser the first time a method needs it. Honours
  *  `defaults` plus per-call overrides. */
@@ -40,22 +66,52 @@ async function ensurePage(opts = {}) {
   const headless = (opts.headless !== undefined) ? opts.headless : defaults.headless;
   const width    = opts.width  || defaults.width;
   const height   = opts.height || defaults.height;
-  browser = await chromium.launch({
-    headless,
-    args: ['--no-sandbox', '--disable-dev-shm-usage'],
-  });
-  context = await browser.newContext({
-    viewport: { width, height },
-    deviceScaleFactor: 1,
-  });
-  page = await context.newPage();
+  const profile  = (opts.profile !== undefined) ? opts.profile : defaults.profile;
+  const args = ['--no-sandbox', '--disable-dev-shm-usage'];
+  if (profile) {
+    // A persistent context keeps whatever the user did in it (e.g. a
+    // manual login in a headed window) for the next launch.
+    fs.mkdirSync(profile, { recursive: true });
+    browser = null;
+    context = await chromium.launchPersistentContext(profile, {
+      headless, args, viewport: { width, height }, deviceScaleFactor: 1,
+    });
+    watchContext(context);
+    adopt(context.pages()[0] || await context.newPage());
+  } else {
+    browser = await chromium.launch({ headless, args });
+    context = await browser.newContext({
+      viewport: { width, height },
+      deviceScaleFactor: 1,
+    });
+    watchContext(context);
+    adopt(await context.newPage());
+  }
   return page;
 }
 
 /** Helpers that need a live page; throw otherwise. */
-function requirePage() {
-  if (!page) throw new Error('no page open; call open or navigate first');
-  return page;
+/** The page to drive. If it was closed, use another open page in the
+ *  context, open a fresh one, or relaunch the browser (with the same
+ *  settings and profile) — the caller then sees a blank page instead of
+ *  "Target page, context or browser has been closed". */
+async function requirePage() {
+  if (page && !page.isClosed()) return page;
+  if (context) {
+    const open = context.pages().filter((x) => !x.isClosed());
+    if (open.length) return adopt(open[open.length - 1]);
+    try { return await restore(adopt(await context.newPage())); } catch (_) { context = null; }
+  }
+  // nothing open (the user closed the browser): relaunch with the same
+  // settings / profile and go back to where we were
+  page = null; context = null; browser = null;
+  return await restore(await ensurePage());
+}
+
+/** A page we had to create after the old one died: reopen the last URL. */
+async function restore(pg) {
+  if (lastUrl) { try { await pg.goto(lastUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }); } catch (_) {} }
+  return pg;
 }
 
 const methods = {
@@ -67,6 +123,7 @@ const methods = {
     if (p.headless !== undefined) defaults.headless = !!p.headless;
     if (p.width)                  defaults.width    = p.width;
     if (p.height)                 defaults.height   = p.height;
+    if (p.profile !== undefined)  defaults.profile  = p.profile || null;
     if (page) { await closeAll(); }
     const pg = await ensurePage(p);
     return {
@@ -78,14 +135,15 @@ const methods = {
 
   /** Navigate to a URL, waiting for `domcontentloaded` by default. */
   async navigate({ url, waitUntil = 'domcontentloaded', timeout = 30000 }) {
-    const pg = await ensurePage();
+    const pg = await requirePage();
+    lastUrl = url;
     await pg.goto(url, { waitUntil, timeout });
     return { url: pg.url(), title: await pg.title() };
   },
 
   /** Click an element by CSS selector. */
   async click({ selector, timeout = 5000 }) {
-    const pg = requirePage();
+    const pg = await requirePage();
     await pg.click(selector, { timeout });
     return { ok: true };
   },
@@ -94,21 +152,21 @@ const methods = {
    *  canvas/WebGL games where there are no DOM elements to target —
    *  the LLM looks at a screenshot, picks an (x,y), we click there. */
   async clickXy({ x, y, button = 'left', clickCount = 1, delay = 0 }) {
-    const pg = requirePage();
+    const pg = await requirePage();
     await pg.mouse.click(x, y, { button, clickCount, delay });
     return { ok: true, x, y };
   },
 
   /** Type text into an input. */
   async fill({ selector, text, timeout = 5000 }) {
-    const pg = requirePage();
+    const pg = await requirePage();
     await pg.fill(selector, text, { timeout });
     return { ok: true };
   },
 
   /** Press a single key (e.g. "Enter", "Tab"). */
   async press({ key, selector }) {
-    const pg = requirePage();
+    const pg = await requirePage();
     if (selector) await pg.press(selector, key);
     else          await pg.keyboard.press(key);
     return { ok: true };
@@ -116,28 +174,28 @@ const methods = {
 
   /** Wait for a selector to appear. */
   async waitFor({ selector, state = 'visible', timeout = 5000 }) {
-    const pg = requirePage();
+    const pg = await requirePage();
     await pg.waitForSelector(selector, { state, timeout });
     return { ok: true };
   },
 
   /** Plain text content of an element (or whole body). */
   async getText({ selector = 'body', timeout = 5000 }) {
-    const pg = requirePage();
+    const pg = await requirePage();
     const el = await pg.waitForSelector(selector, { state: 'attached', timeout });
     return { text: (await el.innerText()) || '' };
   },
 
   /** Inner HTML of an element. */
   async getHtml({ selector = 'body', timeout = 5000 }) {
-    const pg = requirePage();
+    const pg = await requirePage();
     const el = await pg.waitForSelector(selector, { state: 'attached', timeout });
     return { html: await el.innerHTML() };
   },
 
   /** Run JS in the page. Returns the JSON-serialisable result. */
   async evaluate({ expression }) {
-    const pg = requirePage();
+    const pg = await requirePage();
     const result = await pg.evaluate(expression);
     return { result };
   },
@@ -147,8 +205,8 @@ const methods = {
    *  (parent dirs are created). Useful when the caller wants a file
    *  on disk to hand to another process — e.g. curl-ing to a vision
    *  LLM — without having to base64-decode the JSON response. */
-  async screenshot({ selector, fullPage = false, format = 'png', outputPath } = {}) {
-    const pg = requirePage();
+  async screenshot({ selector, fullPage = false, format = 'png', outputPath, noData = false } = {}) {
+    const pg = await requirePage();
     let buf;
     if (selector) {
       const el = await pg.waitForSelector(selector, { state: 'visible' });
@@ -162,7 +220,9 @@ const methods = {
     }
     const vp = pg.viewportSize();
     return {
-      base64:     buf.toString('base64'),
+      // `noData` with `outputPath`: the caller reads the file, so skip a
+      // multi-MB base64 string the caller would only have to parse
+      base64:     (noData && outputPath) ? '' : buf.toString('base64'),
       mime:       format === 'jpeg' ? 'image/jpeg' : 'image/png',
       bytes:      buf.length,
       width:      vp.width,
@@ -173,7 +233,7 @@ const methods = {
 
   /** Current page metadata. */
   async info() {
-    const pg = requirePage();
+    const pg = await requirePage();
     return { url: pg.url(), title: await pg.title() };
   },
 

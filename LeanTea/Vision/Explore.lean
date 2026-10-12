@@ -96,7 +96,11 @@ def parseProposal (reply : String) : Except String Proposal := do
     let want := (str j "expect").toLower != "no"
     return .step (.assertVisual q want) why
   | "assert_text" => return .step (.assertText (str j "target") (str j "equals")) why
-  | "wait" => return .step (.wait 1000) why
+  | "wait" =>
+    let secs := match (j.getObjValD "seconds") with
+      | .num n => (n.mantissa.toNat / 10 ^ n.exponent)
+      | _ => 2
+    return .step (.wait ((max 1 (min 10 secs)) * 1000)) why
   | "done" => return .done (if why.isEmpty then str j "summary" else why)
   | "fail" => return .fail (str j "reason")
   | a => throw s!"unknown action \"{a}\" (use click / type / key / assert / done / fail)"
@@ -111,6 +115,7 @@ def describe : Action → String
   | .assertText t e => s!"assert \"{t}\" reads \"{e}\""
   | .assertPixel x y rgb _ => s!"assert pixel ({x}, {y}) is {rgb}"
   | .wait ms => s!"wait {ms} ms"
+  | .waitUntil q _ => s!"wait until \"{q}\""
   | _ => "other step"
 
 /-- The per-turn prompt. -/
@@ -131,10 +136,12 @@ def promptFor (goal : String) (notes : List String) (worked : List Action)
   "{\"action\": \"fill\", \"target\": \"<the input field, e.g. the Username field>\", \"text\": \"<text to enter>\", \"why\": \"<short>\"}\n" ++
   "{\"action\": \"click\", \"target\": \"<the element to click, described by its visible text, colour and position>\", \"why\": \"<short>\"}\n" ++
   "{\"action\": \"key\", \"key\": \"Enter\", \"why\": \"<short>\"}\n" ++
+  "{\"action\": \"wait\", \"seconds\": 3, \"why\": \"<short — e.g. the screen is still loading>\"}\n" ++
   "{\"action\": \"assert\", \"question\": \"<a yes/no question about what is visible now that checks the goal>\", \"expect\": \"yes\", \"why\": \"<short>\"}\n" ++
   "{\"action\": \"done\", \"why\": \"<what was verified>\"}   (only after an assert proved the goal)\n" ++
   "{\"action\": \"fail\", \"reason\": \"<why the goal cannot be done on this page>\"}\n" ++
-  "Fill every field the goal mentions before submitting. Check the goal with an assert that expects yes."
+  "Fill every field the goal mentions before submitting. Check the goal with an assert that expects yes.\n" ++
+  "If the screen ALREADY shows what the goal asks you to check, assert it NOW — do not click anything else first."
 
 /-! ## The loop -/
 
@@ -177,9 +184,35 @@ def propose (c : Ctx) (img : Image) (prompt : String) (temperature : Float) (max
     maxTokens := some maxTokens }
   return stripThink res.content
 
+/-- A short name for what is at `(x, y)` (the user pointed there), from a
+    crop around the point — used to gate a replayed fixed-point click on
+    that thing being on screen. -/
+def nameAt (c : Ctx) (img : Image) (x y : Nat) : IO (Option String) := do
+  let crop := img.crop (x - min x 160) (y - min y 80) 320 160
+  let res ← chat c.vlm.cfg {
+    model := c.vlm.model,
+    messages := [userTextAndImage ("Name the button, icon or text at the centre of this image in at most 6 words " ++
+      "(e.g. \"the Section 3 button\"). Reply with only the name.") (← crop.dataUrl)],
+    temperature := some 0.0, maxTokens := some 30 }
+  let name := (stripThink res.content).trimAscii.toString
+  let name := String.ofList (name.toList.filter (fun ch => ch != '"' && ch != '\n'))
+  let name := if name.endsWith "." then (name.dropEnd 1).toString else name
+  return if name.isEmpty || name.length > 60 then none else some name
+
+/-- The steps recorded for a click the user pointed at: wait until the
+    thing there shows (so a replay doesn't click a loading screen), then
+    click the point. -/
+def pointedSteps (name? : Option String) (x y : Nat) : List Step :=
+  (match name? with
+   | some n => [{ act := .waitUntil s!"Is {n} visible on the screen?" (timeoutMs := 30000),
+                  note := "wait for what the user pointed at" }]
+   | none => []) ++
+  [{ act := .clickXy x y, note := "the user pointed here" }]
+
 /-- Run one action, insisting that clicks / typing / keys change the
     screen. `.ok (observed, evidence, point)` or `.error (msg, evidence, point)`. -/
-def attempt (c : Ctx) (cfg : Config) (idx : Nat) (act : Action) (why : String) (requireChange := true) :
+def attempt (c : Ctx) (cfg : Config) (idx : Nat) (act : Action) (why : String) (requireChange := true)
+    (animated := false) :
     IO (Except (String × Option String × Option (Nat × Nat)) (String × Option String × Option (Nat × Nat))) := do
   let (_, before) ← c.shot idx "pre"
   c.lastPoint.set none
@@ -190,7 +223,13 @@ def attempt (c : Ctx) (cfg : Config) (idx : Nat) (act : Action) (why : String) (
   | none =>
     if requireChange && mustChange act then
       if let some after := r.evidencePath then
-        let changed := changedPixels before (← Image.load after)
+        let afterImg ← Image.load after
+        -- on a screen that animates by itself the whole-screen diff is
+        -- meaningless; judge a click by the area around it instead
+        let changed := match act, point, animated with
+          | .clickDescribed .., some (x, y), true | .clickXy .., some (x, y), true =>
+            changedPixelsIn before afterImg (x - min x 120) (y - min y 120) 240 240
+          | _, _, _ => changedPixels before afterImg
         if changed < cfg.minChangedPixels then
           let what := match act with
             | .typeText _ => "typing changed nothing on the screen — the field probably doesn't have focus (use fill)"
@@ -204,7 +243,12 @@ def attempt (c : Ctx) (cfg : Config) (idx : Nat) (act : Action) (why : String) (
     steps that worked — the recorded script so far — and whether the
     goal was reached. `stop` is polled between turns. -/
 def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (worked : List Step)
-    (emit : Event → IO Unit) (stop : IO Bool) (outline : IO String := pure "") : IO (List Step × Bool) := do
+    (emit : Event → IO Unit) (stop : IO Bool) (outline : IO String := pure "")
+    (hints : IO (List String) := pure [])
+    (pointed : IO (Option (Nat × Nat)) := pure none) : IO (List Step × Bool) := do
+  let mut notes := notes
+  -- a check that passes before anything was done doesn't prove the goal
+  let mut acted := false
   let mut steps := worked
   let mut lastError : Option String := none
   let mut failures := 0
@@ -212,11 +256,41 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
   let mut checkedThisGoal := false
   let mut idx := worked.length
   for turn in [0:cfg.maxTurns] do
+    if failures ≥ cfg.maxFailures then
+      emit (.finished false s!"stopped after {failures} failed attempts in a row")
+      return (steps, false)
     if ← stop then
       emit (.finished false "stopped")
       return (steps, false)
+    -- let loading / transitions finish; a page that never goes quiet is animated
+    let motion ← settle c (maxMs := 4000)
+    let animated := motion ≥ 0.01
     let (_, img) ← c.shot idx "look"
     emit (.thinking s!"turn {turn + 1}: looking at the page…")
+    -- messages the user sent while we work
+    let fresh ← hints
+    for h in fresh do
+      notes := notes ++ [s!"User hint (follow it): {h}"]
+      emit (.note s!"hint received: {h}")
+    -- the user clicked the live view: that's the next step, no model call
+    if let some (x, y) ← pointed then
+      let act := Action.clickXy x y
+      emit (.proposal (describe act) "the user pointed here")
+      let name? ← try nameAt c img x y catch _ => pure none
+      match ← attempt c cfg idx act "the user pointed here" true animated with
+      | .ok (obs, ev, pt) =>
+        let added := pointedSteps name? x y
+        steps := steps ++ added
+        idx := idx + added.length
+        acted := true
+        failures := 0
+        lastError := none
+        emit (.stepOk (describe act) obs ev pt)
+        if let some n := name? then emit (.note s!"recorded as: wait until {n} shows, then click ({x}, {y})")
+      | .error (e, ev, pt) =>
+        lastError := some s!"the user's click at ({x}, {y}) failed: {e}"
+        emit (.stepFailed (describe act) e ev pt)
+      continue
     let pageOutline ← try outline catch _ => pure ""
     let prompt := promptFor goal notes (steps.map (·.act)) lastError (cfg.maxTurns - turn) pageOutline
     let reply ← try propose c img prompt (if failures == 0 then 0.0 else 0.5) cfg.maxTokens
@@ -248,8 +322,13 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
         | .fill t x _ => s!"fill \"{t}\" with \"{x}\""
         | _ => String.intercalate ", then " (acts.map describe)
       emit (.proposal text why)
-      -- the same step again right after it worked adds nothing
+      -- the same step again right after it worked adds nothing — except
+      -- that insisting on a check that already passed, before doing
+      -- anything, means the goal was only that check
       if acts.length == 1 && steps.getLast?.map (·.act |> describe) == some text then
+        if !acted && acts.all confirms && checkedThisGoal then
+          emit (.finished true s!"goal verified (a check only): {text}")
+          return (steps, true)
         failures := failures + 1
         lastError := some s!"`{text}` was just done; choose the next step."
         emit (.note s!"skipped a repeat of `{text}`")
@@ -267,7 +346,7 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
           -- in a fill, the click may land on a field that already has focus
           -- (nothing visible changes); the typing that follows must show
           let requireChange := !(acts.length > 1 && k == 0)
-          match ← attempt c cfg (idx + done.length) act why requireChange with
+          match ← attempt c cfg (idx + done.length) act why requireChange animated with
           | .ok (obs, ev, pt) =>
             done := done ++ [{ act, note := why }]
             emit (.stepOk (describe act) obs ev pt)
@@ -280,9 +359,16 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
           idx := idx + done.length
           lastError := none
           failures := 0
+          if acts.any (fun a => !confirms a && !(match a with | .assertVisual .. => true | _ => false)) then
+            acted := true
           if acts.any confirms then
-            emit (.finished true s!"goal verified: {text}")
-            return (steps, true)
+            if acted then
+              emit (.finished true s!"goal verified: {text}")
+              return (steps, true)
+            checkedThisGoal := true
+            lastError := some ("(not an error) that check already passes before doing anything. " ++
+              "Now do what the goal asks (click / fill …), then assert the result. If the goal only asked to check, reply done.")
+            emit (.note "that already holds — now doing what the goal asks")
         | some err =>
           failures := failures + 1
           tried := (text, err) :: tried

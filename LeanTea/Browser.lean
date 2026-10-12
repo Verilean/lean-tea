@@ -180,10 +180,14 @@ private def getNat (j : Json) (key : String) : Nat :=
 /-- Open / re-open the browser. Returns the viewport dimensions plus
     the active headless flag (mirrors the bridge's persisted default
     after this call). `headless := none` keeps whatever the bridge
-    currently has set; `some true` / `some false` flips it. -/
+    currently has set; `some true` / `some false` flips it.
+    `profile` is a directory for a persistent profile: cookies and
+    logins survive to the next run (log in once with
+    `headless := some false`). -/
 def Session.open (s : Session) (width height : Nat := 0)
-    (headless : Option Bool := none) : IO (Nat × Nat × Bool) := do
+    (headless : Option Bool := none) (profile : Option String := none) : IO (Nat × Nat × Bool) := do
   let mut p : List (String × Json) := []
+  if let some dir := profile then p := p ++ [("profile", Json.str dir)]
   if width  > 0 then p := p ++ [("width",  Json.num (Int.ofNat width))]
   if height > 0 then p := p ++ [("height", Json.num (Int.ofNat height))]
   if let some h := headless then p := p ++ [("headless", Json.bool h)]
@@ -278,8 +282,11 @@ def Screenshot.dataUrl (s : Screenshot) : String :=
     going through base64 decode. -/
 def Session.screenshot (s : Session) (selector : Option String := none)
     (fullPage : Bool := false) (outputPath : Option String := none)
-    : IO Screenshot := do
+    (withData : Bool := true) : IO Screenshot := do
   let mut p : List (String × Json) := [("fullPage", Json.bool fullPage)]
+  -- with an outputPath, `withData := false` skips the base64 copy (a
+  -- 2 MB game screenshot is seconds of JSON parsing on the Lean side)
+  if !withData then p := p ++ [("noData", Json.bool true)]
   if let some sel := selector then
     p := p ++ [("selector", Json.str sel)]
   if let some out := outputPath then

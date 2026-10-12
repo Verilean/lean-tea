@@ -75,6 +75,10 @@ inductive Action where
   | key (name : String)
   /-- Type literal text. -/
   | typeText (text : String)
+  /-- Ask the VLM `question` (yes/no) once a second until it says yes,
+      or fail after `timeoutMs`. Gates a run on a slow screen (a game
+      still loading) where pixel checks can't tell the states apart. -/
+  | waitUntil (question : String) (timeoutMs : Nat := 60000)
   deriving Inhabited
 
 structure Step where
@@ -142,6 +146,8 @@ private def actionToJson : Action → Json
       ("rgb", Json.str rgb), ("tol", Json.num (Int.ofNat tol))]
   | .key name => Json.mkObj [("act", Json.str "key"), ("key", Json.str name)]
   | .typeText t => Json.mkObj [("act", Json.str "type"), ("text", Json.str t)]
+  | .waitUntil q tms => Json.mkObj [("act", Json.str "wait_until"), ("question", Json.str q),
+      ("timeoutMs", Json.num (Int.ofNat tms))]
 
 private def stepToJson (s : Step) : Json :=
   let base := match actionToJson s.act with
@@ -206,6 +212,7 @@ private def actionFromJson (j : Json) : Except String Action := do
     return .assertPixel (getNatOpt j "x") (getNatOpt j "y") (← getStr j "rgb") (getNatOpt j "tol" 16)
   | "key" => return .key (← getStr j "key")
   | "type" => return .typeText (← getStr j "text")
+  | "wait_until" => return .waitUntil (← getStr j "question") (getNatOpt j "timeoutMs" 60000)
   | other => .error s!"unknown action: {other}"
 
 private def stepFromJson (j : Json) : Except String Step := do
@@ -283,6 +290,7 @@ private def fmtAct : Action → String
   | .assertPixel x y c _  => s!"pixel ({x}, {y}) ≈ {c}"
   | .key k                => s!"key {k}"
   | .typeText t           => s!"type \"{t}\""
+  | .waitUntil q _        => s!"wait until \"{q}\""
 
 private def truncate (s : String) (n : Nat) : String :=
   if s.length ≤ n then s else (s.take (n - 1)).toString ++ "…"
