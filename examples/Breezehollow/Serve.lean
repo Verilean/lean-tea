@@ -54,7 +54,9 @@ def serveMain (args : List String) : IO Unit := do
   if first.2 then IO.eprintln s!"breezehollow: {first.1}"
   let world : IO (String × Bool) := if a.dev then Breezehollow.compileWorld else pure first
   IO.println s!"breezehollow: http://{a.host}:{a.port}/{if a.dev then "  [dev: recompiles World.leanjs per request]" else ""}"
-  serve a.port a.host (handler pageProv world)
+  -- concurrent: a browser keeps keep-alive connections open, which would
+  -- block a one-connection-at-a-time server for every other client
+  serveConcurrent a.port a.host (handler pageProv world)
 
 end BreezehollowServe
 
