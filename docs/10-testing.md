@@ -265,21 +265,28 @@ vision_qa test.json --target browser --url https://example.com/game --profile ~/
   screens never go quiet); the model can also `wait` N seconds, and the
   wait is recorded. On a screen that animates by itself a click is
   judged by the area around it instead of the whole screen.
+- `click_described` takes up to 3 looks (600 ms apart) to find its
+  target and a yes-assertion up to 3 looks to pass, so a blinking
+  "TAP TO START" or a screen mid-transition doesn't fail a run; a
+  no-assertion must hold on the first look. (Settling and retries cost
+  time: the 10-step sign-in test now replays in ~35 s instead of ~12 s.)
 - A new test starts with `wait_until "Is <first click target> visible?"`
   (a VLM poll), so a replay doesn't act while the game is still loading
   — the loading and title screens differ too little for a pixel check.
 
 `/demo-game` is a stand-in to try this on (portal login, a canvas game
-in an iframe, 2.5 s loading, animated background, Japanese buttons).
+in an iframe, 2.5 s loading, animated background).
 With `qwen/qwen3-vl-4b`: logging in through the portal by chat worked;
 after a restart the profile skipped the login; "start the game and open
-the quest screen, check クエスト選択" took 3 proposals / 11 s; "open
-メインストーリー, sortie with 出撃, wait for the battle and check 勝利！"
-3 proposals plus a self-chosen 3 s wait. The 8-step replay (gate waited
-6.9 s for the title) passed in 21 s, and the saved script passed under
-`vision_qa --profile … --clip auto`. One planning slip was fixed in the
-prompt: on the victory screen the model clicked 次へ before asserting
-勝利！ — it's now told to assert as soon as the goal is visible.
+the quest screen, check Quest Select is shown" took 3 proposals / 11 s;
+"open the main story, sortie, wait for the battle and check Victory! is
+shown" 3 proposals plus a self-chosen 3 s wait. The 8-step replay (gate waited
+~7 s for the title) passed, and the saved script passed 3 runs out of 3
+under `vision_qa --profile … --clip auto` (19–21 s). Before the 3-look
+retry, a replay failed when the screenshot caught the blinking title
+prompt in its "off" phase. One planning slip was fixed in the
+prompt: on the victory screen the model clicked Next before asserting
+the victory — it's now told to assert as soon as the goal is visible.
 
 Mind the site's terms of service: many game platforms forbid automated
 play. Use this on titles you build or are allowed to test.

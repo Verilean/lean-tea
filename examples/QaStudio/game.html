@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <title>Game Portal — Starfall Tactics</title>
@@ -19,25 +19,25 @@
 </style>
 </head>
 <body>
-  <header><b>GAME PORTAL</b><a href="#">ゲーム一覧</a><a href="#">ランキング</a><a href="#">お知らせ</a><span id="who" style="margin-left:auto"></span></header>
+  <header><b>GAME PORTAL</b><a href="#">Games</a><a href="#">Ranking</a><a href="#">News</a><span id="who" style="margin-left:auto"></span></header>
   <!-- A stand-in for a game portal: a login gate (remembered in
        localStorage, so a persistent browser profile keeps it) and the game
        in an iframe surrounded by site chrome that --clip auto cuts away. -->
   <div id="login">
-    <h3>ログイン</h3>
+    <h3>Log in</h3>
     <label>ID <input id="id" autocomplete="off"></label>
-    <label>パスワード <input id="pw" type="password"></label>
-    <button id="enter">ログイン</button>
+    <label>Password <input id="pw" type="password"></label>
+    <button id="enter">Log in</button>
   </div>
   <div class="wrap hidden" id="main">
-    <aside>お知らせ<br>・新イベント開催中<br>・メンテナンス予定<br><br>ランキング<br>1. Alice<br>2. Bob</aside>
+    <aside>News<br>- New event live<br>- Maintenance soon<br><br>Ranking<br>1. Alice<br>2. Bob</aside>
     <div class="stage"><iframe id="game_frame" title="game"></iframe></div>
   </div>
   <script>
     function show() {
       document.getElementById('login').classList.add('hidden');
       document.getElementById('main').classList.remove('hidden');
-      document.getElementById('who').textContent = 'ようこそ ' + localStorage.getItem('portalUser') + ' さん';
+      document.getElementById('who').textContent = 'Welcome, ' + localStorage.getItem('portalUser');
       document.getElementById('game_frame').src = '/demo-game/frame';
     }
     document.getElementById('enter').onclick = () => {

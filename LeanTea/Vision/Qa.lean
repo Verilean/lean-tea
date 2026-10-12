@@ -73,10 +73,20 @@ def runAction (c : Ctx) (idx : Nat) : Action → IO (Option String × Option Str
         c.drv.click x y
         c.lastPoint.set (some (x, y))
         return (some s!"cached {k} → ({x}, {y})", none)
-    let (p, img) ← c.shot idx "before"
-    let r ← locateZoom c.vlm img target c.zoom
-    let some rect := r.rect?
-      | throw <| IO.userError s!"click_described: could not locate {target}: {r.answer}"
+    -- up to 3 looks, 600 ms apart: blinking prompts ("TAP TO START") and
+    -- brief transitions can hide the target in a single screenshot
+    let mut found : Option (System.FilePath × Rect × Located) := none
+    let mut lastAnswer := ""
+    for k in [0:3] do
+      if k > 0 then IO.sleep 600
+      let (p, img) ← c.shot idx "before"
+      let r ← locateZoom c.vlm img target c.zoom
+      lastAnswer := r.answer
+      if let some rect := r.rect? then
+        found := some (p, rect, r)
+        break
+    let some (p, rect, r) := found
+      | throw <| IO.userError s!"click_described: could not locate {target}: {lastAnswer}"
     let x := rect.cx.round.toUInt64.toNat
     let y := rect.cy.round.toUInt64.toNat
     c.drv.click x y
@@ -84,8 +94,17 @@ def runAction (c : Ctx) (idx : Nat) : Action → IO (Option String × Option Str
     if let some k := key? then c.pending.set (some (k, x, y, target))
     return (some s!"({x}, {y}) in {r.ms}ms", some p.toString)
   | .assertVisual q want => do
-    let (p, img) ← c.shot idx "assert"
-    let v ← ask c.vlm img q
+    -- a "yes" check gets 3 looks 600 ms apart (blinking / settling
+    -- screens); a "no" check must hold on the first look
+    let tries := if want then 3 else 1
+    let mut last : Option (System.FilePath × Verdict) := none
+    for k in [0:tries] do
+      if k > 0 then IO.sleep 600
+      let (p, img) ← c.shot idx "assert"
+      let v ← ask c.vlm img q
+      last := some (p, v)
+      if v.yes? == some want then break
+    let some (p, v) := last | throw <| IO.userError "assert_visual: no screenshot"
     if v.yes? != some want then
       throw <| IO.userError s!"assert_visual: wanted {if want then "yes" else "no"}, VLM said: {v.answer}"
     return (some (if want then "yes" else "no"), some p.toString)
