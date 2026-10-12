@@ -229,7 +229,22 @@ trial and error (`LeanTea.Vision.Explore`):
   (`LeanTea.Vision.Qa`). Clicks, typing and keys must visibly change
   the page; a step that fails is dropped and the error goes back to
   the model; a repeat of a failed step is refused;
-- the goal is reached when an assertion that expects "yes" passes.
+- the goal is reached when an assertion that expects "yes" passes and
+  a second question ("has the WHOLE goal been achieved? what is left?")
+  agrees. A 4B model tends to assert something easy once it has made
+  some progress ("is the chapter ready to run?") and stop halfway. When it
+  says no, the run goes on with what is left.
+  The same question is asked after every action and after a check that
+  misses: a small model otherwise keeps clicking past a finished goal
+  ("click Quest" went on to Main Story and Sortie), or checks for the
+  wrong thing and wanders off (looking for the battle after it was won,
+  then pressing Next). Once the answer is yes, the model is told to
+  assert what's on screen or reply done; if its own check fails anyway,
+  the goal ends as done without a check. The judge sees each step with
+  the model's reason for it, so "click the title (to tap to start)"
+  counts as the tap the goal asked for. On `/demo-game`, "Tap to start",
+  "Click Quest" and "Run the main story quest until the battle is won"
+  each stopped where the goal did.
 
 Later messages continue from there, so a test is built goal by goal.
 **Replay** reloads the start page and runs only the recorded steps;
@@ -285,8 +300,48 @@ vision_qa test.json --target browser --url https://example.com/game --profile ~/
   fixed point. On `/demo-game`, pointing at TAP TO START and Quest
   recorded 4 steps whose replay passed in 5 s.
 
+#### Working on the studio without losing the game
+
+```
+tools/qa-studio-dev.sh --url https://example.com/game --profile ~/.cache/qa-profile --clip auto --headed
+```
+
+rebuilds `qa_studio` when its sources (`LeanTea/`, `examples/QaStudio/`,
+the browser bridge) change and restarts it. A restart takes a few
+seconds and keeps:
+
+- the browser: `--browser-port N` (the script uses 9333, or
+  `QA_BROWSER_PORT`) runs it as its own process, which the bridge
+  attaches to over CDP and leaves open on exit. The game stays logged
+  in and on the same screen. Close it with
+  `pkill -f remote-debugging-port=9333`;
+- the recorded steps, goals and chat, from `--dir`/state.json (for the
+  same start URL);
+- the open studio tab, which reconnects by itself. `--dev` re-reads
+  page.html on every load, so a UI edit needs only a reload.
+
+A run in progress at the restart is lost, and a failed build leaves the
+running studio alone. `--rules FILE` (one piece of advice per line, `#`
+for comments) is re-read every turn, so the model's instructions can be
+tuned during a run without restarting. On `/demo-game`, after a restart
+the game was still on Quest Select with the 6 recorded steps, and the
+next goal ("open Main Story and check Chapter 1 is shown") passed.
+
 `/demo-game` is a stand-in to try this on (portal login, a canvas game
-in an iframe, 2.5 s loading, animated background).
+in an iframe, 2.5 s loading, animated background, and a story scene
+before the battle whose Skip asks again in a confirmation dialog with a
+second Skip). "Skip the story before the battle and check that the
+battle starts" clicked the Skip in the corner, then "the Skip button in
+the dialog", and verified the battle. Before, the second click was
+refused as a repeat of the first, so a skip like that never got past the
+dialog. A click may now repeat, and a dialog's button
+is described as being in the dialog. Asked to locate a label that shows
+twice (the button behind a dialog and the same label inside it), Qwen-VL
+lists both boxes; the first one, which was used before, was the one
+behind, so the click landed outside the dialog and closed it like
+Cancel. `locate` now takes the brightest of several boxes, since a
+dialog dims what is behind it. On such a screenshot the click went from
+the dimmed corner button to the dialog's button, 3 times out of 3.
 With `qwen/qwen3-vl-4b`: logging in through the portal by chat worked;
 after a restart the profile skipped the login; "start the game and open
 the quest screen, check Quest Select is shown" took 3 proposals / 11 s;

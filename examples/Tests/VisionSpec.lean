@@ -56,7 +56,14 @@ def parseGroup : LSpec :=
     it "decimals and negatives" (scanNumbers "a -1.5 b 2.25".toList == [-1.5, 2.25]),
     it "frame names round-trip" (CoordFrame.all.all (fun f => CoordFrame.ofName? f.name == some f)),
     it "qwen2.5 guessed absolute" (CoordFrame.guess "qwen/qwen2.5-vl-7b" == .absolute),
-    it "qwen3 guessed norm1000" (CoordFrame.guess "qwen/qwen3-vl-4b" == .norm1000)
+    it "qwen3 guessed norm1000" (CoordFrame.guess "qwen/qwen3-vl-4b" == .norm1000),
+    it "every box of a two-match answer"
+      (match parseBoxes "```json\n[{\"bbox_2d\": [932, 28, 984, 70], \"label\": \"Skip\"},\n {\"bbox_2d\": [584, 552, 627, 598], \"label\": \"Skip\"}]\n```" with
+       | [a, b] => isBox (some a) 932 28 984 70 && isBox (some b) 584 552 627 598
+       | _ => false),
+    it "brightness tells the lit box from the dimmed one"
+      -- testImage: left half red (luma 76), right half blue (luma 29)
+      (meanLuma testImage { x := 0, y := 0, w := 2, h := 2 } > meanLuma testImage { x := 2, y := 0, w := 2, h := 2 })
   ]
 
 def geometryGroup : LSpec :=
@@ -159,7 +166,10 @@ def exploreGroup : LSpec :=
     it "prompt carries goal, notes, history, the last error and the page outline"
       (let p := Explore.promptFor "sign in" ["be quick"] [.typeText "alice"] (some "typing changed nothing") 5 "button \"Sign in\"";
        [ "Goal: sign in", "- be quick", "1. type \"alice\" — ok", "FAILED: typing changed nothing",
-         "button \"Sign in\"", "5 steps left" ].all (fun n => (p.splitOn n).length > 1))
+         "button \"Sign in\"", "5 steps left" ].all (fun n => (p.splitOn n).length > 1)),
+    it "earlier goals' steps are counted, not listed"
+      (let p := Explore.promptFor "skip" [] [] none 5 "" 7;
+       (p.splitOn "7 steps for earlier goals").length > 1 && (p.splitOn "(none yet for this goal)").length > 1)
   ]
 
 def run : IO LSpec := do

@@ -11,10 +11,11 @@
 // A stand-in for a browser game, for trying qa_studio's game mode: one
 // canvas (no DOM to read), a slow loading screen, an always-animated
 // background, and plain text buttons. Screens: loading → title → home →
-// quest select → main story → battle → victory → home.
+// quest select → main story → story scene (Skip, then Skip again in a
+// confirmation dialog — the same label twice) → battle → victory → home.
 const cv = document.getElementById('c'), g = cv.getContext('2d');
 const W = cv.width, H = cv.height;
-let screen = 'loading', t0 = performance.now(), entered = t0, stamina = 30, buttons = [];
+let screen = 'loading', t0 = performance.now(), entered = t0, stamina = 30, buttons = [], line = 0, confirm = false;
 const stars = Array.from({ length: 90 }, () => ({ x: Math.random() * W, y: Math.random() * H, v: 0.3 + Math.random() * 1.2 }));
 
 function go(s) { screen = s; entered = performance.now(); }
@@ -57,8 +58,26 @@ function frame(now) {
   } else if (screen === 'story') {
     hud(); text('Chapter 1: Starfall Hill', W / 2, 110, 36);
     text('Stamina cost 10', W / 2, 170, 22, '#9fe6ff');
-    button('Sortie', W / 2 - 110, 250, 220, 80, () => { if (stamina >= 10) { stamina -= 10; go('battle'); } }, '#ff8f6b');
+    button('Sortie', W / 2 - 110, 250, 220, 80, () => { if (stamina >= 10) { stamina -= 10; line = 0; confirm = false; go('scene'); } }, '#ff8f6b');
     button('Back', 40, H - 100, 140, 60, () => go('quest'), '#9aa4c4');
+  } else if (screen === 'scene') {
+    const lines = ['The night wind carries ash over Starfall Hill.', 'Alice: Something is waiting beyond the ridge.',
+                   'Alice: Stay close. We move at dawn.'];
+    g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(80, H - 150, W - 160, 110);
+    text(lines[line % lines.length], W / 2, H - 95, 24);
+    if (!confirm) {
+      buttons.push({ x: 0, y: 0, w: W, h: H, onClick: () => { line++; if (line >= lines.length) go('battle'); } });
+      button('Skip', W - 130, 14, 110, 44, () => { confirm = true; }, '#9aa4c4');
+    } else {
+      button('Skip', W - 130, 14, 110, 44, () => {}, '#555b70');
+      g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(0, 0, W, H);
+      buttons.push({ x: 0, y: 0, w: W, h: H, onClick: () => { confirm = false; } });   // outside: close
+      g.fillStyle = '#f3ecd6'; roundRect(W / 2 - 260, 170, 520, 220, 16); g.fill();
+      buttons.push({ x: W / 2 - 260, y: 170, w: 520, h: 220, onClick: () => {} });
+      text('Skip the story?', W / 2, 225, 30, '#1b1530');
+      button('Cancel', W / 2 - 220, 290, 190, 64, () => { confirm = false; }, '#c9cfdc');
+      button('Skip', W / 2 + 30, 290, 190, 64, () => { confirm = false; go('battle'); });
+    }
   } else if (screen === 'battle') {
     hud();
     const k = Math.min(1, since / 3000);

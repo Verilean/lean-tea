@@ -17,6 +17,8 @@ import { chromium } from 'playwright';
 import readline from 'node:readline';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { spawn } from 'node:child_process';
 
 let browser = null;
 let context = null;
@@ -36,7 +38,30 @@ const defaults = {
   /** Persistent profile directory (cookies, logins, local storage).
    *  Unset = a fresh throwaway profile per launch. */
   profile:  process.env.LEANTEA_BROWSER_PROFILE || null,
+  /** Remote-debugging port of a browser that outlives this bridge: if
+   *  one listens there we attach to it, otherwise we start it detached.
+   *  The page (a logged-in game, mid-level) survives the bridge's and
+   *  its parent's restarts. Unset = the browser is ours and closes with us. */
+  cdpPort:  Number(process.env.LEANTEA_BROWSER_CDP_PORT) || null,
 };
+
+/** Attach to the kept browser on `port`, starting it if nobody listens. */
+async function connectKept(port, { headless, width, height, profile }) {
+  const endpoint = `http://127.0.0.1:${port}`;
+  const attach = async () => { try { return await chromium.connectOverCDP(endpoint); } catch (_) { return null; } };
+  let b = await attach();
+  if (!b) {
+    const dir = profile || path.join(os.tmpdir(), `leantea-browser-${port}`);
+    fs.mkdirSync(dir, { recursive: true });
+    const args = [`--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, '--no-first-run',
+                  '--no-default-browser-check', `--window-size=${width},${height}`];
+    if (headless) args.push('--headless=new');
+    spawn(chromium.executablePath(), [...args, 'about:blank'], { detached: true, stdio: 'ignore' }).unref();
+    for (let i = 0; i < 100 && !b; i++) { await new Promise((r) => setTimeout(r, 150)); b = await attach(); }
+    if (!b) throw new Error(`browser on port ${port} did not start`);
+  }
+  return b;
+}
 
 /** Make `p` the page we drive, and keep `page` pointing at a live one:
  *  when it closes (the user shut the tab, a login flow replaced it) fall
@@ -68,6 +93,16 @@ async function ensurePage(opts = {}) {
   const height   = opts.height || defaults.height;
   const profile  = (opts.profile !== undefined) ? opts.profile : defaults.profile;
   const args = ['--no-sandbox', '--disable-dev-shm-usage'];
+  const cdpPort = (opts.cdpPort !== undefined) ? opts.cdpPort : defaults.cdpPort;
+  if (cdpPort) {
+    browser = await connectKept(cdpPort, { headless, width, height, profile });
+    context = browser.contexts()[0] || await browser.newContext();
+    watchContext(context);
+    const open = context.pages().filter((x) => !x.isClosed());
+    adopt(open.length ? open[open.length - 1] : await context.newPage());
+    await page.setViewportSize({ width, height });
+    return page;
+  }
   if (profile) {
     // A persistent context keeps whatever the user did in it (e.g. a
     // manual login in a headed window) for the next launch.
@@ -124,9 +159,12 @@ const methods = {
     if (p.width)                  defaults.width    = p.width;
     if (p.height)                 defaults.height   = p.height;
     if (p.profile !== undefined)  defaults.profile  = p.profile || null;
+    if (p.cdpPort !== undefined)  defaults.cdpPort  = p.cdpPort || null;
     if (page) { await closeAll(); }
     const pg = await ensurePage(p);
     return {
+      // attached to a kept browser that already had a page open
+      reused:   !!defaults.cdpPort && pg.url() !== 'about:blank',
       width:    pg.viewportSize().width,
       height:   pg.viewportSize().height,
       headless: defaults.headless,
@@ -210,9 +248,9 @@ const methods = {
     let buf;
     if (selector) {
       const el = await pg.waitForSelector(selector, { state: 'visible' });
-      buf = await el.screenshot({ type: format });
+      buf = await el.screenshot({ type: format, scale: 'css' });
     } else {
-      buf = await pg.screenshot({ fullPage, type: format });
+      buf = await pg.screenshot({ fullPage, type: format, scale: 'css' });
     }
     if (outputPath) {
       fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -252,6 +290,8 @@ const methods = {
 };
 
 async function closeAll() {
+  // a kept browser stays open for the next bridge: just let go of it
+  if (defaults.cdpPort) { page = null; context = null; browser = null; return; }
   try { if (page)    await page.close();    } catch (_) {}
   try { if (context) await context.close(); } catch (_) {}
   try { if (browser) await browser.close(); } catch (_) {}
