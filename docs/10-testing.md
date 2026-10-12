@@ -229,7 +229,13 @@ trial and error (`LeanTea.Vision.Explore`):
   (`LeanTea.Vision.Qa`). Clicks, typing and keys must visibly change
   the page; a step that fails is dropped and the error goes back to
   the model; a repeat of a failed step is refused;
-- the goal is reached when an assertion that expects "yes" passes.
+- the goal is reached when an assertion that expects "yes" passes and
+  a second question ("has the WHOLE goal been achieved? what is left?")
+  agrees. A 4B model tends to assert something easy once it has made
+  some progress ("is the chapter ready to run?") and stop halfway. On a
+  real game's chapter map, with the goal "run all sessions" after only
+  opening the chapter, the judge answered no ("the session is not yet
+  started"); when it says no, the run goes on with what is left.
 
 Later messages continue from there, so a test is built goal by goal.
 **Replay** reloads the start page and runs only the recorded steps;

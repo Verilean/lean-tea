@@ -209,6 +209,25 @@ def pointedSteps (name? : Option String) (x y : Nat) : List Step :=
    | none => []) ++
   [{ act := .clickXy x y, note := "the user pointed here" }]
 
+/-- Is the whole goal done? Asked after a check passes: a small model
+    tends to assert something easy ("is the chapter ready to run?") once
+    it has made some progress, and stop halfway. `(true, _)` when the
+    reply can't be read, so a confused judge never blocks a run. -/
+def goalReached (c : Ctx) (img : Image) (goal : String) (worked : List Action) : IO (Bool × String) := do
+  let done := if worked.isEmpty then "(none)" else
+    String.intercalate "\n" (worked.zipIdx.map fun (a, k) => s!"{k + 1}. {describe a}")
+  let prompt := s!"Goal: {goal}\nSteps done so far:\n{done}\n" ++
+    "Look at the screenshot. Has the WHOLE goal been achieved: every action it asks for done, and its result visible? " ++
+    "If the goal asks to click, open, start or run something that the steps above have not done yet, answer no " ++
+    "and say what is left.\nReply with ONLY a JSON object: {\"answer\": \"yes\" or \"no\", \"left\": \"<what is left, or empty>\"}"
+  let res ← chat c.vlm.cfg {
+    model := c.vlm.model,
+    messages := [userTextAndImage prompt (← img.dataUrl)],
+    temperature := some 0.0, maxTokens := some 120 }
+  let some obj := extractObject (stripThink res.content) | return (true, "")
+  let some j := (Json.parse obj).toOption | return (true, "")
+  return ((str j "answer").toLower != "no", str j "left")
+
 /-- Run one action, insisting that clicks / typing / keys change the
     screen. `.ok (observed, evidence, point)` or `.error (msg, evidence, point)`. -/
 def attempt (c : Ctx) (cfg : Config) (idx : Nat) (act : Action) (why : String) (requireChange := true)
@@ -310,8 +329,15 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
       return (steps, false)
     | .ok (.done summary) =>
       if checkedThisGoal then
-        emit (.finished true (if summary.isEmpty then "goal verified" else summary))
-        return (steps, true)
+        let (_, now) ← c.shot idx "judge"
+        let (whole, left) ← try goalReached c now goal (steps.map (·.act)) catch _ => pure (true, "")
+        if whole then
+          emit (.finished true (if summary.isEmpty then "goal verified" else summary))
+          return (steps, true)
+        failures := failures + 1
+        lastError := some s!"(not an error) the goal is not finished yet: {left}. Do that next."
+        emit (.note s!"not finished yet: {left}")
+        continue
       failures := failures + 1
       lastError := some "you said done, but no assert has verified the goal yet. Add an assert step that checks the goal on screen."
       emit (.note "done refused: no passing assert yet")
@@ -330,8 +356,15 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
       -- anything, means the goal was only that check
       if acts.length == 1 && steps.getLast?.map (·.act |> describe) == some text then
         if !acted && acts.all confirms && checkedThisGoal then
-          emit (.finished true s!"goal verified (a check only): {text}")
-          return (steps, true)
+          let (_, now) ← c.shot idx "judge"
+          let (whole, left) ← try goalReached c now goal (steps.map (·.act)) catch _ => pure (true, "")
+          if whole then
+            emit (.finished true s!"goal verified (a check only): {text}")
+            return (steps, true)
+          failures := failures + 1
+          lastError := some s!"(not an error) checking is not enough, the goal is not finished: {left}. Do that next (click / fill …)."
+          emit (.note s!"not finished yet: {left}")
+          continue
         failures := failures + 1
         lastError := some s!"`{text}` was just done; choose the next step."
         emit (.note s!"skipped a repeat of `{text}`")
@@ -366,8 +399,15 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
             acted := true
           if acts.any confirms then
             if acted then
-              emit (.finished true s!"goal verified: {text}")
-              return (steps, true)
+              let (_, now) ← c.shot idx "judge"
+              let (whole, left) ← try goalReached c now goal (steps.map (·.act)) catch _ => pure (true, "")
+              if whole then
+                emit (.finished true s!"goal verified: {text}")
+                return (steps, true)
+              -- the check stays recorded (it held); the goal goes on
+              lastError := some s!"(not an error) that check passed, but the goal is not finished yet: {left}. Do the next action the goal asks for."
+              emit (.note s!"check passed, but not finished yet: {left}")
+              continue
             checkedThisGoal := true
             lastError := some ("(not an error) that check already passes before doing anything. " ++
               "Now do what the goal asks (click / fill …), then assert the result. If the goal only asked to check, reply done.")
