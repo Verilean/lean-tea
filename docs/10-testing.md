@@ -333,7 +333,10 @@ vision_qa test.json --target browser --url https://example.com/game --profile ~/
   wait is recorded. On a screen that animates by itself a click is
   judged by the area around it instead of the whole screen.
 - For something that plays by itself for a while (a battle), the model
-  can propose `wait_until` with a yes/no question (up to 600 s). Plain
+  can propose `wait_until` with a yes/no question (up to 600 s). A
+  `wait_until` gives up early when the screen hasn't changed for 20 s
+  (less than 0.3% of it moved): a story page or a dialog waits for a
+  click, not for time. Plain
   waits may repeat up to 3 in a row; then it's told the screen needs an
   action (a story scene waits for a click, not for time).
 - `click_described` takes up to 3 looks (600 ms apart) to find its

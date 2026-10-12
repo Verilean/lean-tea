@@ -48,6 +48,26 @@ def parseHex (s : String) : Option (Nat × Nat × Nat) := do
 def num? (j : Json) (k : String) : Option Nat :=
   match j.getObjValD k with | .num n => some n.mantissa.toNat | _ => none
 
+/-- How many sampled pixels (every 2nd in each direction) differ between
+    two screenshots; the sample count if the sizes differ. Small on
+    purpose: six password dots or a caret must still register. -/
+def changedPixels (a b : Image) : Nat := Id.run do
+  if a.width != b.width || a.height != b.height then return a.width * a.height / 4
+  let mut diff := 0
+  for y in [0:a.height:2] do
+    for x in [0:a.width:2] do
+      if a.pixel x y != b.pixel x y then diff := diff + 1
+  return diff
+
+/-- `changedPixels` restricted to a window (clamped to the image). -/
+def changedPixelsIn (a b : Image) (x0 y0 w h : Nat) : Nat := Id.run do
+  if a.width != b.width || a.height != b.height then return w * h / 4
+  let mut diff := 0
+  for y in [y0:min (y0 + h) a.height:2] do
+    for x in [x0:min (x0 + w) a.width:2] do
+      if a.pixel x y != b.pixel x y then diff := diff + 1
+  return diff
+
 /-- Run one action; returns (observation for the audit log, evidence path). -/
 def runAction (c : Ctx) (idx : Nat) : Action → IO (Option String × Option String)
   | .clickXy x y => do c.drv.click x y; c.lastPoint.set (some (x, y)); return (none, none)
@@ -130,12 +150,27 @@ def runAction (c : Ctx) (idx : Nat) : Action → IO (Option String × Option Str
   | .waitUntil q timeoutMs => do
     let t0 ← IO.monoMsNow
     let mut last := ""
+    -- a screen that hasn't changed at all for this long is waiting for
+    -- input (a story page, a dialog), not playing: stop waiting
+    let stillMs := 20000
+    let mut prev : Option Image := none
+    let mut stillSince := t0
     repeat
       let (p, img) ← c.shot idx "wait"
       let v ← ask c.vlm img q
       last := v.answer
       if v.yes? == some true then return (some s!"yes after {(← IO.monoMsNow) - t0}ms", some p.toString)
-      if (← IO.monoMsNow) - t0 > timeoutMs then break
+      let now ← IO.monoMsNow
+      if let some before := prev then
+        -- small motion (a blinking "next" arrow, drifting particles) is
+        -- still: count it moving only when 0.3% of the screen changed
+        let samples := (img.width / 2) * (img.height / 2)
+        if changedPixels before img ≥ max 4 (samples * 3 / 1000) then stillSince := now
+      prev := some img
+      if now - stillSince > stillMs then
+        throw <| IO.userError (s!"wait_until: the screen has not changed for {stillMs / 1000}s — it is waiting for " ++
+          s!"input (a click), not for time — {q} (last answer: {last})")
+      if now - t0 > timeoutMs then break
       IO.sleep 1000
     throw <| IO.userError s!"wait_until: still no after {timeoutMs}ms — {q} (last answer: {last})"
   -- loop markers: `runSteps` does the control flow; on their own
@@ -155,26 +190,6 @@ def runAction (c : Ctx) (idx : Nat) : Action → IO (Option String × Option Str
       if (← IO.monoMsNow) - t0 > timeoutMs then break
       IO.sleep 1000
     throw <| IO.userError s!"wait_for_screen: timed out waiting for {screen} (last: {last})"
-
-/-- How many sampled pixels (every 2nd in each direction) differ between
-    two screenshots; the sample count if the sizes differ. Small on
-    purpose: six password dots or a caret must still register. -/
-def changedPixels (a b : Image) : Nat := Id.run do
-  if a.width != b.width || a.height != b.height then return a.width * a.height / 4
-  let mut diff := 0
-  for y in [0:a.height:2] do
-    for x in [0:a.width:2] do
-      if a.pixel x y != b.pixel x y then diff := diff + 1
-  return diff
-
-/-- `changedPixels` restricted to a window (clamped to the image). -/
-def changedPixelsIn (a b : Image) (x0 y0 w h : Nat) : Nat := Id.run do
-  if a.width != b.width || a.height != b.height then return w * h / 4
-  let mut diff := 0
-  for y in [y0:min (y0 + h) a.height:2] do
-    for x in [x0:min (x0 + w) a.width:2] do
-      if a.pixel x y != b.pixel x y then diff := diff + 1
-  return diff
 
 /-- Restrict a driver to a region of its screen: screenshots are cropped
     to it and clicks are offset into it, so the model only ever sees
