@@ -218,7 +218,11 @@ def attempt (c : Ctx) (cfg : Config) (idx : Nat) (act : Action) (why : String) (
     steps that worked — the recorded script so far — and whether the
     goal was reached. `stop` is polled between turns. -/
 def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (worked : List Step)
-    (emit : Event → IO Unit) (stop : IO Bool) (outline : IO String := pure "") : IO (List Step × Bool) := do
+    (emit : Event → IO Unit) (stop : IO Bool) (outline : IO String := pure "")
+    (hints : IO (List String) := pure []) : IO (List Step × Bool) := do
+  let mut notes := notes
+  -- a check that passes before anything was done doesn't prove the goal
+  let mut acted := false
   let mut steps := worked
   let mut lastError : Option String := none
   let mut failures := 0
@@ -226,6 +230,9 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
   let mut checkedThisGoal := false
   let mut idx := worked.length
   for turn in [0:cfg.maxTurns] do
+    if failures ≥ cfg.maxFailures then
+      emit (.finished false s!"stopped after {failures} failed attempts in a row")
+      return (steps, false)
     if ← stop then
       emit (.finished false "stopped")
       return (steps, false)
@@ -234,6 +241,11 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
     let animated := motion ≥ 0.01
     let (_, img) ← c.shot idx "look"
     emit (.thinking s!"turn {turn + 1}: looking at the page…")
+    -- messages the user sent while we work
+    let fresh ← hints
+    for h in fresh do
+      notes := notes ++ [s!"User hint (follow it): {h}"]
+      emit (.note s!"hint received: {h}")
     let pageOutline ← try outline catch _ => pure ""
     let prompt := promptFor goal notes (steps.map (·.act)) lastError (cfg.maxTurns - turn) pageOutline
     let reply ← try propose c img prompt (if failures == 0 then 0.0 else 0.5) cfg.maxTokens
@@ -265,8 +277,13 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
         | .fill t x _ => s!"fill \"{t}\" with \"{x}\""
         | _ => String.intercalate ", then " (acts.map describe)
       emit (.proposal text why)
-      -- the same step again right after it worked adds nothing
+      -- the same step again right after it worked adds nothing — except
+      -- that insisting on a check that already passed, before doing
+      -- anything, means the goal was only that check
       if acts.length == 1 && steps.getLast?.map (·.act |> describe) == some text then
+        if !acted && acts.all confirms && checkedThisGoal then
+          emit (.finished true s!"goal verified (a check only): {text}")
+          return (steps, true)
         failures := failures + 1
         lastError := some s!"`{text}` was just done; choose the next step."
         emit (.note s!"skipped a repeat of `{text}`")
@@ -297,9 +314,16 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
           idx := idx + done.length
           lastError := none
           failures := 0
+          if acts.any (fun a => !confirms a && !(match a with | .assertVisual .. => true | _ => false)) then
+            acted := true
           if acts.any confirms then
-            emit (.finished true s!"goal verified: {text}")
-            return (steps, true)
+            if acted then
+              emit (.finished true s!"goal verified: {text}")
+              return (steps, true)
+            checkedThisGoal := true
+            lastError := some ("(not an error) that check already passes before doing anything. " ++
+              "Now do what the goal asks (click / fill …), then assert the result. If the goal only asked to check, reply done.")
+            emit (.note "that already holds — now doing what the goal asks")
         | some err =>
           failures := failures + 1
           tried := (text, err) :: tried

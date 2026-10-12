@@ -32,7 +32,7 @@ structure Driver where
 
 def Driver.browser (s : LeanTea.Browser.Session) : Driver where
   name := "browser"
-  screenshot p := do let _ ← s.screenshot (outputPath := some p.toString)
+  screenshot p := do let _ ← s.screenshot (outputPath := some p.toString) (withData := false)
   click x y := s.clickXy x y
   key k := s.press k
   typeText t := for c in t.toList do s.press (if c == ' ' then "Space" else c.toString)

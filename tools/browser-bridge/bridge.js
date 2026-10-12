@@ -205,7 +205,7 @@ const methods = {
    *  (parent dirs are created). Useful when the caller wants a file
    *  on disk to hand to another process — e.g. curl-ing to a vision
    *  LLM — without having to base64-decode the JSON response. */
-  async screenshot({ selector, fullPage = false, format = 'png', outputPath } = {}) {
+  async screenshot({ selector, fullPage = false, format = 'png', outputPath, noData = false } = {}) {
     const pg = await requirePage();
     let buf;
     if (selector) {
@@ -220,7 +220,9 @@ const methods = {
     }
     const vp = pg.viewportSize();
     return {
-      base64:     buf.toString('base64'),
+      // `noData` with `outputPath`: the caller reads the file, so skip a
+      // multi-MB base64 string the caller would only have to parse
+      base64:     (noData && outputPath) ? '' : buf.toString('base64'),
       mime:       format === 'jpeg' ? 'image/jpeg' : 'image/png',
       bytes:      buf.length,
       width:      vp.width,

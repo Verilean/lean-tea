@@ -94,6 +94,12 @@ structure Studio where
   state   : IO.Ref State
   stopReq : IO.Ref Bool
   shotN   : IO.Ref Nat
+  /-- Held while something drives the browser (a job, or one live-view
+      screenshot). Separate from `State.busy`, which means "a job runs":
+      a live screenshot must never make the chat look busy. -/
+  lock    : IO.Ref Bool
+  /-- Messages sent while a job runs, handed to it as hints. -/
+  hints   : IO.Ref (Array String)
 
 def Studio.ctx (s : Studio) (steps : List Step) : IO Ctx := do
   return { drv := s.drv, vlm := s.vlm, zoom := 3, dir := s.dir,
@@ -138,20 +144,43 @@ def Studio.script (s : Studio) (st : State) (name : String) : Script :=
     description := s!"Recorded with qa_studio on {st.startUrl} (model {s.vlm.model}). Goals: " ++
       String.intercalate " / " st.goals.reverse }
 
-/-- Claim the browser for a background job; false if one is running. -/
+/-- Mark a job as running; false if one already is. -/
 def Studio.claim (s : Studio) : IO Bool :=
   s.state.modifyGet fun st => if st.busy then (false, st) else (true, { st with busy := true })
 
 def Studio.release (s : Studio) : IO Unit := s.state.modify ({ · with busy := false })
 
-/-- Run `job` on its own thread with the browser claimed. -/
+def Studio.tryLock (s : Studio) : IO Bool :=
+  s.lock.modifyGet fun held => if held then (false, held) else (true, true)
+
+def Studio.unlock (s : Studio) : IO Unit := s.lock.set false
+
+/-- Take the browser, waiting for a live-view screenshot to finish. -/
+partial def Studio.waitLock (s : Studio) : IO Unit := do
+  if !(← s.tryLock) then
+    IO.sleep 50
+    s.waitLock
+
+/-- Run `job` on its own thread, holding the browser for its duration. -/
 def Studio.background (s : Studio) (job : IO Unit) : IO Bool := do
   if !(← s.claim) then return false
   s.stopReq.set false
   let _ ← IO.asTask (prio := .dedicated) do
+    s.waitLock
     try job catch e => s.push [("kind", "finished"), ("ok", .bool false), ("text", .str s!"error: {e}")]
+    s.unlock
     s.release
   return true
+
+/-- Hints sent since the last call (the running job picks them up). -/
+def Studio.drainHints (s : Studio) : IO (List String) :=
+  s.hints.modifyGet fun hs => (hs.toList, #[])
+
+/-- "yes", "ok", "good!", "thanks" — a reply, not something to test. -/
+def isAck (text : String) : Bool :=
+  let words := (text.toLower.map fun c => if c.isAlphanum || c == ' ' then c else ' ').splitOn " " |>.filter (!·.isEmpty)
+  let acks := ["yes", "y", "ok", "okay", "good", "great", "nice", "cool", "thanks", "thank", "you", "fine", "sure", "right", "perfect"]
+  !words.isEmpty && words.length ≤ 3 && words.all acks.contains
 
 def Studio.goto (s : Studio) (url : String) : IO Unit := do
   let _ ← s.session.navigate url
@@ -195,7 +224,8 @@ def Studio.explore (s : Studio) (goal : String) : IO Unit := do
   let st ← s.state.get
   let ctx ← s.ctx st.steps
   let notes := st.goals.reverse.map (s!"Earlier goal, already done: " ++ ·)
-  let (steps, _) ← Explore.explore ctx {} goal notes st.steps s.emit (s.stopReq.get) s.outline
+  let _ ← s.drainHints
+  let (steps, _) ← Explore.explore ctx {} goal notes st.steps s.emit (s.stopReq.get) s.outline s.drainHints
   -- a fresh test opens the page and must not act before it's ready (a
   -- game takes a while to load): gate it on its first click target
   let steps := match st.steps, steps with
@@ -255,12 +285,14 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
     return Response.html 200 (← (← page).renderFlat [("model", quoteAttr s.vlm.model), ("url", quoteAttr st.startUrl)])
   | "GET", "/live.png" =>
     let st ← s.state.get
-    if !st.busy && (← s.claim) then
+    -- borrow the browser only when no job runs and nobody else holds it;
+    -- otherwise show the last evidence screenshot
+    if !st.busy && (← s.tryLock) then
       try
         let p := s.dir / "live.png"
         s.drv.screenshot p
         return png (← IO.FS.readBinFile p)
-      finally s.release
+      finally s.unlock
     match st.lastShot with
     | some p => return png (← IO.FS.readBinFile p)
     | none => return err 503 "no screenshot yet"
@@ -289,8 +321,16 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
     let text := (str (jsonBody req) "text").trimAscii.toString
     if text.isEmpty then return err 400 "empty message"
     s.push [("kind", "user"), ("text", .str text)]
+    let hint := fun (_ : Unit) => do
+      s.hints.modify (·.push text)
+      s.push [("kind", "note"), ("text", .str "passed to the running attempt as a hint")]
+      return ok
+    if (← s.state.get).busy then return ← hint ()
+    if isAck text then
+      s.push [("kind", "note"), ("text", .str "OK — send the next thing to test (or Replay / Save the test).")]
+      return ok
     if ← s.background (s.explore text) then return ok
-    else return busyErr
+    else hint ()
   | "POST", "/api/stop" => s.stopReq.set true; return ok
   | "POST", "/api/navigate" =>
     let url := str (jsonBody req) "url"
@@ -349,7 +389,8 @@ def main (argv : List String) : IO Unit := do
     | some spec => (Driver.browser session).clipTo (browserRegion session spec)
     | none => pure (Driver.browser session)
   let s : Studio := { args := a, session, drv, vlm, dir,
-                      state := ← IO.mkRef { startUrl }, stopReq := ← IO.mkRef false, shotN := ← IO.mkRef 0 }
+                      state := ← IO.mkRef { startUrl }, stopReq := ← IO.mkRef false, shotN := ← IO.mkRef 0,
+                      lock := ← IO.mkRef false, hints := ← IO.mkRef #[] }
   -- open the start page once the server below is answering (it may be /demo)
   let _ ← IO.asTask (prio := .dedicated) do
     IO.sleep 700

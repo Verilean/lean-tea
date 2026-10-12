@@ -282,8 +282,11 @@ def Screenshot.dataUrl (s : Screenshot) : String :=
     going through base64 decode. -/
 def Session.screenshot (s : Session) (selector : Option String := none)
     (fullPage : Bool := false) (outputPath : Option String := none)
-    : IO Screenshot := do
+    (withData : Bool := true) : IO Screenshot := do
   let mut p : List (String × Json) := [("fullPage", Json.bool fullPage)]
+  -- with an outputPath, `withData := false` skips the base64 copy (a
+  -- 2 MB game screenshot is seconds of JSON parsing on the Lean side)
+  if !withData then p := p ++ [("noData", Json.bool true)]
   if let some sel := selector then
     p := p ++ [("selector", Json.str sel)]
   if let some out := outputPath then
