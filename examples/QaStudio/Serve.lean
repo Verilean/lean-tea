@@ -100,6 +100,9 @@ structure Studio where
   lock    : IO.Ref Bool
   /-- Messages sent while a job runs, handed to it as hints. -/
   hints   : IO.Ref (Array String)
+  /-- Where the user clicked the live view while a job runs: the job's
+      next step clicks there. -/
+  pointer : IO.Ref (Option (Nat × Nat))
 
 def Studio.ctx (s : Studio) (steps : List Step) : IO Ctx := do
   return { drv := s.drv, vlm := s.vlm, zoom := 3, dir := s.dir,
@@ -225,7 +228,9 @@ def Studio.explore (s : Studio) (goal : String) : IO Unit := do
   let ctx ← s.ctx st.steps
   let notes := st.goals.reverse.map (s!"Earlier goal, already done: " ++ ·)
   let _ ← s.drainHints
+  s.pointer.set none
   let (steps, _) ← Explore.explore ctx {} goal notes st.steps s.emit (s.stopReq.get) s.outline s.drainHints
+    (s.pointer.modifyGet fun p => (p, none))
   -- a fresh test opens the page and must not act before it's ready (a
   -- game takes a while to load): gate it on its first click target
   let steps := match st.steps, steps with
@@ -236,6 +241,23 @@ def Studio.explore (s : Studio) (goal : String) : IO Unit := do
       | _ => steps
     | _, _ => steps
   s.state.modify fun st => { st with steps, verified := none, goals := goal :: st.goals }
+
+/-- The user clicked the live view with nothing running: click there and
+    record it (a fixed point — fine for a game canvas, which `--clip`
+    keeps at the same place). -/
+def Studio.pointClick (s : Studio) (x y : Nat) : IO Unit := do
+  let st ← s.state.get
+  let ctx ← s.ctx st.steps
+  let animated := (← settle ctx (maxMs := 2000)) ≥ 0.01
+  let act := Action.clickXy x y
+  let (_, img) ← ctx.shot st.steps.length "look"
+  let name? ← try Explore.nameAt ctx img x y catch _ => pure none
+  match ← Explore.attempt ctx {} st.steps.length act "the user pointed here" true animated with
+  | .ok (obs, ev, pt) =>
+    s.emit (.stepOk (Explore.describe act) obs ev pt)
+    if let some n := name? then s.emit (.note s!"recorded as: wait until {n} shows, then click ({x}, {y})")
+    s.state.modify fun st => { st with steps := st.steps ++ Explore.pointedSteps name? x y, verified := none }
+  | .error (e, ev, pt) => s.emit (.stepFailed (Explore.describe act) e ev pt)
 
 def Studio.replay (s : Studio) : IO Unit := do
   let st ← s.state.get
@@ -331,6 +353,18 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
       return ok
     if ← s.background (s.explore text) then return ok
     else hint ()
+  | "POST", "/api/point" =>
+    let j := jsonBody req
+    let num := fun k => match j.getObjValD k with
+      | .num n => some (n.mantissa.toNat / 10 ^ n.exponent)
+      | _ => none
+    let (some x, some y) := (num "x", num "y") | return err 400 "x and y needed"
+    s.push [("kind", "user"), ("text", .str s!"(clicked the screen at {x}, {y})")]
+    if (← s.state.get).busy then
+      s.pointer.set (some (x, y))
+      s.push [("kind", "note"), ("text", .str "the running attempt clicks there next")]
+      return ok
+    return if ← s.background (s.pointClick x y) then ok else busyErr
   | "POST", "/api/stop" => s.stopReq.set true; return ok
   | "POST", "/api/navigate" =>
     let url := str (jsonBody req) "url"
@@ -390,7 +424,7 @@ def main (argv : List String) : IO Unit := do
     | none => pure (Driver.browser session)
   let s : Studio := { args := a, session, drv, vlm, dir,
                       state := ← IO.mkRef { startUrl }, stopReq := ← IO.mkRef false, shotN := ← IO.mkRef 0,
-                      lock := ← IO.mkRef false, hints := ← IO.mkRef #[] }
+                      lock := ← IO.mkRef false, hints := ← IO.mkRef #[], pointer := ← IO.mkRef none }
   -- open the start page once the server below is answering (it may be /demo)
   let _ ← IO.asTask (prio := .dedicated) do
     IO.sleep 700

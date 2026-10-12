@@ -184,6 +184,31 @@ def propose (c : Ctx) (img : Image) (prompt : String) (temperature : Float) (max
     maxTokens := some maxTokens }
   return stripThink res.content
 
+/-- A short name for what is at `(x, y)` (the user pointed there), from a
+    crop around the point — used to gate a replayed fixed-point click on
+    that thing being on screen. -/
+def nameAt (c : Ctx) (img : Image) (x y : Nat) : IO (Option String) := do
+  let crop := img.crop (x - min x 160) (y - min y 80) 320 160
+  let res ← chat c.vlm.cfg {
+    model := c.vlm.model,
+    messages := [userTextAndImage ("Name the button, icon or text at the centre of this image in at most 6 words " ++
+      "(e.g. \"the Section 3 button\"). Reply with only the name.") (← crop.dataUrl)],
+    temperature := some 0.0, maxTokens := some 30 }
+  let name := (stripThink res.content).trimAscii.toString
+  let name := String.ofList (name.toList.filter (fun ch => ch != '"' && ch != '\n'))
+  let name := if name.endsWith "." then (name.dropEnd 1).toString else name
+  return if name.isEmpty || name.length > 60 then none else some name
+
+/-- The steps recorded for a click the user pointed at: wait until the
+    thing there shows (so a replay doesn't click a loading screen), then
+    click the point. -/
+def pointedSteps (name? : Option String) (x y : Nat) : List Step :=
+  (match name? with
+   | some n => [{ act := .waitUntil s!"Is {n} visible on the screen?" (timeoutMs := 30000),
+                  note := "wait for what the user pointed at" }]
+   | none => []) ++
+  [{ act := .clickXy x y, note := "the user pointed here" }]
+
 /-- Run one action, insisting that clicks / typing / keys change the
     screen. `.ok (observed, evidence, point)` or `.error (msg, evidence, point)`. -/
 def attempt (c : Ctx) (cfg : Config) (idx : Nat) (act : Action) (why : String) (requireChange := true)
@@ -219,7 +244,8 @@ def attempt (c : Ctx) (cfg : Config) (idx : Nat) (act : Action) (why : String) (
     goal was reached. `stop` is polled between turns. -/
 def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (worked : List Step)
     (emit : Event → IO Unit) (stop : IO Bool) (outline : IO String := pure "")
-    (hints : IO (List String) := pure []) : IO (List Step × Bool) := do
+    (hints : IO (List String) := pure [])
+    (pointed : IO (Option (Nat × Nat)) := pure none) : IO (List Step × Bool) := do
   let mut notes := notes
   -- a check that passes before anything was done doesn't prove the goal
   let mut acted := false
@@ -246,6 +272,25 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
     for h in fresh do
       notes := notes ++ [s!"User hint (follow it): {h}"]
       emit (.note s!"hint received: {h}")
+    -- the user clicked the live view: that's the next step, no model call
+    if let some (x, y) ← pointed then
+      let act := Action.clickXy x y
+      emit (.proposal (describe act) "the user pointed here")
+      let name? ← try nameAt c img x y catch _ => pure none
+      match ← attempt c cfg idx act "the user pointed here" true animated with
+      | .ok (obs, ev, pt) =>
+        let added := pointedSteps name? x y
+        steps := steps ++ added
+        idx := idx + added.length
+        acted := true
+        failures := 0
+        lastError := none
+        emit (.stepOk (describe act) obs ev pt)
+        if let some n := name? then emit (.note s!"recorded as: wait until {n} shows, then click ({x}, {y})")
+      | .error (e, ev, pt) =>
+        lastError := some s!"the user's click at ({x}, {y}) failed: {e}"
+        emit (.stepFailed (describe act) e ev pt)
+      continue
     let pageOutline ← try outline catch _ => pure ""
     let prompt := promptFor goal notes (steps.map (·.act)) lastError (cfg.maxTurns - turn) pageOutline
     let reply ← try propose c img prompt (if failures == 0 then 0.0 else 0.5) cfg.maxTokens

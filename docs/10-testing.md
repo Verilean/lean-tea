@@ -274,6 +274,17 @@ vision_qa test.json --target browser --url https://example.com/game --profile ~/
   (a VLM poll), so a replay doesn't act while the game is still loading
   — the loading and title screens differ too little for a pixel check.
 
+- When the model can't find a target, **click it in the live view**. With
+  nothing running the studio clicks there and records it; during a run
+  the click becomes the run's next step. Text sent during a run is
+  passed to the model as a hint. The model can't see the mouse cursor,
+  so a hint like "below the cursor" doesn't help it; point instead.
+  A pointed click is recorded as `wait_until "Is <what's there>
+  visible?"` (the VLM names a crop around the point) followed by
+  `click_xy`, so a replay waits for the screen before clicking a
+  fixed point. On `/demo-game`, pointing at TAP TO START and Quest
+  recorded 4 steps whose replay passed in 5 s.
+
 `/demo-game` is a stand-in to try this on (portal login, a canvas game
 in an iframe, 2.5 s loading, animated background).
 With `qwen/qwen3-vl-4b`: logging in through the portal by chat worked;

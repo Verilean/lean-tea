@@ -148,6 +148,14 @@ def exploreGroup : LSpec :=
          | [{ act := .waitUntil "Is TAP TO START visible?" 45000, .. }] => true
          | _ => false
        | .error _ => false),
+    it "a pointed click is gated on what is there"
+      (match Explore.pointedSteps (some "the Quest button") 250 295 with
+       | [{ act := .waitUntil "Is the Quest button visible on the screen?" _, .. }, { act := .clickXy 250 295, .. }] => true
+       | _ => false),
+    it "a pointed click with no name is just the click"
+      (match Explore.pointedSteps none 1 2 with
+       | [{ act := .clickXy 1 2, .. }] => true
+       | _ => false),
     it "prompt carries goal, notes, history, the last error and the page outline"
       (let p := Explore.promptFor "sign in" ["be quick"] [.typeText "alice"] (some "typing changed nothing") 5 "button \"Sign in\"";
        [ "Goal: sign in", "- be quick", "1. type \"alice\" — ok", "FAILED: typing changed nothing",
