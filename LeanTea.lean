@@ -57,6 +57,8 @@ import LeanTea.Agent.Conductor
 import LeanTea.Vision.Image
 import LeanTea.Vision.Ground
 import LeanTea.Vision.Driver
+import LeanTea.Vision.Qa
+import LeanTea.Vision.Explore
 import LeanTea.Net.S3Server
 import LeanTea.Site
 import LeanTea.Crypto.Base64

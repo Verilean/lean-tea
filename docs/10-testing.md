@@ -208,6 +208,41 @@ the click deterministically. Manifests land in
 agent use, `vision_qa_mcp_serve` exposes the same primitives as MCP
 tools next to `browser_mcp_serve` / `desktop_mcp_serve`.
 
+### Writing tests by chatting — `qa_studio`
+
+```
+lake exe qa_studio                                  # http://localhost:8020/ (tests its built-in /demo app)
+lake exe qa_studio --url http://127.0.0.1:8005/     # any page
+```
+
+One screen: the page under test on the left (a live screenshot from a
+headless browser, last click marked), a chat with the local VLM on the
+right. Describe a check in plain words; the model works it out by
+trial and error (`LeanTea.Vision.Explore`):
+
+- each turn it sees the screenshot, the goal, the steps that worked,
+  the last error and an outline of the page's inputs / buttons /
+  headings (from the DOM — only to help a 4B model *describe*
+  targets; the recorded steps stay visual), and proposes one step:
+  `fill` (click a field, type), `click`, `key`, `assert`, `done`, `fail`;
+- the step runs through the same kernel as `vision_qa`
+  (`LeanTea.Vision.Qa`). Clicks, typing and keys must visibly change
+  the page; a step that fails is dropped and the error goes back to
+  the model; a repeat of a failed step is refused;
+- the goal is reached when an assertion that expects "yes" passes.
+
+Later messages continue from there, so a test is built goal by goal.
+**Replay** reloads the start page and runs only the recorded steps;
+**Save test** writes a `vision_qa` script (default
+`examples/VisionQa/scripts/`) and shows the command. With
+`qwen/qwen3-vl-4b` on the demo app, "sign in as alice with the password
+secret and check the welcome message" took 4 proposals / 20 s, "add a
+task called Buy milk and check it's listed" 3 / 17 s; the replay
+passed (10 steps, 12 s) and the saved
+`examples/VisionQa/scripts/notes.signin_add_task.json` passes under
+`vision_qa` — and fails at the welcome check when the password is
+changed to a wrong one.
+
 ### Choosing the model — `vision_bench`
 
 Which small model is "accurate enough" is measured, not assumed:

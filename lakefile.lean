@@ -582,6 +582,13 @@ lean_exe breezehollow_spec where
   srcDir := "examples"
   root := `Tests.BreezehollowSpec
 
+/-- QA Studio — the page under test next to a chat with a local VLM,
+    which works out a UI test by trial and error and records the steps
+    that worked as a replayable `vision_qa` script. -/
+lean_exe qa_studio where
+  srcDir := "examples"
+  root := `QaStudio.Serve
+
 /-- Aggregated LSpec runner for the construction-time security
     primitives (SafeHtml + SafePath + SafeCmd + SafeHeader +
     SafeRedirect). One binary, one CI step, ~60 LSpec assertions. -/
