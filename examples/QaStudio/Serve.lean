@@ -413,18 +413,27 @@ def Studio.pointClick (s : Studio) (x y : Nat) (name? : Option String := none) :
     return true
   | .error (e, ev, pt) => s.emit (.stepFailed (Explore.describe act) e ev pt); return false
 
-/-- Read the screen into a list of elements for the user to pick from. -/
+/-- Read the screen into a list of elements for the user to pick from:
+    first the text OCR finds (a second or two, shown at once), then the
+    buttons the model reads, a quarter at a time (Stop skips the rest). -/
 def Studio.readScreen (s : Studio) : IO Unit := do
   let st ← s.state.get
   let ctx ← s.ctx st.steps
   let _ ← settle ctx (maxMs := 3000)
-  let (_, img) ← ctx.shot st.steps.length "read"
+  let (path, img) ← ctx.shot st.steps.length "read"
   let t0 ← IO.monoMsNow
-  let (es, answer) ← Elements.list s.vlm img
+  let lines ← try Ocr.read path catch _ => pure []
+  let secs := fun (t : Nat) => s!"{(t - t0) / 1000}.{(t - t0) % 1000 / 100}"
+  if !lines.isEmpty then
+    s.state.modify ({ · with elements := Elements.ofOcr lines })
+    s.push [("kind", "note"), ("text", .str s!"OCR: {lines.length} text lines ({secs (← IO.monoMsNow)}s) — asking the model which are buttons (Stop to skip)…")]
+  let (buttons, answer) ← Elements.list s.vlm img (stop := s.stopReq.get)
+  let es := Elements.merge buttons lines
   s.state.modify ({ · with elements := es })
-  if es.isEmpty then s.push [("kind", "note"), ("text", .str s!"nothing could be read from the model's answer: {answer.take 300}")]
+  if buttons.isEmpty && !(← s.stopReq.get) then
+    s.push [("kind", "note"), ("text", .str s!"the model listed no buttons: {answer.take 300}")]
   s.push [("kind", "note"),
-          ("text", .str s!"read the screen: {es.length} elements ({((← IO.monoMsNow) - t0) / 1000}s) — pick one to click or check")]
+          ("text", .str s!"read the screen: {buttons.length} buttons, {es.length - buttons.length} more text ({secs (← IO.monoMsNow)}s) — pick one to click or check")]
 
 /-- The user picked a listed element to check: record that it is shown
     (it is — the model just read it there). No browser needed, and the
@@ -613,7 +622,7 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
         ("scenario", .str (← s.scenario.get)),
         ("scenarios", .arr ((← s.scenarios).toArray.map Json.str)),
         ("elements", .arr (st.elements.toArray.map fun e => Json.mkObj [
-          ("label", .str e.label),
+          ("label", .str e.label), ("kind", .str e.kind),
           ("x", .num (Int.ofNat e.rect.x.toUInt64.toNat)), ("y", .num (Int.ofNat e.rect.y.toUInt64.toNat)),
           ("w", .num (Int.ofNat e.rect.w.toUInt64.toNat)), ("h", .num (Int.ofNat e.rect.h.toUInt64.toNat))])),
         ("script", (s.script st "qa_studio.draft").toJson),

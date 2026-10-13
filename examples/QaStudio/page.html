@@ -47,6 +47,12 @@
     #overlay { position: absolute; inset: 0; pointer-events: none; }
     #overlay .box { pointer-events: auto; }
     #overlay.off { display: none; }
+    .box.text { border-color: rgba(56,189,248,.8); border-width: 1px; }
+    .box.text span { display: none; }
+    #overlay.buttonsonly .box.text { display: none; }
+    #elist .item.text { border-style: dashed; }
+    #elist .item.text .label { color: var(--muted); }
+    #efilter { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; width: 160px; }
     .elements { margin-top: 10px; }
     .elements .rowbtns { margin: 0 0 6px; }
     #elist { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px; }
@@ -122,8 +128,10 @@
       <div class="elements">
         <div class="rowbtns">
           <button id="read" class="primary" title="Have the model list the buttons and labels on the screen">Read screen</button>
-          <label class="help"><input type="checkbox" id="showboxes" checked> boxes on the screen</label>
-          <span class="help">Pick what to click (it is clicked, recorded, and the new screen is read) or what to check.</span>
+          <input id="efilter" placeholder="filter, e.g. クエスト">
+          <label class="help"><input type="checkbox" id="showboxes" checked> boxes</label>
+          <label class="help"><input type="checkbox" id="showtext" checked> text too</label>
+          <span class="help">Solid: buttons the model read; dashed: other text OCR found. Pick what to click (clicked, recorded, the new screen read) or to check.</span>
         </div>
         <div id="elist"></div>
       </div>
@@ -200,7 +208,7 @@
       ov.innerHTML = '';
       const k = img.clientWidth / (img.naturalWidth || 1);
       elements.forEach((e, i) => {
-        const b = el('div', 'box'); b.dataset.i = i;
+        const b = el('div', 'box ' + (e.kind || 'button')); b.dataset.i = i;
         Object.assign(b.style, { left: e.x * k + 'px', top: e.y * k + 'px', width: e.w * k + 'px', height: e.h * k + 'px' });
         b.title = e.label;
         b.append(el('span', '', String(i + 1)));
@@ -218,7 +226,7 @@
       elementsKey = key; elements = list || [];
       const box = $('elist'); box.innerHTML = '';
       elements.forEach((e, i) => {
-        const it = el('div', 'item'); it.dataset.i = i;
+        const it = el('div', 'item ' + (e.kind || 'button')); it.dataset.i = i;
         it.append(el('span', 'n', String(i + 1)), el('span', 'label', e.label));
         it.querySelector('.label').title = e.label;
         const c = el('button', '', 'click'); c.onclick = () => pick(i, 'click');
@@ -227,7 +235,15 @@
         it.onmouseenter = () => hot(i, true); it.onmouseleave = () => hot(i, false);
         box.append(it);
       });
-      placeBoxes();
+      placeBoxes(); applyFilter();
+    }
+    function applyFilter() {
+      const q = $('efilter').value.trim().toLowerCase(), text = $('showtext').checked;
+      document.querySelectorAll('#elist .item').forEach(n => {
+        const e = elements[+n.dataset.i];
+        n.hidden = (!text && e.kind === 'text') || (q && !e.label.toLowerCase().includes(q));
+      });
+      $('overlay').classList.toggle('buttonsonly', !text);
     }
     async function pick(index, mode) {
       if (busy && mode === 'click') return;
@@ -393,6 +409,8 @@
     $('live').onerror = () => {};
     $('live').addEventListener('load', placeBoxes);
     window.addEventListener('resize', placeBoxes);
+    $('efilter').oninput = applyFilter;
+    $('showtext').onchange = applyFilter;
     $('showboxes').onchange = () => $('overlay').classList.toggle('off', !$('showboxes').checked);
     $('read').onclick = async () => { const r = await api('/api/read', {}); if (r.error) alertLine(r.error); setTimeout(poll, 100); };
     $('live').onclick = async (e) => {

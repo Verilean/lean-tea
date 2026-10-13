@@ -1,4 +1,5 @@
 import LeanTea.Vision.Ground
+import LeanTea.Vision.Ocr
 
 /-! # LeanTea.Vision.Elements — the screen as a list of things to click
 
@@ -20,6 +21,9 @@ structure Element where
   rect  : Rect
   /-- Mean brightness: an element behind a dialog is dimmed. -/
   luma  : Float := 0
+  /-- `button` (the model says it can be pressed) or `text` (only OCR
+      found it: a label, or a button the model missed). -/
+  kind  : String := "button"
   deriving Inhabited, Repr
 
 def prompt : String :=
@@ -56,6 +60,25 @@ def parse (answer : String) (frame : CoordFrame) (w h : Nat) : List Element := I
 def Element.same (a b : Element) : Bool :=
   a.label == b.label && (a.rect.iou b.rect > 0.3 || a.rect.contains b.rect.cx b.rect.cy)
 
+/-- Top to bottom (in 40 px rows), then left to right. -/
+def readingOrder (es : List Element) : List Element :=
+  (es.toArray.qsort fun a b =>
+    let ra := (a.rect.cy / 40).floor
+    let rb := (b.rect.cy / 40).floor
+    ra < rb || (ra == rb && a.rect.cx < b.rect.cx)).toList
+
+/-- OCR lines as elements of kind `text`. -/
+def ofOcr (lines : List Ocr.Line) : List Element :=
+  readingOrder (lines.map fun l => { label := l.text, rect := l.rect, kind := "text" })
+
+/-- The model's buttons, then the OCR text no button covers (labels, and
+    buttons the model missed). A button keeps the model's label: it
+    reads a stylised label better in context than OCR does. -/
+def merge (buttons : List Element) (lines : List Ocr.Line) : List Element :=
+  let covered := fun (l : Ocr.Line) => buttons.any fun b =>
+    b.rect.contains l.rect.cx l.rect.cy || b.rect.iou l.rect > 0.3
+  readingOrder buttons ++ ofOcr (lines.filter (!covered ·))
+
 /-- Quarters of a `w`×`h` screen, overlapping by `pad` px so an element
     on a seam is whole in one of them: `(x, y, w, h)`. -/
 def tiles (w h : Nat) (pad : Nat := 60) : List (Nat × Nat × Nat × Nat) :=
@@ -68,11 +91,13 @@ def tiles (w h : Nat) (pad : Nat := 60) : List (Nat × Nat × Nat × Nat) :=
     of dates) and misses the menus; on a quarter it lists what can be
     pressed. Also returns the raw answers (to show when nothing could be
     read from them). -/
-def list (v : Vlm) (img : Image) (maxItems : Nat := 30) : IO (List Element × String) := do
+def list (v : Vlm) (img : Image) (maxItems : Nat := 30) (stop : IO Bool := pure false) :
+    IO (List Element × String) := do
   let v := { v with maxTokens := maxItems * 28 }
   let mut out : Array Element := #[]
   let mut answers : Array String := #[]
   for (x, y, w, h) in tiles img.width img.height do
+    if ← stop then break
     let tile := img.crop x y w h
     let a ← v.call prompt (← tile.dataUrl)
     answers := answers.push a.text
@@ -80,11 +105,6 @@ def list (v : Vlm) (img : Image) (maxItems : Nat := 30) : IO (List Element × St
       let e := { e with rect := { e.rect with x := e.rect.x + x.toFloat, y := e.rect.y + y.toFloat } }
       if out.any (·.same e) then continue
       out := out.push { e with luma := meanLuma img e.rect }
-  -- reading order: top to bottom, then left to right
-  let rows := out.qsort fun a b =>
-    let ra := (a.rect.cy / 40).floor
-    let rb := (b.rect.cy / 40).floor
-    ra < rb || (ra == rb && a.rect.cx < b.rect.cx)
-  return (rows.toList, String.intercalate "\n" answers.toList)
+  return (readingOrder out.toList, String.intercalate "\n" answers.toList)
 
 end LeanTea.Vision.Elements
