@@ -760,8 +760,15 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
   | "POST", "/api/delete" =>
     if (← s.state.get).busy then return busyErr
     let j := jsonBody req
-    let some i := (j.getObjValD "index").getNat?.toOption | return err 400 "index needed"
-    s.state.modify fun st => { st with steps := st.steps.eraseIdx i, verified := none }
+    -- {"index": i} or {"indices": [i, …]}
+    let indices := match j.getObjValD "indices" with
+      | .arr xs => xs.toList.filterMap (fun (x : Json) => x.getNat?.toOption)
+      | _ => ((j.getObjValD "index").getNat?.toOption).toList
+    if indices.isEmpty then return err 400 "index needed"
+    let n := (← s.state.get).steps.length
+    s.state.modify fun st => { st with
+      steps := (st.steps.zipIdx.filter (fun (_, k) => !indices.contains k)).map (·.1), verified := none }
+    s.push [("kind", "note"), ("text", .str s!"deleted {indices.filter (· < n) |>.length} step(s)")]
     s.persist
     return ok
   | "POST", "/api/undo" =>
