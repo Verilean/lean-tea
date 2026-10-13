@@ -94,8 +94,9 @@
     #json { min-height: 160px; }
     .help { color: var(--muted); font-size: 12px; margin: 4px 0; }
     #steps li.group { list-style: none; margin: 8px 0 2px -22px; font-weight: 600; font-size: 12px; color: var(--muted); }
-    #steps li .ops { float: right; visibility: hidden; }
-    #steps li:hover .ops { visibility: visible; }
+    #steps li .ops { float: right; opacity: .35; }
+    #steps li:hover .ops { opacity: 1; }
+    #steps li input[type=checkbox] { margin: 0 6px 0 0; vertical-align: middle; }
     #steps li .ops button { padding: 0 6px; font-size: 11px; margin-left: 2px; }
     #steps li.loop { color: var(--acc); }
     .badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); }
@@ -157,6 +158,7 @@
         <div class="rowbtns">
           <button id="replay" title="Reload the start page and run the recorded steps without the model's planning">Replay</button>
           <button id="undo" title="Drop the last recorded step">Undo last</button>
+          <button id="delsel" hidden title="Delete the ticked steps">Delete selected</button>
           <input id="name" placeholder="test name, e.g. notes.login">
           <button id="save" class="primary">Save test</button>
         </div>
@@ -179,7 +181,7 @@
   </div>
   <script>
     const $ = (id) => document.getElementById(id);
-    let since = 0, scenario = null, scenariosKey = '', busy = false, elementsKey = '', elements = [], shotW = 0, lastLive = '', serverPlan = null, serverJson = '', jsonDirty = false;
+    let lastStepsKey = '', since = 0, scenario = null, scenariosKey = '', busy = false, elementsKey = '', elements = [], shotW = 0, lastLive = '', serverPlan = null, serverJson = '', jsonDirty = false;
 
     async function api(path, body) {
       const r = await fetch(path, { method: body === undefined ? 'GET' : 'POST',
@@ -277,6 +279,39 @@
       chat.append(node);
     }
 
+    function renderSteps(steps) {
+      const ol = $('steps'); ol.innerHTML = '';
+      let lastGoal = null, depth = 0;
+      steps.forEach((st, i) => {
+        if (st.kind === 'end') depth = Math.max(0, depth - 1);
+        if (st.goal && st.goal !== lastGoal && st.kind === 'step') ol.append(el('li', 'group', st.goal));
+        lastGoal = st.goal;
+        const li = el('li', st.kind === 'step' ? '' : 'loop');
+        li.value = i + 1;
+        li.style.marginLeft = (depth * 14) + 'px';
+        const cb = el('input'); cb.type = 'checkbox'; cb.dataset.i = i; cb.onchange = selChanged;
+        li.append(cb, document.createTextNode(st.text));
+        const ops = el('span', 'ops');
+        const from = el('button', '', '▶'); from.title = 'Replay from this step on the current screen';
+        from.onclick = async () => { const r = await api('/api/replay', { from: i }); if (r.error) alertLine(r.error); };
+        const del = el('button', '', '×'); del.title = 'Delete this step';
+        del.onclick = () => delSteps([i]);
+        ops.append(from, del); li.append(ops);
+        ol.append(li);
+        if (st.kind === 'repeat') depth++;
+      });
+      selChanged();
+    }
+    function selected() { return [...document.querySelectorAll('#steps input[type=checkbox]:checked')].map(c => +c.dataset.i); }
+    function selChanged() {
+      const n = selected().length;
+      $('delsel').hidden = n === 0; $('delsel').textContent = 'Delete ' + n + ' selected';
+    }
+    async function delSteps(indices) {
+      const r = await api('/api/delete', { indices });
+      if (r.error) alertLine(r.error);
+      setTimeout(poll, 50);
+    }
     function renderState(s) {
       busy = s.busy;
       $('send').disabled = busy; $('stop').disabled = !busy;
@@ -285,25 +320,10 @@
       ['scenario', 'scnew', 'screname', 'scdelete'].forEach(id => $(id).disabled = busy);
       ['replay', 'undo', 'save', 'reset', 'go', 'plannew', 'runplan', 'applyjson', 'read'].forEach(id => $(id).disabled = busy);
       $('status').textContent = (busy ? '● working — ' : '') + s.url;
-      const ol = $('steps'); ol.innerHTML = '';
-      let lastGoal = null, depth = 0;
-      s.steps.forEach((st, i) => {
-        if (st.kind === 'end') depth = Math.max(0, depth - 1);
-        if (st.goal && st.goal !== lastGoal && st.kind === 'step') ol.append(el('li', 'group', st.goal));
-        lastGoal = st.goal;
-        const li = el('li', st.kind === 'step' ? '' : 'loop');
-        li.value = i + 1;
-        li.style.marginLeft = (depth * 14) + 'px';
-        li.append(document.createTextNode(st.text));
-        const ops = el('span', 'ops');
-        const from = el('button', '', '▶'); from.title = 'Replay from this step on the current screen';
-        from.onclick = async () => { const r = await api('/api/replay', { from: i }); if (r.error) alertLine(r.error); };
-        const del = el('button', '', '×'); del.title = 'Delete this step';
-        del.onclick = () => api('/api/delete', { index: i }).then(() => setTimeout(poll, 50));
-        ops.append(from, del); li.append(ops);
-        ol.append(li);
-        if (st.kind === 'repeat') depth++;
-      });
+      // rebuild the list only when it changed: a rebuild on every poll
+      // loses the hover and swallows clicks on its buttons
+      const stepsKey = JSON.stringify(s.steps);
+      if (stepsKey !== lastStepsKey) { lastStepsKey = stepsKey; renderSteps(s.steps); }
       $('count').textContent = '(' + s.steps.length + ' step' + (s.steps.length === 1 ? '' : 's') + ')';
       const js = JSON.stringify(s.script, null, 2);
       if (js !== serverJson && !jsonDirty) { $('json').value = js; }
@@ -401,6 +421,7 @@
     $('go').onclick = async () => { const r = await api('/api/navigate', { url: $('url').value }); if (r.error) alertLine(r.error); lastLive = ''; };
     $('reset').onclick = async () => { await api('/api/reset', {}); lastLive = ''; };
     $('replay').onclick = async () => { const r = await api('/api/replay', {}); if (r.error) alertLine(r.error); };
+    $('delsel').onclick = () => { const ix = selected(); if (ix.length) delSteps(ix); };
     $('undo').onclick = () => api('/api/undo', {});
     $('save').onclick = async () => {
       const r = await api('/api/save', { name: $('name').value });
