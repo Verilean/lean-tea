@@ -260,6 +260,25 @@ passed (10 steps, 12 s) and the saved
 `vision_qa` — and fails at the welcome check when the password is
 changed to a wrong one.
 
+#### Picking from the screen: the model reads, you choose
+
+A small model reads a screen well (where the buttons are, what they
+say) and decides badly (what to click next, whether a goal is done). So
+the most direct way to record a test is to let it only read: **Read
+screen** lists the buttons, tabs and icons with their boxes
+(`LeanTea.Vision.Elements`), numbered on the live view and in a list
+under it. Pick one to **click** — it is clicked, recorded as
+`wait_until "Is <label> visible…"` + `click_xy`, and the new screen is
+read — or to **check** — recorded as a `wait_until` that it is shown.
+Anything the list misses can still be clicked on the live view.
+
+On the whole screen a 4B model fills its list with whatever repeats
+most (a column of times, a row of dates) and misses the menus, so the
+screen is read a quarter at a time (overlapping by 60 px, duplicates
+merged). On a game home screen: whole screen 30 items, mostly one
+repeated time label, no menu (10 s); quarters 17 items, the whole menu
+bar and side icons (23 s with settling).
+
 #### Broad instructions: plan, run, then edit
 
 A 4B model explores one short goal well and loses its way on a broad

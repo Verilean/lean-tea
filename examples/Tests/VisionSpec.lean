@@ -213,6 +213,23 @@ def planGroup : LSpec :=
       (matchingEnd loopScript.steps.toArray 0 == some 4 && matchingEnd loopScript.steps.toArray 1 == some 3)
   ]
 
+def elementsGroup : LSpec :=
+  -- a cut-off answer that repeats its last line, as Qwen-VL does
+  let answer := "[{\"label\": \"Start\", \"bbox_2d\": [100, 100, 200, 200]},\n" ++
+    "{\"label\": \"Menu\", \"bbox_2d\": [500, 0, 600, 100]},\n" ++
+    "{\"label\": \"Menu\", \"bbox_2d\": [500, 0, 600, 100]},\n{\"label\": \"Me"
+  let es := Elements.parse answer .norm1000 1000 500
+  let t := Elements.tiles 1000 500
+  let a : Elements.Element := { label := "OK", rect := { x := 10, y := 10, w := 40, h := 20 } }
+  group "Screen elements" [
+    it "parses labels and boxes" (es.map (·.label) == ["Start", "Menu"]),
+    it "boxes in screen pixels" (es.head?.map (fun e => rectIs e.rect 100 50 100 50) == some true),
+    it "four overlapping quarters" (t == [(0, 0, 560, 310), (440, 0, 560, 310), (0, 190, 560, 310), (440, 190, 560, 310)]),
+    it "same label at the same place is one element"
+      (a.same { a with rect := { a.rect with x := 14 } } && !a.same { a with label := "Cancel" }
+        && !a.same { a with rect := { a.rect with x := 300 } })
+  ]
+
 def run : IO LSpec := do
   -- Image ops (C / stb)
   let png ← testImage.encodePng
@@ -256,7 +273,7 @@ def run : IO LSpec := do
       (Qa.changedPixelsIn testImage testImage 0 0 4 2 == 0 && Qa.changedPixelsIn testImage testImage 3 1 50 50 == 0)
   ]
   return group "LeanTea.Vision" [parseGroup, geometryGroup, yesNoGroup, scriptGroup, ansiGroup, imgGroup, replay,
-                                 exploreGroup, changeGroup, planGroup]
+                                 exploreGroup, changeGroup, planGroup, elementsGroup]
 
 def main : IO Unit := do
   let code ← lspecIO (← run)

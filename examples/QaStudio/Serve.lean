@@ -44,6 +44,10 @@ ones that work are recorded, failures go back to the model. Then:
   * **Save test** writes it as a `vision_qa` script and shows the
     command that runs it (CI, a terminal, or `ui_report`).
 
+**Read screen** has the model list the buttons and labels on the
+screen (`LeanTea.Vision.Elements`); the user picks one to click or to
+check, and the pick is recorded — the model reads, the user decides.
+
 Further messages continue from where the last goal left off, so a
 test can be built up goal by goal. For a broad instruction, **Plan**
 asks the model for sub-goals (with `repeat until` loops) that you edit
@@ -105,6 +109,9 @@ structure State where
   plan     : String := ""
   /-- The broad instruction the plan was made from (a note for each sub-goal). -/
   instruction : String := ""
+  /-- The screen read as a list (`Elements.list`), for the user to pick
+      from; cleared when a job starts (the screen is about to change). -/
+  elements : List Elements.Element := []
 
 structure Studio where
   args    : Args
@@ -228,6 +235,7 @@ partial def Studio.waitLock (s : Studio) : IO Unit := do
 def Studio.background (s : Studio) (job : IO Unit) : IO Bool := do
   if !(← s.claim) then return false
   s.stopReq.set false
+  s.state.modify ({ · with elements := [] })
   let _ ← IO.asTask (prio := .dedicated) do
     s.waitLock
     try job catch e => s.push [("kind", "finished"), ("ok", .bool false), ("text", .str s!"error: {e}")]
@@ -325,19 +333,52 @@ def Studio.explore (s : Studio) (goal : String) : IO Unit := do
 /-- The user clicked the live view with nothing running: click there and
     record it (a fixed point — fine for a game canvas, which `--clip`
     keeps at the same place). -/
-def Studio.pointClick (s : Studio) (x y : Nat) : IO Unit := do
+def Studio.pointClick (s : Studio) (x y : Nat) (name? : Option String := none) : IO Bool := do
   let st ← s.state.get
   let ctx ← s.ctx st.steps
   let animated := (← settle ctx (maxMs := 2000)) ≥ 0.01
   let act := Action.clickXy x y
-  let (_, img) ← ctx.shot st.steps.length "look"
-  let name? ← try Explore.nameAt ctx img x y catch _ => pure none
+  let name? ← match name? with
+    | some n => pure (some n)
+    | none =>
+      let (_, img) ← ctx.shot st.steps.length "look"
+      try Explore.nameAt ctx img x y catch _ => pure none
   match ← Explore.attempt ctx {} st.steps.length act "the user pointed here" true animated with
   | .ok (obs, ev, pt) =>
     s.emit (.stepOk (Explore.describe act) obs ev pt)
     if let some n := name? then s.emit (.note s!"recorded as: wait until {n} shows, then click ({x}, {y})")
     s.state.modify fun st => { st with steps := st.steps ++ Explore.pointedSteps name? x y, verified := none }
-  | .error (e, ev, pt) => s.emit (.stepFailed (Explore.describe act) e ev pt)
+    return true
+  | .error (e, ev, pt) => s.emit (.stepFailed (Explore.describe act) e ev pt); return false
+
+/-- Read the screen into a list of elements for the user to pick from. -/
+def Studio.readScreen (s : Studio) : IO Unit := do
+  let st ← s.state.get
+  let ctx ← s.ctx st.steps
+  let _ ← settle ctx (maxMs := 3000)
+  let (_, img) ← ctx.shot st.steps.length "read"
+  let t0 ← IO.monoMsNow
+  let (es, answer) ← Elements.list s.vlm img
+  s.state.modify ({ · with elements := es })
+  if es.isEmpty then s.push [("kind", "note"), ("text", .str s!"nothing could be read from the model's answer: {answer.take 300}")]
+  s.push [("kind", "note"),
+          ("text", .str s!"read the screen: {es.length} elements ({((← IO.monoMsNow) - t0) / 1000}s) — pick one to click or check")]
+
+/-- The user picked a listed element to check: record that it is shown
+    (it is — the model just read it there). No browser needed, and the
+    list stays. -/
+def Studio.pickCheck (s : Studio) (e : Elements.Element) : IO Unit := do
+  let q := s!"Is {e.label} visible on the screen?"
+  s.state.modify fun st => { st with
+    steps := st.steps ++ [{ act := .waitUntil q (timeoutMs := 30000), note := "check picked from the screen list" }],
+    verified := none }
+  s.push [("kind", "stepOk"), ("text", .str s!"check: {e.label} is shown"), ("observed", .str "recorded"),
+          ("shot", .null), ("point", .null)]
+
+/-- The user picked a listed element to click: click its centre, record
+    it, and read the new screen. -/
+def Studio.pickClick (s : Studio) (e : Elements.Element) : IO Unit := do
+  if ← s.pointClick e.rect.cx.toUInt64.toNat e.rect.cy.toUInt64.toNat (some e.label) then s.readScreen
 
 def Studio.pushResult (s : Studio) (r : StepResult) : IO Unit := do
   let url ← s.keepShot r.evidencePath
@@ -507,6 +548,10 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
           ("kind", .str (match step.act with
             | .repeatStart .. => "repeat" | .repeatEnd => "end" | _ => "step"))])),
         ("plan", .str st.plan),
+        ("elements", .arr (st.elements.toArray.map fun e => Json.mkObj [
+          ("label", .str e.label),
+          ("x", .num (Int.ofNat e.rect.x.toUInt64.toNat)), ("y", .num (Int.ofNat e.rect.y.toUInt64.toNat)),
+          ("w", .num (Int.ofNat e.rect.w.toUInt64.toNat)), ("h", .num (Int.ofNat e.rect.h.toUInt64.toNat))])),
         ("script", (s.script st "qa_studio.draft").toJson),
         ("verified", match st.verified with | some b => .bool b | none => .null),
         ("saved", match st.saved? with
@@ -541,7 +586,20 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
       s.pointer.set (some (x, y))
       s.push [("kind", "note"), ("text", .str "the running attempt clicks there next")]
       return ok
-    return if ← s.background (s.pointClick x y) then ok else busyErr
+    return if ← s.background (do let _ ← s.pointClick x y) then ok else busyErr
+  | "POST", "/api/read" =>
+    return if ← s.background s.readScreen then ok else busyErr
+  | "POST", "/api/pick" =>
+    let j := jsonBody req
+    let some i := (j.getObjValD "index").getNat?.toOption | return err 400 "index needed"
+    let some e := (← s.state.get).elements[i]? | return err 400 "no such element — read the screen again"
+    let check := str j "mode" == "check"
+    s.push [("kind", "user"), ("text", .str s!"({if check then "check" else "click"} [{i + 1}] {e.label})")]
+    if check then
+      s.pickCheck e
+      s.persist
+      return ok
+    return if ← s.background (s.pickClick e) then ok else busyErr
   | "POST", "/api/stop" => s.stopReq.set true; return ok
   | "POST", "/api/navigate" =>
     let url := str (jsonBody req) "url"
