@@ -14,7 +14,7 @@ While working on the studio itself, `tools/qa-studio-dev.sh` rebuilds
 and restarts it whenever its sources change. `--browser-port` keeps the
 browser in its own process (the game stays on the same screen, still
 logged in), the recorded steps and chat are restored from
-`--dir`/state.json, `--dev` re-reads page.html on every load and
+`--dir`/scenarios/, `--dev` re-reads page.html on every load and
 `--rules FILE` (one piece of advice per line) is re-read every turn.
 
 For a site behind a login (a browser game), keep a browser profile and
@@ -133,6 +133,9 @@ structure Studio where
   pointer : IO.Ref (Option (Nat × Nat))
   /-- An explore run (the only job that takes hints and pointed clicks). -/
   exploring : IO.Ref Bool
+  /-- The scenario being recorded: its steps, plan and chat live in
+      `scenarios/<name>.json`. -/
+  scenario : IO.Ref String
 
 def Studio.ctx (s : Studio) (steps : List Step) : IO Ctx := do
   return { drv := s.drv, vlm := s.vlm, zoom := 3, dir := s.dir,
@@ -177,11 +180,33 @@ def Studio.script (s : Studio) (st : State) (name : String) : Script :=
     description := s!"Recorded with qa_studio on {st.startUrl} (model {s.vlm.model}). Goals: " ++
       String.intercalate " / " st.goals.reverse }
 
-/-! ## Surviving a restart -/
+/-! ## Scenarios (and surviving a restart)
 
-def Studio.statePath (s : Studio) : System.FilePath := s.dir / "state.json"
+Each scenario — one test being recorded — is a file
+`scenarios/<name>.json` with its steps, goals, plan and chat; the one
+open is named in `scenarios/current`. Screenshots are shared (numbered
+across scenarios). -/
 
-/-- Write what a restart must not lose: the recorded steps, goals and chat. -/
+def Studio.scenarioDir (s : Studio) : System.FilePath := s.dir / "scenarios"
+
+def Studio.scenarioPath (s : Studio) (name : String) : System.FilePath := s.scenarioDir / s!"{name}.json"
+
+/-- A scenario name usable as a file name: no path separators, control
+    characters or leading dot. Japanese and spaces are fine. -/
+def scenarioName (raw : String) : String :=
+  let n := String.ofList (raw.toList.filter fun c => c != '/' && c != '\\' && c != ':' && c.toNat ≥ 32)
+  let n := n.trimAscii.toString
+  let n := if n.startsWith "." then "_" ++ (n.drop 1).toString else n
+  n.take 80 |>.toString
+
+/-- The saved scenarios, by name. -/
+def Studio.scenarios (s : Studio) : IO (List String) := do
+  if !(← s.scenarioDir.pathExists) then return []
+  let names := (← s.scenarioDir.readDir).toList.filterMap fun e =>
+    if e.fileName.endsWith ".json" then some (e.fileName.dropEnd 5).toString else none
+  return names.toArray.qsort (· < ·) |>.toList
+
+/-- Write the open scenario: its steps, goals, plan and chat. -/
 def Studio.persist (s : Studio) : IO Unit := do
   let st ← s.state.get
   let j := Json.mkObj [
@@ -189,17 +214,22 @@ def Studio.persist (s : Studio) : IO Unit := do
     ("goals", .arr (st.goals.toArray.map Json.str)),
     ("script", ({ name := "studio", steps := st.steps } : Script).toJson),
     ("events", .arr st.events),
-    ("shotN", .num (Int.ofNat (← s.shotN.get))),
     ("lastShot", (st.lastShot.map Json.str).getD .null),
     ("plan", .str st.plan), ("instruction", .str st.instruction)]
-  IO.FS.writeFile s.statePath j.compress
+  IO.FS.createDirAll s.scenarioDir
+  let name ← s.scenario.get
+  IO.FS.writeFile (s.scenarioPath name) j.compress
+  IO.FS.writeFile (s.scenarioDir / "current") name
 
-/-- Bring back a session saved by `persist` for the same start page. -/
-def Studio.restore (s : Studio) : IO Bool := do
-  if !(← s.statePath.pathExists) then return false
-  let some j := (Json.parse (← IO.FS.readFile s.statePath)).toOption | return false
-  let url := (j.getObjValD "startUrl").getStr?.toOption.getD ""
-  if url != (← s.state.get).startUrl then return false
+/-- Make `name` the open scenario, loading it if it was saved (else it
+    starts empty, on the current start page). -/
+def Studio.load (s : Studio) (name : String) : IO Unit := do
+  s.scenario.set name
+  let url := (← s.state.get).startUrl
+  let fresh : State := { startUrl := url }
+  let path := s.scenarioPath name
+  let j? ← if ← path.pathExists then pure (Json.parse (← IO.FS.readFile path)).toOption else pure none
+  let some j := j? | s.state.set fresh; return
   let steps := match Script.fromJson (j.getObjValD "script") with
     | .ok sc => sc.steps
     | .error _ => []
@@ -208,11 +238,43 @@ def Studio.restore (s : Studio) : IO Bool := do
     | _ => []
   let events := match j.getObjValD "events" with | .arr a => a | _ => #[]
   let lastShot := (j.getObjValD "lastShot").getStr?.toOption
-  if let .num n := j.getObjValD "shotN" then s.shotN.set n.mantissa.toNat
   let plan := (j.getObjValD "plan").getStr?.toOption.getD ""
   let instruction := (j.getObjValD "instruction").getStr?.toOption.getD ""
-  s.state.modify fun st => { st with steps, goals, events, lastShot, plan, instruction }
-  return true
+  let startUrl := match (j.getObjValD "startUrl").getStr?.toOption with
+    | some u => if u.isEmpty then url else u
+    | none => url
+  s.state.set { fresh with startUrl, steps, goals, events, lastShot, plan, instruction }
+
+/-- A name not taken yet: `base`, `base 2`, `base 3`, … -/
+def Studio.freeName (s : Studio) (base : String) : IO String := do
+  let taken ← s.scenarios
+  if !taken.contains base then return base
+  let mut n := 2
+  while taken.contains s!"{base} {n}" do n := n + 1
+  return s!"{base} {n}"
+
+/-- At start-up: reopen the last scenario if it tests the same start
+    page, else start a new one. A `state.json` from before scenarios
+    becomes the scenario `default`. -/
+def Studio.restore (s : Studio) : IO Bool := do
+  let old := s.dir / "state.json"
+  if (← old.pathExists) && (← s.scenarios).isEmpty then
+    IO.FS.createDirAll s.scenarioDir
+    IO.FS.rename old (s.scenarioPath "default")
+    IO.FS.writeFile (s.scenarioDir / "current") "default"
+  -- screenshots are numbered across scenarios: continue after the last
+  let shots := (← s.dir.readDir).toList.filterMap fun e =>
+    ((e.fileName.dropPrefix? "shot").bind fun r => (r.toString.dropSuffix? ".png").bind (·.toString.toNat?))
+  s.shotN.set (shots.foldl (fun m n => max m (n + 1)) 0)
+  let url := (← s.state.get).startUrl
+  let cur := s.scenarioDir / "current"
+  let name ← if ← cur.pathExists then pure (← IO.FS.readFile cur).trimAscii.toString else pure ""
+  if !name.isEmpty && (← (s.scenarioPath name).pathExists) then
+    s.load name
+    if (← s.state.get).startUrl == url then return true
+  s.state.set { startUrl := url }
+  s.scenario.set (← s.freeName "untitled")
+  return false
 
 /-- Mark a job as running; false if one already is. -/
 def Studio.claim (s : Studio) : IO Bool :=
@@ -548,6 +610,8 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
           ("kind", .str (match step.act with
             | .repeatStart .. => "repeat" | .repeatEnd => "end" | _ => "step"))])),
         ("plan", .str st.plan),
+        ("scenario", .str (← s.scenario.get)),
+        ("scenarios", .arr ((← s.scenarios).toArray.map Json.str)),
         ("elements", .arr (st.elements.toArray.map fun e => Json.mkObj [
           ("label", .str e.label),
           ("x", .num (Int.ofNat e.rect.x.toUInt64.toNat)), ("y", .num (Int.ofNat e.rect.y.toUInt64.toNat)),
@@ -601,6 +665,42 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
       return ok
     return if ← s.background (s.pickClick e) then ok else busyErr
   | "POST", "/api/stop" => s.stopReq.set true; return ok
+  | "POST", "/api/scenario" =>
+    -- new / open / rename / delete; the open one is saved first
+    if (← s.state.get).busy then return busyErr
+    let j := jsonBody req
+    let name := scenarioName (str j "name")
+    let cur ← s.scenario.get
+    match str j "action" with
+    | "new" =>
+      s.persist
+      s.load (← s.freeName (if name.isEmpty then "untitled" else name))
+      s.persist
+      return ok
+    | "open" =>
+      if !(← (s.scenarioPath name).pathExists) then return err 404 s!"no scenario {name}"
+      s.persist
+      s.load name
+      return ok
+    | "rename" =>
+      if name.isEmpty then return err 400 "name needed"
+      if name == cur then return ok
+      if (← s.scenarios).contains name then return err 409 s!"a scenario called {name} exists"
+      s.persist
+      IO.FS.rename (s.scenarioPath cur) (s.scenarioPath name)
+      s.scenario.set name
+      s.persist
+      return ok
+    | "delete" =>
+      let target := if name.isEmpty then cur else name
+      if ← (s.scenarioPath target).pathExists then IO.FS.removeFile (s.scenarioPath target)
+      if target == cur then
+        match (← s.scenarios) with
+        | first :: _ => s.load first
+        | [] => s.load "untitled"
+        s.persist
+      return ok
+    | a => return err 400 s!"unknown action {a}"
   | "POST", "/api/navigate" =>
     let url := str (jsonBody req) "url"
     if url.isEmpty then return err 400 "no url"
@@ -666,7 +766,9 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
   | "POST", "/api/save" =>
     let st ← s.state.get
     if st.steps.isEmpty then return err 400 "nothing recorded yet"
-    let name := sanitize (str (jsonBody req) "name")
+    let asked := str (jsonBody req) "name"
+    let cur ← s.scenario.get
+    let name := sanitize (if asked.isEmpty then cur else asked)
     let dir : System.FilePath := s.args.outDir
     IO.FS.createDirAll dir
     let path := dir / s!"{name}.json"
@@ -700,10 +802,11 @@ def main (argv : List String) : IO Unit := do
     | none => pure (Driver.browser session)
   let s : Studio := { args := a, session, drv, vlm, dir,
                       state := ← IO.mkRef { startUrl }, stopReq := ← IO.mkRef false, shotN := ← IO.mkRef 0,
-                      lock := ← IO.mkRef false, hints := ← IO.mkRef #[], pointer := ← IO.mkRef none, exploring := ← IO.mkRef false }
+                      lock := ← IO.mkRef false, hints := ← IO.mkRef #[], pointer := ← IO.mkRef none, exploring := ← IO.mkRef false,
+                      scenario := ← IO.mkRef "untitled" }
   let restored ← s.restore
   if restored then
-    IO.println s!"  restored {(← s.state.get).steps.length} recorded steps from {s.statePath}"
+    IO.println s!"  reopened scenario \"{← s.scenario.get}\" ({(← s.state.get).steps.length} recorded steps)"
   -- a kept browser already showing a page stays where it is (that's
   -- the point of keeping it); otherwise open the start page once the
   -- server below is answering (it may be /demo)

@@ -260,6 +260,15 @@ passed (10 steps, 12 s) and the saved
 `vision_qa` — and fails at the welcome check when the password is
 changed to a wrong one.
 
+#### Scenarios
+
+Each test being recorded is a scenario, picked in the header: **New**
+starts an empty one (the current one is kept), the selector switches,
+**Rename** and **Delete** do what they say. A scenario keeps its own
+steps, goals, plan and chat in `--dir`/scenarios/<name>.json; the open
+one is reopened after a restart when it tests the same start page.
+**Save test** names the file after the scenario unless given a name.
+
 #### Picking from the screen: the model reads, you choose
 
 A small model reads a screen well (where the buttons are, what they
@@ -393,7 +402,7 @@ seconds and keeps:
   attaches to over CDP and leaves open on exit. The game stays logged
   in and on the same screen. Close it with
   `pkill -f remote-debugging-port=9333`;
-- the recorded steps, goals and chat, from `--dir`/state.json (for the
+- the scenarios (recorded steps, goals and chat), from `--dir`/scenarios/ (for the
   same start URL);
 - the open studio tab, which reconnects by itself. `--dev` re-reads
   page.html on every load, so a UI edit needs only a reload.
