@@ -23,6 +23,9 @@
              background: var(--panel); flex-wrap: wrap; }
     header h1 { font-size: 16px; margin: 0 8px 0 0; }
     header .model { color: var(--muted); font-size: 12px; }
+    .scen { display: flex; gap: 4px; align-items: center; }
+    #scenario { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
+                background: var(--bg); color: var(--ink); max-width: 220px; }
     #url { flex: 1; min-width: 220px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
            background: var(--bg); color: var(--ink); font: inherit; }
     button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
@@ -102,6 +105,12 @@
   <header>
     <h1>QA Studio</h1>
     <span class="model">model: {{model}}</span>
+    <span class="scen">
+      <select id="scenario" aria-label="Scenario" title="The test being recorded — each has its own steps, plan and chat"></select>
+      <button id="scnew" title="Start a new scenario (the current one is kept)">New</button>
+      <button id="screname" title="Rename this scenario">Rename</button>
+      <button id="scdelete" title="Delete this scenario">Delete</button>
+    </span>
     <input id="url" value="{{url}}" aria-label="Page URL">
     <button id="go">Open</button>
     <button id="reset" title="Reload the start page and clear the recorded steps">Reset</button>
@@ -162,7 +171,7 @@
   </div>
   <script>
     const $ = (id) => document.getElementById(id);
-    let since = 0, busy = false, elementsKey = '', elements = [], shotW = 0, lastLive = '', serverPlan = null, serverJson = '', jsonDirty = false;
+    let since = 0, scenario = null, scenariosKey = '', busy = false, elementsKey = '', elements = [], shotW = 0, lastLive = '', serverPlan = null, serverJson = '', jsonDirty = false;
 
     async function api(path, body) {
       const r = await fetch(path, { method: body === undefined ? 'GET' : 'POST',
@@ -256,6 +265,8 @@
       busy = s.busy;
       $('send').disabled = busy; $('stop').disabled = !busy;
       renderElements(s.elements);
+      renderScenarios(s);
+      ['scenario', 'scnew', 'screname', 'scdelete'].forEach(id => $(id).disabled = busy);
       ['replay', 'undo', 'save', 'reset', 'go', 'plannew', 'runplan', 'applyjson', 'read'].forEach(id => $(id).disabled = busy);
       $('status').textContent = (busy ? '● working — ' : '') + s.url;
       const ol = $('steps'); ol.innerHTML = '';
@@ -298,9 +309,15 @@
         let s = await api('/api/state?since=' + since);
         if (s.total !== undefined && s.total < since) {
           // the studio restarted without its old chat: start the log over
-          $('chat').querySelectorAll('.msg:not(:first-child), .note, .thinking').forEach(n => n.remove());
+          clearChat();
           since = 0; s = await api('/api/state?since=0');
         }
+        if (scenario !== null && s.scenario !== scenario) {
+          // another scenario was opened: its own chat replaces this one
+          clearChat(); since = 0; elementsKey = '';
+          scenario = s.scenario; s = await api('/api/state?since=0');
+        }
+        scenario = s.scenario;
         for (const ev of s.events) { addEvent(ev); since = ev.id + 1; }
         if (s.events.length) scrollChat();
         renderState(s);
@@ -317,9 +334,31 @@
       if (r.error) alertLine(r.error);
       setTimeout(poll, 100);
     }
+    function clearChat() {
+      $('chat').querySelectorAll('.msg:not(:first-child), .note, .thinking').forEach(n => n.remove());
+      $('saved').innerHTML = ''; serverPlan = null; $('plan').value = ''; $('planbox').hidden = true; jsonDirty = false;
+    }
+    function renderScenarios(s) {
+      const key = s.scenario + '|' + (s.scenarios || []).join('|');
+      if (key === scenariosKey) return;
+      scenariosKey = key;
+      const sel = $('scenario'); sel.innerHTML = '';
+      const names = (s.scenarios || []).includes(s.scenario) ? s.scenarios : [s.scenario, ...(s.scenarios || [])];
+      names.forEach(n => { const o = el('option', '', n); o.value = n; o.selected = n === s.scenario; sel.append(o); });
+      $('name').placeholder = 'test name (default: ' + s.scenario + ')';
+    }
+    async function scenarioOp(action, name) {
+      const r = await api('/api/scenario', { action, name });
+      if (r.error) alertLine(r.error);
+      setTimeout(poll, 50);
+    }
     function alertLine(t) { $('chat').append(el('div', 'note', t)); scrollChat(); }
 
     $('send').onclick = send;
+    $('scenario').onchange = () => scenarioOp('open', $('scenario').value);
+    $('scnew').onclick = () => { const n = prompt('Name of the new scenario', ''); if (n !== null) scenarioOp('new', n); };
+    $('screname').onclick = () => { const n = prompt('New name', scenario || ''); if (n) scenarioOp('rename', n); };
+    $('scdelete').onclick = () => { if (confirm('Delete the scenario "' + scenario + '"?')) scenarioOp('delete', scenario); };
     $('plannew').onclick = async () => {
       const text = $('input').value.trim();
       if (!text || busy) return;

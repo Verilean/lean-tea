@@ -6,7 +6,7 @@
 # What survives a restart:
 #   - the browser: it runs on its own (--browser-port, default 9333), so
 #     the game stays logged in and on the same screen;
-#   - the recorded steps, goals and chat (--dir/state.json);
+#   - the scenarios: recorded steps, goals and chat (--dir/scenarios/);
 #   - the open studio tab: it reconnects by itself.
 # page.html is re-read on every load (--dev), so UI edits need only a
 # reload. A run in progress when the restart happens is lost.
