@@ -36,6 +36,23 @@
     .screen img { display: block; max-width: 100%; height: auto; cursor: crosshair; }
     .marker { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%;
               border: 3px solid #f43f5e; box-shadow: 0 0 0 3px rgba(255,255,255,.8); pointer-events: none; }
+    .box { position: absolute; border: 2px solid #f59e0b; border-radius: 3px; cursor: pointer; }
+    .box span { position: absolute; left: -2px; top: -2px; transform: translateY(-100%); background: #f59e0b; color: #111;
+                font-size: 10px; line-height: 1; padding: 2px 3px; border-radius: 3px 3px 0 0; }
+    .box:hover, .box.hot { border-color: #ef4444; background: rgba(239,68,68,.15); }
+    .box:hover span, .box.hot span { background: #ef4444; color: #fff; }
+    #overlay { position: absolute; inset: 0; pointer-events: none; }
+    #overlay .box { pointer-events: auto; }
+    #overlay.off { display: none; }
+    .elements { margin-top: 10px; }
+    .elements .rowbtns { margin: 0 0 6px; }
+    #elist { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px; }
+    #elist .item { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border: 1px solid var(--line);
+                   border-radius: 6px; background: var(--panel); font-size: 13px; }
+    #elist .item.hot { border-color: #ef4444; }
+    #elist .item .n { color: var(--muted); font-size: 11px; min-width: 18px; }
+    #elist .item .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #elist .item button { padding: 0 6px; font-size: 11px; }
     .status { margin-top: 8px; color: var(--muted); font-size: 12px; }
     aside { display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); min-height: 0; }
     #chat { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -91,8 +108,16 @@
   </header>
   <div class="layout">
     <section class="page">
-      <div class="screen" id="screen"><img id="live" alt="page under test"><div class="marker" id="marker" hidden></div></div>
+      <div class="screen" id="screen"><img id="live" alt="page under test"><div class="marker" id="marker" hidden></div><div id="overlay"></div></div>
       <div class="status" id="status">loading…</div>
+      <div class="elements">
+        <div class="rowbtns">
+          <button id="read" class="primary" title="Have the model list the buttons and labels on the screen">Read screen</button>
+          <label class="help"><input type="checkbox" id="showboxes" checked> boxes on the screen</label>
+          <span class="help">Pick what to click (it is clicked, recorded, and the new screen is read) or what to check.</span>
+        </div>
+        <div id="elist"></div>
+      </div>
       <div class="status">Click the screenshot to point at a target: it is clicked and recorded (during a run, it becomes the next step).</div>
     </section>
     <aside>
@@ -137,7 +162,7 @@
   </div>
   <script>
     const $ = (id) => document.getElementById(id);
-    let since = 0, busy = false, shotW = 0, lastLive = '', serverPlan = null, serverJson = '', jsonDirty = false;
+    let since = 0, busy = false, elementsKey = '', elements = [], shotW = 0, lastLive = '', serverPlan = null, serverJson = '', jsonDirty = false;
 
     async function api(path, body) {
       const r = await fetch(path, { method: body === undefined ? 'GET' : 'POST',
@@ -159,6 +184,47 @@
         };
         if (img.complete) place(); else img.onload = place;
       } else m.hidden = true;
+    }
+
+    function placeBoxes() {
+      const img = $('live'), ov = $('overlay');
+      ov.innerHTML = '';
+      const k = img.clientWidth / (img.naturalWidth || 1);
+      elements.forEach((e, i) => {
+        const b = el('div', 'box'); b.dataset.i = i;
+        Object.assign(b.style, { left: e.x * k + 'px', top: e.y * k + 'px', width: e.w * k + 'px', height: e.h * k + 'px' });
+        b.title = e.label;
+        b.append(el('span', '', String(i + 1)));
+        b.onclick = (ev) => { ev.stopPropagation(); pick(i, 'click'); };
+        b.onmouseenter = () => hot(i, true); b.onmouseleave = () => hot(i, false);
+        ov.append(b);
+      });
+    }
+    function hot(i, on) {
+      document.querySelectorAll('[data-i="' + i + '"]').forEach(n => n.classList.toggle('hot', on));
+    }
+    function renderElements(list) {
+      const key = JSON.stringify(list || []);
+      if (key === elementsKey) return;
+      elementsKey = key; elements = list || [];
+      const box = $('elist'); box.innerHTML = '';
+      elements.forEach((e, i) => {
+        const it = el('div', 'item'); it.dataset.i = i;
+        it.append(el('span', 'n', String(i + 1)), el('span', 'label', e.label));
+        it.querySelector('.label').title = e.label;
+        const c = el('button', '', 'click'); c.onclick = () => pick(i, 'click');
+        const k = el('button', '', 'check'); k.title = 'Record a check that this is shown'; k.onclick = () => pick(i, 'check');
+        it.append(c, k);
+        it.onmouseenter = () => hot(i, true); it.onmouseleave = () => hot(i, false);
+        box.append(it);
+      });
+      placeBoxes();
+    }
+    async function pick(index, mode) {
+      if (busy && mode === 'click') return;
+      const r = await api('/api/pick', { index, mode });
+      if (r.error) alertLine(r.error);
+      setTimeout(poll, 100);
     }
 
     function addEvent(ev) {
@@ -189,7 +255,8 @@
     function renderState(s) {
       busy = s.busy;
       $('send').disabled = busy; $('stop').disabled = !busy;
-      ['replay', 'undo', 'save', 'reset', 'go', 'plannew', 'runplan', 'applyjson'].forEach(id => $(id).disabled = busy);
+      renderElements(s.elements);
+      ['replay', 'undo', 'save', 'reset', 'go', 'plannew', 'runplan', 'applyjson', 'read'].forEach(id => $(id).disabled = busy);
       $('status').textContent = (busy ? '● working — ' : '') + s.url;
       const ol = $('steps'); ol.innerHTML = '';
       let lastGoal = null, depth = 0;
@@ -285,6 +352,10 @@
       if (r.error) alertLine(r.error);
     };
     $('live').onerror = () => {};
+    $('live').addEventListener('load', placeBoxes);
+    window.addEventListener('resize', placeBoxes);
+    $('showboxes').onchange = () => $('overlay').classList.toggle('off', !$('showboxes').checked);
+    $('read').onclick = async () => { const r = await api('/api/read', {}); if (r.error) alertLine(r.error); setTimeout(poll, 100); };
     $('live').onclick = async (e) => {
       const img = $('live'), k = (img.naturalWidth || 1) / img.clientWidth;
       const x = Math.round(e.offsetX * k), y = Math.round(e.offsetY * k);
