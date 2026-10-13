@@ -281,12 +281,19 @@ under it. Pick one to **click** — it is clicked, recorded as
 read — or to **check** — recorded as a `wait_until` that it is shown.
 Anything the list misses can still be clicked on the live view.
 
-On the whole screen a 4B model fills its list with whatever repeats
-most (a column of times, a row of dates) and misses the menus, so the
-screen is read a quarter at a time (overlapping by 60 px, duplicates
-merged). On a game home screen: whole screen 30 items, mostly one
-repeated time label, no menu (10 s); quarters 17 items, the whole menu
-bar and side icons (23 s with settling).
+Asked to list what can be pressed, a 4B model misses a lot: on the
+whole screen it fills its list with whatever repeats most (a column of
+times, a row of dates) and skips the menus; even a quarter at a time
+it lists about half the buttons. So the text comes from the OS:
+macOS's Vision framework (`LeanTea.Vision.Ocr`, `tools/ocr/ocr.swift`,
+compiled with `swiftc` on first use) reads every line of text, Japanese
+included, with pixel-exact boxes in about 2 s, and is shown at once.
+The model then reads the screen a quarter at a time (overlapping by
+60 px, duplicates merged) to say which of it are buttons, and adds
+icons without text (Stop skips this). Buttons are listed first with
+solid boxes; the rest of the text follows, dashed, with a filter. On a
+game home screen: OCR 126 lines in 2 s, including every menu item; the
+model alone found 17 buttons in about 20 s.
 
 #### Broad instructions: plan, run, then edit
 

@@ -221,7 +221,12 @@ def elementsGroup : LSpec :=
   let es := Elements.parse answer .norm1000 1000 500
   let t := Elements.tiles 1000 500
   let a : Elements.Element := { label := "OK", rect := { x := 10, y := 10, w := 40, h := 20 } }
+  let lines := Ocr.parse "[{\"text\":\"Start\",\"conf\":1,\"x\":110,\"y\":60,\"w\":40,\"h\":20},{\"text\":\"News\",\"conf\":0.5,\"x\":10,\"y\":300,\"w\":60,\"h\":20},{\"text\":\" \",\"conf\":1,\"x\":0,\"y\":0,\"w\":1,\"h\":1}]"
+  let merged := Elements.merge es lines
   group "Screen elements" [
+    it "OCR output: blank lines dropped" (lines.map (·.text) == ["Start", "News"]),
+    it "OCR text inside a button is the button; other text is listed after the buttons"
+      (merged.map (fun e => (e.label, e.kind)) == [("Menu", "button"), ("Start", "button"), ("News", "text")]),
     it "parses labels and boxes" (es.map (·.label) == ["Start", "Menu"]),
     it "boxes in screen pixels" (es.head?.map (fun e => rectIs e.rect 100 50 100 50) == some true),
     it "four overlapping quarters" (t == [(0, 0, 560, 310), (440, 0, 560, 310), (0, 190, 560, 310), (440, 190, 560, 310)]),
