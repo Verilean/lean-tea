@@ -136,6 +136,9 @@ structure Studio where
   /-- The scenario being recorded: its steps, plan and chat live in
       `scenarios/<name>.json`. -/
   scenario : IO.Ref String
+  /-- How the screen is read: `ocr`, or OCR plus the model on an n×n grid
+      (`grid2`, `grid3`). -/
+  readMode : IO.Ref String
 
 def Studio.ctx (s : Studio) (steps : List Step) : IO Ctx := do
   return { drv := s.drv, vlm := s.vlm, zoom := 3, dir := s.dir,
@@ -414,8 +417,9 @@ def Studio.pointClick (s : Studio) (x y : Nat) (name? : Option String := none) :
   | .error (e, ev, pt) => s.emit (.stepFailed (Explore.describe act) e ev pt); return false
 
 /-- Read the screen into a list of elements for the user to pick from:
-    first the text OCR finds (a second or two, shown at once), then the
-    buttons the model reads, a quarter at a time (Stop skips the rest). -/
+    first the text OCR finds (a second or two, shown at once), then — in
+    the `grid2`/`grid3` modes — the buttons the model reads tile by tile
+    (Stop skips the rest). -/
 def Studio.readScreen (s : Studio) : IO Unit := do
   let st ← s.state.get
   let ctx ← s.ctx st.steps
@@ -423,11 +427,16 @@ def Studio.readScreen (s : Studio) : IO Unit := do
   let (path, img) ← ctx.shot st.steps.length "read"
   let t0 ← IO.monoMsNow
   let lines ← try Ocr.read path catch _ => pure []
+  let mode ← s.readMode.get
   let secs := fun (t : Nat) => s!"{(t - t0) / 1000}.{(t - t0) % 1000 / 100}"
   if !lines.isEmpty then
     s.state.modify ({ · with elements := Elements.ofOcr lines })
+    if mode == "ocr" then
+      s.push [("kind", "note"), ("text", .str s!"read the screen: {lines.length} text lines ({secs (← IO.monoMsNow)}s) — pick one to click or check")]
+      return
     s.push [("kind", "note"), ("text", .str s!"OCR: {lines.length} text lines ({secs (← IO.monoMsNow)}s) — asking the model which are buttons (Stop to skip)…")]
-  let (buttons, answer) ← Elements.list s.vlm img (stop := s.stopReq.get)
+  let grid := if mode == "grid3" then 3 else 2
+  let (buttons, answer) ← Elements.list s.vlm img grid (stop := s.stopReq.get)
   let es := Elements.merge buttons lines
   s.state.modify ({ · with elements := es })
   if buttons.isEmpty && !(← s.stopReq.get) then
@@ -626,6 +635,8 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
           ("x", .num (Int.ofNat e.rect.x.toUInt64.toNat)), ("y", .num (Int.ofNat e.rect.y.toUInt64.toNat)),
           ("w", .num (Int.ofNat e.rect.w.toUInt64.toNat)), ("h", .num (Int.ofNat e.rect.h.toUInt64.toNat))])),
         ("script", (s.script st "qa_studio.draft").toJson),
+        ("scriptText", .str (toText st.steps)),
+        ("readMode", .str (← s.readMode.get)),
         ("verified", match st.verified with | some b => .bool b | none => .null),
         ("saved", match st.saved? with
           | some (p, c) => Json.mkObj [("path", .str p), ("command", .str c)]
@@ -661,6 +672,8 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
       return ok
     return if ← s.background (do let _ ← s.pointClick x y) then ok else busyErr
   | "POST", "/api/read" =>
+    let mode := str (jsonBody req) "mode"
+    if ["ocr", "grid2", "grid3"].contains mode then s.readMode.set mode
     return if ← s.background s.readScreen then ok else busyErr
   | "POST", "/api/pick" =>
     let j := jsonBody req
@@ -757,6 +770,15 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
       s.push [("kind", "note"), ("text", .str s!"test edited: {sc.steps.length} steps")]
       s.persist
       return ok
+  | "POST", "/api/scripttext" =>
+    if (← s.state.get).busy then return busyErr
+    match parseText (str (jsonBody req) "text") with
+    | .error e => return err 400 e
+    | .ok steps =>
+      s.state.modify fun st => { st with steps, verified := none }
+      s.push [("kind", "note"), ("text", .str s!"test edited: {steps.length} steps")]
+      s.persist
+      return ok
   | "POST", "/api/delete" =>
     if (← s.state.get).busy then return busyErr
     let j := jsonBody req
@@ -789,6 +811,8 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
     IO.FS.createDirAll dir
     let path := dir / s!"{name}.json"
     IO.FS.writeFile path ((s.script st name).toJson.pretty 100 ++ "\n")
+    -- the same test as text, to edit by hand (`vision_qa` runs either)
+    IO.FS.writeFile (dir / s!"{name}.qa") (toText st.steps)
     let extra := (s.args.profile?.map (s!" --profile {·}")).getD "" ++ (s.args.clip?.map (s!" --clip {·}")).getD ""
     let cmd := s!"./.lake/build/bin/vision_qa {path} --target browser --url {st.startUrl} --model {s.vlm.model}{extra}"
     s.state.modify ({ · with saved? := some (path.toString, cmd) })
@@ -819,7 +843,7 @@ def main (argv : List String) : IO Unit := do
   let s : Studio := { args := a, session, drv, vlm, dir,
                       state := ← IO.mkRef { startUrl }, stopReq := ← IO.mkRef false, shotN := ← IO.mkRef 0,
                       lock := ← IO.mkRef false, hints := ← IO.mkRef #[], pointer := ← IO.mkRef none, exploring := ← IO.mkRef false,
-                      scenario := ← IO.mkRef "untitled" }
+                      scenario := ← IO.mkRef "untitled", readMode := ← IO.mkRef "grid2" }
   let restored ← s.restore
   if restored then
     IO.println s!"  reopened scenario \"{← s.scenario.get}\" ({(← s.state.get).steps.length} recorded steps)"

@@ -79,24 +79,28 @@ def merge (buttons : List Element) (lines : List Ocr.Line) : List Element :=
     b.rect.contains l.rect.cx l.rect.cy || b.rect.iou l.rect > 0.3
   readingOrder buttons ++ ofOcr (lines.filter (!covered ·))
 
-/-- Quarters of a `w`×`h` screen, overlapping by `pad` px so an element
-    on a seam is whole in one of them: `(x, y, w, h)`. -/
-def tiles (w h : Nat) (pad : Nat := 60) : List (Nat × Nat × Nat × Nat) :=
-  let tw := min w (w / 2 + pad)
-  let th := min h (h / 2 + pad)
-  [(0, 0), (w - tw, 0), (0, h - th), (w - tw, h - th)].map fun (x, y) => (x, y, tw, th)
+/-- An `n`×`n` grid over a `w`×`h` screen, tiles overlapping by about
+    `pad` px so an element on a seam is whole in one of them, row by row:
+    `(x, y, w, h)`. -/
+def tiles (w h : Nat) (n : Nat := 2) (pad : Nat := 60) : List (Nat × Nat × Nat × Nat) :=
+  let n := max 1 n
+  let tw := min w (w / n + pad)
+  let th := min h (h / n + pad)
+  let at_ := fun (i span t : Nat) => if n == 1 then 0 else i * (span - t) / (n - 1)
+  (List.range n).flatMap fun j => (List.range n).map fun i => (at_ i w tw, at_ j h th, tw, th)
 
-/-- Read the screen, a quarter at a time: on the whole screen a 4B model
-    fills its list with whatever repeats most (a column of times, a row
-    of dates) and misses the menus; on a quarter it lists what can be
-    pressed. Also returns the raw answers (to show when nothing could be
-    read from them). -/
-def list (v : Vlm) (img : Image) (maxItems : Nat := 30) (stop : IO Bool := pure false) :
+/-- Read the screen in an `grid`×`grid` set of tiles. On the whole screen
+    a 4B model fills its list with whatever repeats most (a column of
+    times, a row of dates) and misses the menus; the smaller the tile, the
+    more it lists (a game home screen with 26 things to press: whole 1,
+    2×2 16, 3×3 23). Also returns the raw answers (to show when nothing
+    could be read from them). -/
+def list (v : Vlm) (img : Image) (grid : Nat := 2) (maxItems : Nat := 30) (stop : IO Bool := pure false) :
     IO (List Element × String) := do
   let v := { v with maxTokens := maxItems * 28 }
   let mut out : Array Element := #[]
   let mut answers : Array String := #[]
-  for (x, y, w, h) in tiles img.width img.height do
+  for (x, y, w, h) in tiles img.width img.height grid (if grid ≥ 3 then 40 else 60) do
     if ← stop then break
     let tile := img.crop x y w h
     let a ← v.call prompt (← tile.dataUrl)

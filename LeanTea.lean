@@ -52,6 +52,7 @@ import LeanTea.Llm.ChatStore
 import LeanTea.Browser
 import LeanTea.Agent.Memory
 import LeanTea.Agent.Script
+import LeanTea.Agent.ScriptText
 import LeanTea.Agent.Playbook
 import LeanTea.Agent.Conductor
 import LeanTea.Vision.Image
