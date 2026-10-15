@@ -52,6 +52,9 @@
     #overlay.buttonsonly .box.text { display: none; }
     #elist .item.text { border-style: dashed; }
     #elist .item.text .label { color: var(--muted); }
+    #readmode { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+    #stext { width: 100%; min-height: 220px; font: 12px/1.5 ui-monospace, Menlo, monospace; padding: 8px; white-space: pre; overflow: auto;
+             border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); resize: vertical; }
     #efilter { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; width: 160px; }
     .elements { margin-top: 10px; }
     .elements .rowbtns { margin: 0 0 6px; }
@@ -128,7 +131,12 @@
       <div class="status" id="status">loading…</div>
       <div class="elements">
         <div class="rowbtns">
-          <button id="read" class="primary" title="Have the model list the buttons and labels on the screen">Read screen</button>
+          <button id="read" class="primary" title="List the buttons and text on the screen">Read screen</button>
+          <select id="readmode" title="How to read the screen">
+            <option value="ocr">OCR only (~2 s)</option>
+            <option value="grid2">OCR + model 2×2 (~15 s)</option>
+            <option value="grid3">OCR + model 3×3 (~30 s, finds most)</option>
+          </select>
           <input id="efilter" placeholder="filter, e.g. クエスト">
           <label class="help"><input type="checkbox" id="showboxes" checked> boxes</label>
           <label class="help"><input type="checkbox" id="showtext" checked> text too</label>
@@ -163,6 +171,16 @@
           <button id="save" class="primary">Save test</button>
         </div>
         <div id="saved"></div>
+        <details id="textbox"><summary>Script as text (editable)</summary>
+          <textarea id="stext" spellcheck="false"></textarea>
+          <div class="rowbtns"><button id="applytext" class="primary">Apply edits</button>
+            <button id="reverttext" title="Throw away the edits">Revert</button></div>
+          <div class="help">One step per line; <code>#</code> starts a note, <code>## goal</code> heads a goal's steps.
+            <code>click X Y</code> · <code>click "target"</code> · <code>wait 2s</code> · <code>wait_until "question" 30s</code> ·
+            <code>check "question"</code> · <code>check not "question"</code> · <code>check_text "target" "value"</code> ·
+            <code>key Enter</code> · <code>type "text"</code> · <code>repeat until "question" max 5</code> … <code>end</code> ·
+            <code>json {…}</code> for anything else.</div>
+        </details>
         <details><summary>Script JSON (editable)</summary>
           <textarea id="json" spellcheck="false"></textarea>
           <div class="rowbtns"><button id="applyjson">Apply edits</button>
@@ -181,7 +199,7 @@
   </div>
   <script>
     const $ = (id) => document.getElementById(id);
-    let lastStepsKey = '', since = 0, scenario = null, scenariosKey = '', busy = false, elementsKey = '', elements = [], shotW = 0, lastLive = '', serverPlan = null, serverJson = '', jsonDirty = false;
+    let lastStepsKey = '', serverText = '', textDirty = false, modeSet = false, since = 0, scenario = null, scenariosKey = '', busy = false, elementsKey = '', elements = [], shotW = 0, lastLive = '', serverPlan = null, serverJson = '', jsonDirty = false;
 
     async function api(path, body) {
       const r = await fetch(path, { method: body === undefined ? 'GET' : 'POST',
@@ -318,13 +336,16 @@
       renderElements(s.elements);
       renderScenarios(s);
       ['scenario', 'scnew', 'screname', 'scdelete'].forEach(id => $(id).disabled = busy);
-      ['replay', 'undo', 'save', 'reset', 'go', 'plannew', 'runplan', 'applyjson', 'read'].forEach(id => $(id).disabled = busy);
+      ['replay', 'undo', 'save', 'reset', 'go', 'plannew', 'runplan', 'applyjson', 'read', 'applytext'].forEach(id => $(id).disabled = busy);
       $('status').textContent = (busy ? '● working — ' : '') + s.url;
       // rebuild the list only when it changed: a rebuild on every poll
       // loses the hover and swallows clicks on its buttons
       const stepsKey = JSON.stringify(s.steps);
       if (stepsKey !== lastStepsKey) { lastStepsKey = stepsKey; renderSteps(s.steps); }
       $('count').textContent = '(' + s.steps.length + ' step' + (s.steps.length === 1 ? '' : 's') + ')';
+      if (s.scriptText !== serverText && !textDirty) $('stext').value = s.scriptText;
+      serverText = s.scriptText;
+      if (!modeSet && s.readMode) { $('readmode').value = s.readMode; modeSet = true; }
       const js = JSON.stringify(s.script, null, 2);
       if (js !== serverJson && !jsonDirty) { $('json').value = js; }
       serverJson = js;
@@ -372,7 +393,7 @@
     }
     function clearChat() {
       $('chat').querySelectorAll('.msg:not(:first-child), .note, .thinking').forEach(n => n.remove());
-      $('saved').innerHTML = ''; serverPlan = null; $('plan').value = ''; $('planbox').hidden = true; jsonDirty = false;
+      $('saved').innerHTML = ''; serverPlan = null; $('plan').value = ''; $('planbox').hidden = true; jsonDirty = false; textDirty = false;
     }
     function renderScenarios(s) {
       const key = s.scenario + '|' + (s.scenarios || []).join('|');
@@ -409,6 +430,13 @@
       setTimeout(poll, 100);
     };
     $('json').oninput = () => { jsonDirty = true; };
+    $('stext').oninput = () => { textDirty = true; };
+    $('applytext').onclick = async () => {
+      const r = await api('/api/scripttext', { text: $('stext').value });
+      if (r.error) alertLine('script: ' + r.error); else textDirty = false;
+      setTimeout(poll, 50);
+    };
+    $('reverttext').onclick = () => { textDirty = false; $('stext').value = serverText; };
     $('applyjson').onclick = async () => {
       let script;
       try { script = JSON.parse($('json').value); } catch (e) { alertLine('JSON: ' + e.message); return; }
@@ -433,7 +461,7 @@
     $('efilter').oninput = applyFilter;
     $('showtext').onchange = applyFilter;
     $('showboxes').onchange = () => $('overlay').classList.toggle('off', !$('showboxes').checked);
-    $('read').onclick = async () => { const r = await api('/api/read', {}); if (r.error) alertLine(r.error); setTimeout(poll, 100); };
+    $('read').onclick = async () => { const r = await api('/api/read', { mode: $('readmode').value }); if (r.error) alertLine(r.error); setTimeout(poll, 100); };
     $('live').onclick = async (e) => {
       const img = $('live'), k = (img.naturalWidth || 1) / img.clientWidth;
       const x = Math.round(e.offsetX * k), y = Math.round(e.offsetY * k);

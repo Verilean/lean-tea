@@ -9,6 +9,7 @@ plus the vision actions (`click_described`, `assert_visual`,
 
 ```
 $ vision_qa script.json --target browser --url http://127.0.0.1:8003/ [--headed]
+$ vision_qa script.qa   --target browser …           # the same, written as text
 $ vision_qa script.json --target desktop                # LEANTEA_DESKTOP=1 build
 $ vision_qa script.json --target tmux --tmux-target qa:0.0
       [--model qwen/qwen3-vl-4b] [--frame norm1000] [--zoom 3]
@@ -64,9 +65,13 @@ partial def parseArgs : List String → Args → Args
 def main (argv : List String) : IO UInt32 := do
   let a := parseArgs argv {}
   let some path := a.script?
-    | IO.eprintln "usage: vision_qa <script.json> --target browser|desktop|tmux [--url U] [--tmux-target T] [--model M]"
+    | IO.eprintln "usage: vision_qa <script.json|script.qa> --target browser|desktop|tmux [--url U] [--tmux-target T] [--model M]"
       return 2
-  let script ← IO.ofExcept (Script.fromJson (← IO.ofExcept (Json.parse (← IO.FS.readFile path))))
+  -- `.qa` is the text form (`LeanTea.Agent.ScriptText`), anything else JSON
+  let fp : System.FilePath := path
+  let script ← if fp.extension == some "qa" then
+      pure ({ name := (fp.fileStem.getD "script"), steps := ← IO.ofExcept (parseText (← IO.FS.readFile path)) } : Script)
+    else IO.ofExcept (Script.fromJson (← IO.ofExcept (Json.parse (← IO.FS.readFile path))))
   let dir : System.FilePath := a.evidenceDir
   IO.FS.createDirAll dir
   let vlm : Vlm := { cfg := { baseUrl := a.baseUrl, timeoutSec := some 300 }, model := a.model,

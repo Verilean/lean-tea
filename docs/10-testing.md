@@ -295,6 +295,34 @@ solid boxes; the rest of the text follows, dashed, with a filter. On a
 game home screen: OCR 126 lines in 2 s, including every menu item; the
 model alone found 17 buttons in about 20 s.
 
+The reading is a choice next to **Read screen**: *OCR only* (about
+2 s, text only), *OCR + model 2×2* (about 15 s) or *OCR + model 3×3*
+(about 30 s, finds the most). Measured on one game home screen with 26
+things to press, the model alone found: whole screen 1 (and 6–18 when
+the same screen was scaled 0.75–2×: one pass is a lottery), 2×2 16,
+3×3 23; greyscale 10–13 and an edge-detected "line art" version 5 —
+colour is part of what makes a button look pressable.
+
+#### Editing the test as text
+
+**Script as text** under the recorded steps is the test one step per
+line (`LeanTea.Agent.ScriptText`); edit it and **Apply edits**:
+
+```
+## Open the quest screen
+wait_until "Is the Quest button visible on the screen?" 30s
+click 176 711                      # the user pointed here
+check "Is the quest list shown?"
+repeat until "Are all stages cleared?" max 5
+  click "the next stage"
+  wait 2s
+end
+```
+
+`#` starts a note, `## <goal>` heads a goal's steps, and `json {…}`
+takes any step as JSON. **Save test** writes the `.json` and the same
+test as `.qa` text; `vision_qa` runs either.
+
 #### Broad instructions: plan, run, then edit
 
 A 4B model explores one short goal well and loses its way on a broad
