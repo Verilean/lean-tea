@@ -23,6 +23,9 @@
              background: var(--panel); flex-wrap: wrap; }
     header h1 { font-size: 16px; margin: 0 8px 0 0; }
     header .model { color: var(--muted); font-size: 12px; }
+    .scen { display: flex; gap: 4px; align-items: center; }
+    #scenario { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
+                background: var(--bg); color: var(--ink); max-width: 220px; }
     #url { flex: 1; min-width: 220px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
            background: var(--bg); color: var(--ink); font: inherit; }
     button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
@@ -36,6 +39,32 @@
     .screen img { display: block; max-width: 100%; height: auto; cursor: crosshair; }
     .marker { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%;
               border: 3px solid #f43f5e; box-shadow: 0 0 0 3px rgba(255,255,255,.8); pointer-events: none; }
+    .box { position: absolute; border: 2px solid #f59e0b; border-radius: 3px; cursor: pointer; }
+    .box span { position: absolute; left: -2px; top: -2px; transform: translateY(-100%); background: #f59e0b; color: #111;
+                font-size: 10px; line-height: 1; padding: 2px 3px; border-radius: 3px 3px 0 0; }
+    .box:hover, .box.hot { border-color: #ef4444; background: rgba(239,68,68,.15); }
+    .box:hover span, .box.hot span { background: #ef4444; color: #fff; }
+    #overlay { position: absolute; inset: 0; pointer-events: none; }
+    #overlay .box { pointer-events: auto; }
+    #overlay.off { display: none; }
+    .box.text { border-color: rgba(56,189,248,.8); border-width: 1px; }
+    .box.text span { display: none; }
+    #overlay.buttonsonly .box.text { display: none; }
+    #elist .item.text { border-style: dashed; }
+    #elist .item.text .label { color: var(--muted); }
+    #readmode { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+    #stext { width: 100%; min-height: 220px; font: 12px/1.5 ui-monospace, Menlo, monospace; padding: 8px; white-space: pre; overflow: auto;
+             border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); resize: vertical; }
+    #efilter { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; width: 160px; }
+    .elements { margin-top: 10px; }
+    .elements .rowbtns { margin: 0 0 6px; }
+    #elist { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px; }
+    #elist .item { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border: 1px solid var(--line);
+                   border-radius: 6px; background: var(--panel); font-size: 13px; }
+    #elist .item.hot { border-color: #ef4444; }
+    #elist .item .n { color: var(--muted); font-size: 11px; min-width: 18px; }
+    #elist .item .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #elist .item button { padding: 0 6px; font-size: 11px; }
     .status { margin-top: 8px; color: var(--muted); font-size: 12px; }
     aside { display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); min-height: 0; }
     #chat { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -68,8 +97,9 @@
     #json { min-height: 160px; }
     .help { color: var(--muted); font-size: 12px; margin: 4px 0; }
     #steps li.group { list-style: none; margin: 8px 0 2px -22px; font-weight: 600; font-size: 12px; color: var(--muted); }
-    #steps li .ops { float: right; visibility: hidden; }
-    #steps li:hover .ops { visibility: visible; }
+    #steps li .ops { float: right; opacity: .35; }
+    #steps li:hover .ops { opacity: 1; }
+    #steps li input[type=checkbox] { margin: 0 6px 0 0; vertical-align: middle; }
     #steps li .ops button { padding: 0 6px; font-size: 11px; margin-left: 2px; }
     #steps li.loop { color: var(--acc); }
     .badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); }
@@ -85,14 +115,35 @@
   <header>
     <h1>QA Studio</h1>
     <span class="model">model: {{model}}</span>
+    <span class="scen">
+      <select id="scenario" aria-label="Scenario" title="The test being recorded — each has its own steps, plan and chat"></select>
+      <button id="scnew" title="Start a new scenario (the current one is kept)">New</button>
+      <button id="screname" title="Rename this scenario">Rename</button>
+      <button id="scdelete" title="Delete this scenario">Delete</button>
+    </span>
     <input id="url" value="{{url}}" aria-label="Page URL">
     <button id="go">Open</button>
     <button id="reset" title="Reload the start page and clear the recorded steps">Reset</button>
   </header>
   <div class="layout">
     <section class="page">
-      <div class="screen" id="screen"><img id="live" alt="page under test"><div class="marker" id="marker" hidden></div></div>
+      <div class="screen" id="screen"><img id="live" alt="page under test"><div class="marker" id="marker" hidden></div><div id="overlay"></div></div>
       <div class="status" id="status">loading…</div>
+      <div class="elements">
+        <div class="rowbtns">
+          <button id="read" class="primary" title="List the buttons and text on the screen">Read screen</button>
+          <select id="readmode" title="How to read the screen">
+            <option value="ocr">OCR only (~2 s)</option>
+            <option value="grid2">OCR + model 2×2 (~15 s)</option>
+            <option value="grid3">OCR + model 3×3 (~30 s, finds most)</option>
+          </select>
+          <input id="efilter" placeholder="filter, e.g. クエスト">
+          <label class="help"><input type="checkbox" id="showboxes" checked> boxes</label>
+          <label class="help"><input type="checkbox" id="showtext" checked> text too</label>
+          <span class="help">Solid: buttons the model read; dashed: other text OCR found. Pick what to click (clicked, recorded, the new screen read) or to check.</span>
+        </div>
+        <div id="elist"></div>
+      </div>
       <div class="status">Click the screenshot to point at a target: it is clicked and recorded (during a run, it becomes the next step).</div>
     </section>
     <aside>
@@ -115,10 +166,21 @@
         <div class="rowbtns">
           <button id="replay" title="Reload the start page and run the recorded steps without the model's planning">Replay</button>
           <button id="undo" title="Drop the last recorded step">Undo last</button>
+          <button id="delsel" hidden title="Delete the ticked steps">Delete selected</button>
           <input id="name" placeholder="test name, e.g. notes.login">
           <button id="save" class="primary">Save test</button>
         </div>
         <div id="saved"></div>
+        <details id="textbox"><summary>Script as text (editable)</summary>
+          <textarea id="stext" spellcheck="false"></textarea>
+          <div class="rowbtns"><button id="applytext" class="primary">Apply edits</button>
+            <button id="reverttext" title="Throw away the edits">Revert</button></div>
+          <div class="help">One step per line; <code>#</code> starts a note, <code>## goal</code> heads a goal's steps.
+            <code>click X Y</code> · <code>click "target"</code> · <code>wait 2s</code> · <code>wait_until "question" 30s</code> ·
+            <code>check "question"</code> · <code>check not "question"</code> · <code>check_text "target" "value"</code> ·
+            <code>key Enter</code> · <code>type "text"</code> · <code>repeat until "question" max 5</code> … <code>end</code> ·
+            <code>json {…}</code> for anything else.</div>
+        </details>
         <details><summary>Script JSON (editable)</summary>
           <textarea id="json" spellcheck="false"></textarea>
           <div class="rowbtns"><button id="applyjson">Apply edits</button>
@@ -137,7 +199,7 @@
   </div>
   <script>
     const $ = (id) => document.getElementById(id);
-    let since = 0, busy = false, shotW = 0, lastLive = '', serverPlan = null, serverJson = '', jsonDirty = false;
+    let lastStepsKey = '', serverText = '', textDirty = false, modeSet = false, since = 0, scenario = null, scenariosKey = '', busy = false, elementsKey = '', elements = [], shotW = 0, lastLive = '', serverPlan = null, serverJson = '', jsonDirty = false;
 
     async function api(path, body) {
       const r = await fetch(path, { method: body === undefined ? 'GET' : 'POST',
@@ -159,6 +221,55 @@
         };
         if (img.complete) place(); else img.onload = place;
       } else m.hidden = true;
+    }
+
+    function placeBoxes() {
+      const img = $('live'), ov = $('overlay');
+      ov.innerHTML = '';
+      const k = img.clientWidth / (img.naturalWidth || 1);
+      elements.forEach((e, i) => {
+        const b = el('div', 'box ' + (e.kind || 'button')); b.dataset.i = i;
+        Object.assign(b.style, { left: e.x * k + 'px', top: e.y * k + 'px', width: e.w * k + 'px', height: e.h * k + 'px' });
+        b.title = e.label;
+        b.append(el('span', '', String(i + 1)));
+        b.onclick = (ev) => { ev.stopPropagation(); pick(i, 'click'); };
+        b.onmouseenter = () => hot(i, true); b.onmouseleave = () => hot(i, false);
+        ov.append(b);
+      });
+    }
+    function hot(i, on) {
+      document.querySelectorAll('[data-i="' + i + '"]').forEach(n => n.classList.toggle('hot', on));
+    }
+    function renderElements(list) {
+      const key = JSON.stringify(list || []);
+      if (key === elementsKey) return;
+      elementsKey = key; elements = list || [];
+      const box = $('elist'); box.innerHTML = '';
+      elements.forEach((e, i) => {
+        const it = el('div', 'item ' + (e.kind || 'button')); it.dataset.i = i;
+        it.append(el('span', 'n', String(i + 1)), el('span', 'label', e.label));
+        it.querySelector('.label').title = e.label;
+        const c = el('button', '', 'click'); c.onclick = () => pick(i, 'click');
+        const k = el('button', '', 'check'); k.title = 'Record a check that this is shown'; k.onclick = () => pick(i, 'check');
+        it.append(c, k);
+        it.onmouseenter = () => hot(i, true); it.onmouseleave = () => hot(i, false);
+        box.append(it);
+      });
+      placeBoxes(); applyFilter();
+    }
+    function applyFilter() {
+      const q = $('efilter').value.trim().toLowerCase(), text = $('showtext').checked;
+      document.querySelectorAll('#elist .item').forEach(n => {
+        const e = elements[+n.dataset.i];
+        n.hidden = (!text && e.kind === 'text') || (q && !e.label.toLowerCase().includes(q));
+      });
+      $('overlay').classList.toggle('buttonsonly', !text);
+    }
+    async function pick(index, mode) {
+      if (busy && mode === 'click') return;
+      const r = await api('/api/pick', { index, mode });
+      if (r.error) alertLine(r.error);
+      setTimeout(poll, 100);
     }
 
     function addEvent(ev) {
@@ -186,31 +297,55 @@
       chat.append(node);
     }
 
-    function renderState(s) {
-      busy = s.busy;
-      $('send').disabled = busy; $('stop').disabled = !busy;
-      ['replay', 'undo', 'save', 'reset', 'go', 'plannew', 'runplan', 'applyjson'].forEach(id => $(id).disabled = busy);
-      $('status').textContent = (busy ? '● working — ' : '') + s.url;
+    function renderSteps(steps) {
       const ol = $('steps'); ol.innerHTML = '';
       let lastGoal = null, depth = 0;
-      s.steps.forEach((st, i) => {
+      steps.forEach((st, i) => {
         if (st.kind === 'end') depth = Math.max(0, depth - 1);
         if (st.goal && st.goal !== lastGoal && st.kind === 'step') ol.append(el('li', 'group', st.goal));
         lastGoal = st.goal;
         const li = el('li', st.kind === 'step' ? '' : 'loop');
         li.value = i + 1;
         li.style.marginLeft = (depth * 14) + 'px';
-        li.append(document.createTextNode(st.text));
+        const cb = el('input'); cb.type = 'checkbox'; cb.dataset.i = i; cb.onchange = selChanged;
+        li.append(cb, document.createTextNode(st.text));
         const ops = el('span', 'ops');
         const from = el('button', '', '▶'); from.title = 'Replay from this step on the current screen';
         from.onclick = async () => { const r = await api('/api/replay', { from: i }); if (r.error) alertLine(r.error); };
         const del = el('button', '', '×'); del.title = 'Delete this step';
-        del.onclick = () => api('/api/delete', { index: i }).then(() => setTimeout(poll, 50));
+        del.onclick = () => delSteps([i]);
         ops.append(from, del); li.append(ops);
         ol.append(li);
         if (st.kind === 'repeat') depth++;
       });
+      selChanged();
+    }
+    function selected() { return [...document.querySelectorAll('#steps input[type=checkbox]:checked')].map(c => +c.dataset.i); }
+    function selChanged() {
+      const n = selected().length;
+      $('delsel').hidden = n === 0; $('delsel').textContent = 'Delete ' + n + ' selected';
+    }
+    async function delSteps(indices) {
+      const r = await api('/api/delete', { indices });
+      if (r.error) alertLine(r.error);
+      setTimeout(poll, 50);
+    }
+    function renderState(s) {
+      busy = s.busy;
+      $('send').disabled = busy; $('stop').disabled = !busy;
+      renderElements(s.elements);
+      renderScenarios(s);
+      ['scenario', 'scnew', 'screname', 'scdelete'].forEach(id => $(id).disabled = busy);
+      ['replay', 'undo', 'save', 'reset', 'go', 'plannew', 'runplan', 'applyjson', 'read', 'applytext'].forEach(id => $(id).disabled = busy);
+      $('status').textContent = (busy ? '● working — ' : '') + s.url;
+      // rebuild the list only when it changed: a rebuild on every poll
+      // loses the hover and swallows clicks on its buttons
+      const stepsKey = JSON.stringify(s.steps);
+      if (stepsKey !== lastStepsKey) { lastStepsKey = stepsKey; renderSteps(s.steps); }
       $('count').textContent = '(' + s.steps.length + ' step' + (s.steps.length === 1 ? '' : 's') + ')';
+      if (s.scriptText !== serverText && !textDirty) $('stext').value = s.scriptText;
+      serverText = s.scriptText;
+      if (!modeSet && s.readMode) { $('readmode').value = s.readMode; modeSet = true; }
       const js = JSON.stringify(s.script, null, 2);
       if (js !== serverJson && !jsonDirty) { $('json').value = js; }
       serverJson = js;
@@ -231,9 +366,15 @@
         let s = await api('/api/state?since=' + since);
         if (s.total !== undefined && s.total < since) {
           // the studio restarted without its old chat: start the log over
-          $('chat').querySelectorAll('.msg:not(:first-child), .note, .thinking').forEach(n => n.remove());
+          clearChat();
           since = 0; s = await api('/api/state?since=0');
         }
+        if (scenario !== null && s.scenario !== scenario) {
+          // another scenario was opened: its own chat replaces this one
+          clearChat(); since = 0; elementsKey = '';
+          scenario = s.scenario; s = await api('/api/state?since=0');
+        }
+        scenario = s.scenario;
         for (const ev of s.events) { addEvent(ev); since = ev.id + 1; }
         if (s.events.length) scrollChat();
         renderState(s);
@@ -250,9 +391,31 @@
       if (r.error) alertLine(r.error);
       setTimeout(poll, 100);
     }
+    function clearChat() {
+      $('chat').querySelectorAll('.msg:not(:first-child), .note, .thinking').forEach(n => n.remove());
+      $('saved').innerHTML = ''; serverPlan = null; $('plan').value = ''; $('planbox').hidden = true; jsonDirty = false; textDirty = false;
+    }
+    function renderScenarios(s) {
+      const key = s.scenario + '|' + (s.scenarios || []).join('|');
+      if (key === scenariosKey) return;
+      scenariosKey = key;
+      const sel = $('scenario'); sel.innerHTML = '';
+      const names = (s.scenarios || []).includes(s.scenario) ? s.scenarios : [s.scenario, ...(s.scenarios || [])];
+      names.forEach(n => { const o = el('option', '', n); o.value = n; o.selected = n === s.scenario; sel.append(o); });
+      $('name').placeholder = 'test name (default: ' + s.scenario + ')';
+    }
+    async function scenarioOp(action, name) {
+      const r = await api('/api/scenario', { action, name });
+      if (r.error) alertLine(r.error);
+      setTimeout(poll, 50);
+    }
     function alertLine(t) { $('chat').append(el('div', 'note', t)); scrollChat(); }
 
     $('send').onclick = send;
+    $('scenario').onchange = () => scenarioOp('open', $('scenario').value);
+    $('scnew').onclick = () => { const n = prompt('Name of the new scenario', ''); if (n !== null) scenarioOp('new', n); };
+    $('screname').onclick = () => { const n = prompt('New name', scenario || ''); if (n) scenarioOp('rename', n); };
+    $('scdelete').onclick = () => { if (confirm('Delete the scenario "' + scenario + '"?')) scenarioOp('delete', scenario); };
     $('plannew').onclick = async () => {
       const text = $('input').value.trim();
       if (!text || busy) return;
@@ -267,6 +430,13 @@
       setTimeout(poll, 100);
     };
     $('json').oninput = () => { jsonDirty = true; };
+    $('stext').oninput = () => { textDirty = true; };
+    $('applytext').onclick = async () => {
+      const r = await api('/api/scripttext', { text: $('stext').value });
+      if (r.error) alertLine('script: ' + r.error); else textDirty = false;
+      setTimeout(poll, 50);
+    };
+    $('reverttext').onclick = () => { textDirty = false; $('stext').value = serverText; };
     $('applyjson').onclick = async () => {
       let script;
       try { script = JSON.parse($('json').value); } catch (e) { alertLine('JSON: ' + e.message); return; }
@@ -279,12 +449,19 @@
     $('go').onclick = async () => { const r = await api('/api/navigate', { url: $('url').value }); if (r.error) alertLine(r.error); lastLive = ''; };
     $('reset').onclick = async () => { await api('/api/reset', {}); lastLive = ''; };
     $('replay').onclick = async () => { const r = await api('/api/replay', {}); if (r.error) alertLine(r.error); };
+    $('delsel').onclick = () => { const ix = selected(); if (ix.length) delSteps(ix); };
     $('undo').onclick = () => api('/api/undo', {});
     $('save').onclick = async () => {
       const r = await api('/api/save', { name: $('name').value });
       if (r.error) alertLine(r.error);
     };
     $('live').onerror = () => {};
+    $('live').addEventListener('load', placeBoxes);
+    window.addEventListener('resize', placeBoxes);
+    $('efilter').oninput = applyFilter;
+    $('showtext').onchange = applyFilter;
+    $('showboxes').onchange = () => $('overlay').classList.toggle('off', !$('showboxes').checked);
+    $('read').onclick = async () => { const r = await api('/api/read', { mode: $('readmode').value }); if (r.error) alertLine(r.error); setTimeout(poll, 100); };
     $('live').onclick = async (e) => {
       const img = $('live'), k = (img.naturalWidth || 1) / img.clientWidth;
       const x = Math.round(e.offsetX * k), y = Math.round(e.offsetY * k);

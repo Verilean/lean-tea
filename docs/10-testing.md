@@ -260,6 +260,69 @@ passed (10 steps, 12 s) and the saved
 `vision_qa` — and fails at the welcome check when the password is
 changed to a wrong one.
 
+#### Scenarios
+
+Each test being recorded is a scenario, picked in the header: **New**
+starts an empty one (the current one is kept), the selector switches,
+**Rename** and **Delete** do what they say. A scenario keeps its own
+steps, goals, plan and chat in `--dir`/scenarios/<name>.json; the open
+one is reopened after a restart when it tests the same start page.
+**Save test** names the file after the scenario unless given a name.
+
+#### Picking from the screen: the model reads, you choose
+
+A small model reads a screen well (where the buttons are, what they
+say) and decides badly (what to click next, whether a goal is done). So
+the most direct way to record a test is to let it only read: **Read
+screen** lists the buttons, tabs and icons with their boxes
+(`LeanTea.Vision.Elements`), numbered on the live view and in a list
+under it. Pick one to **click** — it is clicked, recorded as
+`wait_until "Is <label> visible…"` + `click_xy`, and the new screen is
+read — or to **check** — recorded as a `wait_until` that it is shown.
+Anything the list misses can still be clicked on the live view.
+
+Asked to list what can be pressed, a 4B model misses a lot: on the
+whole screen it fills its list with whatever repeats most (a column of
+times, a row of dates) and skips the menus; even a quarter at a time
+it lists about half the buttons. So the text comes from the OS:
+macOS's Vision framework (`LeanTea.Vision.Ocr`, `tools/ocr/ocr.swift`,
+compiled with `swiftc` on first use) reads every line of text, Japanese
+included, with pixel-exact boxes in about 2 s, and is shown at once.
+The model then reads the screen a quarter at a time (overlapping by
+60 px, duplicates merged) to say which of it are buttons, and adds
+icons without text (Stop skips this). Buttons are listed first with
+solid boxes; the rest of the text follows, dashed, with a filter. On a
+game home screen: OCR 126 lines in 2 s, including every menu item; the
+model alone found 17 buttons in about 20 s.
+
+The reading is a choice next to **Read screen**: *OCR only* (about
+2 s, text only), *OCR + model 2×2* (about 15 s) or *OCR + model 3×3*
+(about 30 s, finds the most). Measured on one game home screen with 26
+things to press, the model alone found: whole screen 1 (and 6–18 when
+the same screen was scaled 0.75–2×: one pass is a lottery), 2×2 16,
+3×3 23; greyscale 10–13 and an edge-detected "line art" version 5 —
+colour is part of what makes a button look pressable.
+
+#### Editing the test as text
+
+**Script as text** under the recorded steps is the test one step per
+line (`LeanTea.Agent.ScriptText`); edit it and **Apply edits**:
+
+```
+## Open the quest screen
+wait_until "Is the Quest button visible on the screen?" 30s
+click 176 711                      # the user pointed here
+check "Is the quest list shown?"
+repeat until "Are all stages cleared?" max 5
+  click "the next stage"
+  wait 2s
+end
+```
+
+`#` starts a note, `## <goal>` heads a goal's steps, and `json {…}`
+takes any step as JSON. **Save test** writes the `.json` and the same
+test as `.qa` text; `vision_qa` runs either.
+
 #### Broad instructions: plan, run, then edit
 
 A 4B model explores one short goal well and loses its way on a broad
@@ -374,7 +437,7 @@ seconds and keeps:
   attaches to over CDP and leaves open on exit. The game stays logged
   in and on the same screen. Close it with
   `pkill -f remote-debugging-port=9333`;
-- the recorded steps, goals and chat, from `--dir`/state.json (for the
+- the scenarios (recorded steps, goals and chat), from `--dir`/scenarios/ (for the
   same start URL);
 - the open studio tab, which reconnects by itself. `--dev` re-reads
   page.html on every load, so a UI edit needs only a reload.

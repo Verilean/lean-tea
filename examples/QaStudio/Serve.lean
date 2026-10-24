@@ -14,7 +14,7 @@ While working on the studio itself, `tools/qa-studio-dev.sh` rebuilds
 and restarts it whenever its sources change. `--browser-port` keeps the
 browser in its own process (the game stays on the same screen, still
 logged in), the recorded steps and chat are restored from
-`--dir`/state.json, `--dev` re-reads page.html on every load and
+`--dir`/scenarios/, `--dev` re-reads page.html on every load and
 `--rules FILE` (one piece of advice per line) is re-read every turn.
 
 For a site behind a login (a browser game), keep a browser profile and
@@ -43,6 +43,10 @@ ones that work are recorded, failures go back to the model. Then:
     the test is deterministic;
   * **Save test** writes it as a `vision_qa` script and shows the
     command that runs it (CI, a terminal, or `ui_report`).
+
+**Read screen** has the model list the buttons and labels on the
+screen (`LeanTea.Vision.Elements`); the user picks one to click or to
+check, and the pick is recorded — the model reads, the user decides.
 
 Further messages continue from where the last goal left off, so a
 test can be built up goal by goal. For a broad instruction, **Plan**
@@ -105,6 +109,9 @@ structure State where
   plan     : String := ""
   /-- The broad instruction the plan was made from (a note for each sub-goal). -/
   instruction : String := ""
+  /-- The screen read as a list (`Elements.list`), for the user to pick
+      from; cleared when a job starts (the screen is about to change). -/
+  elements : List Elements.Element := []
 
 structure Studio where
   args    : Args
@@ -126,6 +133,12 @@ structure Studio where
   pointer : IO.Ref (Option (Nat × Nat))
   /-- An explore run (the only job that takes hints and pointed clicks). -/
   exploring : IO.Ref Bool
+  /-- The scenario being recorded: its steps, plan and chat live in
+      `scenarios/<name>.json`. -/
+  scenario : IO.Ref String
+  /-- How the screen is read: `ocr`, or OCR plus the model on an n×n grid
+      (`grid2`, `grid3`). -/
+  readMode : IO.Ref String
 
 def Studio.ctx (s : Studio) (steps : List Step) : IO Ctx := do
   return { drv := s.drv, vlm := s.vlm, zoom := 3, dir := s.dir,
@@ -170,11 +183,33 @@ def Studio.script (s : Studio) (st : State) (name : String) : Script :=
     description := s!"Recorded with qa_studio on {st.startUrl} (model {s.vlm.model}). Goals: " ++
       String.intercalate " / " st.goals.reverse }
 
-/-! ## Surviving a restart -/
+/-! ## Scenarios (and surviving a restart)
 
-def Studio.statePath (s : Studio) : System.FilePath := s.dir / "state.json"
+Each scenario — one test being recorded — is a file
+`scenarios/<name>.json` with its steps, goals, plan and chat; the one
+open is named in `scenarios/current`. Screenshots are shared (numbered
+across scenarios). -/
 
-/-- Write what a restart must not lose: the recorded steps, goals and chat. -/
+def Studio.scenarioDir (s : Studio) : System.FilePath := s.dir / "scenarios"
+
+def Studio.scenarioPath (s : Studio) (name : String) : System.FilePath := s.scenarioDir / s!"{name}.json"
+
+/-- A scenario name usable as a file name: no path separators, control
+    characters or leading dot. Japanese and spaces are fine. -/
+def scenarioName (raw : String) : String :=
+  let n := String.ofList (raw.toList.filter fun c => c != '/' && c != '\\' && c != ':' && c.toNat ≥ 32)
+  let n := n.trimAscii.toString
+  let n := if n.startsWith "." then "_" ++ (n.drop 1).toString else n
+  n.take 80 |>.toString
+
+/-- The saved scenarios, by name. -/
+def Studio.scenarios (s : Studio) : IO (List String) := do
+  if !(← s.scenarioDir.pathExists) then return []
+  let names := (← s.scenarioDir.readDir).toList.filterMap fun e =>
+    if e.fileName.endsWith ".json" then some (e.fileName.dropEnd 5).toString else none
+  return names.toArray.qsort (· < ·) |>.toList
+
+/-- Write the open scenario: its steps, goals, plan and chat. -/
 def Studio.persist (s : Studio) : IO Unit := do
   let st ← s.state.get
   let j := Json.mkObj [
@@ -182,17 +217,22 @@ def Studio.persist (s : Studio) : IO Unit := do
     ("goals", .arr (st.goals.toArray.map Json.str)),
     ("script", ({ name := "studio", steps := st.steps } : Script).toJson),
     ("events", .arr st.events),
-    ("shotN", .num (Int.ofNat (← s.shotN.get))),
     ("lastShot", (st.lastShot.map Json.str).getD .null),
     ("plan", .str st.plan), ("instruction", .str st.instruction)]
-  IO.FS.writeFile s.statePath j.compress
+  IO.FS.createDirAll s.scenarioDir
+  let name ← s.scenario.get
+  IO.FS.writeFile (s.scenarioPath name) j.compress
+  IO.FS.writeFile (s.scenarioDir / "current") name
 
-/-- Bring back a session saved by `persist` for the same start page. -/
-def Studio.restore (s : Studio) : IO Bool := do
-  if !(← s.statePath.pathExists) then return false
-  let some j := (Json.parse (← IO.FS.readFile s.statePath)).toOption | return false
-  let url := (j.getObjValD "startUrl").getStr?.toOption.getD ""
-  if url != (← s.state.get).startUrl then return false
+/-- Make `name` the open scenario, loading it if it was saved (else it
+    starts empty, on the current start page). -/
+def Studio.load (s : Studio) (name : String) : IO Unit := do
+  s.scenario.set name
+  let url := (← s.state.get).startUrl
+  let fresh : State := { startUrl := url }
+  let path := s.scenarioPath name
+  let j? ← if ← path.pathExists then pure (Json.parse (← IO.FS.readFile path)).toOption else pure none
+  let some j := j? | s.state.set fresh; return
   let steps := match Script.fromJson (j.getObjValD "script") with
     | .ok sc => sc.steps
     | .error _ => []
@@ -201,11 +241,43 @@ def Studio.restore (s : Studio) : IO Bool := do
     | _ => []
   let events := match j.getObjValD "events" with | .arr a => a | _ => #[]
   let lastShot := (j.getObjValD "lastShot").getStr?.toOption
-  if let .num n := j.getObjValD "shotN" then s.shotN.set n.mantissa.toNat
   let plan := (j.getObjValD "plan").getStr?.toOption.getD ""
   let instruction := (j.getObjValD "instruction").getStr?.toOption.getD ""
-  s.state.modify fun st => { st with steps, goals, events, lastShot, plan, instruction }
-  return true
+  let startUrl := match (j.getObjValD "startUrl").getStr?.toOption with
+    | some u => if u.isEmpty then url else u
+    | none => url
+  s.state.set { fresh with startUrl, steps, goals, events, lastShot, plan, instruction }
+
+/-- A name not taken yet: `base`, `base 2`, `base 3`, … -/
+def Studio.freeName (s : Studio) (base : String) : IO String := do
+  let taken ← s.scenarios
+  if !taken.contains base then return base
+  let mut n := 2
+  while taken.contains s!"{base} {n}" do n := n + 1
+  return s!"{base} {n}"
+
+/-- At start-up: reopen the last scenario if it tests the same start
+    page, else start a new one. A `state.json` from before scenarios
+    becomes the scenario `default`. -/
+def Studio.restore (s : Studio) : IO Bool := do
+  let old := s.dir / "state.json"
+  if (← old.pathExists) && (← s.scenarios).isEmpty then
+    IO.FS.createDirAll s.scenarioDir
+    IO.FS.rename old (s.scenarioPath "default")
+    IO.FS.writeFile (s.scenarioDir / "current") "default"
+  -- screenshots are numbered across scenarios: continue after the last
+  let shots := (← s.dir.readDir).toList.filterMap fun e =>
+    ((e.fileName.dropPrefix? "shot").bind fun r => (r.toString.dropSuffix? ".png").bind (·.toString.toNat?))
+  s.shotN.set (shots.foldl (fun m n => max m (n + 1)) 0)
+  let url := (← s.state.get).startUrl
+  let cur := s.scenarioDir / "current"
+  let name ← if ← cur.pathExists then pure (← IO.FS.readFile cur).trimAscii.toString else pure ""
+  if !name.isEmpty && (← (s.scenarioPath name).pathExists) then
+    s.load name
+    if (← s.state.get).startUrl == url then return true
+  s.state.set { startUrl := url }
+  s.scenario.set (← s.freeName "untitled")
+  return false
 
 /-- Mark a job as running; false if one already is. -/
 def Studio.claim (s : Studio) : IO Bool :=
@@ -228,6 +300,7 @@ partial def Studio.waitLock (s : Studio) : IO Unit := do
 def Studio.background (s : Studio) (job : IO Unit) : IO Bool := do
   if !(← s.claim) then return false
   s.stopReq.set false
+  s.state.modify ({ · with elements := [] })
   let _ ← IO.asTask (prio := .dedicated) do
     s.waitLock
     try job catch e => s.push [("kind", "finished"), ("ok", .bool false), ("text", .str s!"error: {e}")]
@@ -325,19 +398,67 @@ def Studio.explore (s : Studio) (goal : String) : IO Unit := do
 /-- The user clicked the live view with nothing running: click there and
     record it (a fixed point — fine for a game canvas, which `--clip`
     keeps at the same place). -/
-def Studio.pointClick (s : Studio) (x y : Nat) : IO Unit := do
+def Studio.pointClick (s : Studio) (x y : Nat) (name? : Option String := none) : IO Bool := do
   let st ← s.state.get
   let ctx ← s.ctx st.steps
   let animated := (← settle ctx (maxMs := 2000)) ≥ 0.01
   let act := Action.clickXy x y
-  let (_, img) ← ctx.shot st.steps.length "look"
-  let name? ← try Explore.nameAt ctx img x y catch _ => pure none
+  let name? ← match name? with
+    | some n => pure (some n)
+    | none =>
+      let (_, img) ← ctx.shot st.steps.length "look"
+      try Explore.nameAt ctx img x y catch _ => pure none
   match ← Explore.attempt ctx {} st.steps.length act "the user pointed here" true animated with
   | .ok (obs, ev, pt) =>
     s.emit (.stepOk (Explore.describe act) obs ev pt)
     if let some n := name? then s.emit (.note s!"recorded as: wait until {n} shows, then click ({x}, {y})")
     s.state.modify fun st => { st with steps := st.steps ++ Explore.pointedSteps name? x y, verified := none }
-  | .error (e, ev, pt) => s.emit (.stepFailed (Explore.describe act) e ev pt)
+    return true
+  | .error (e, ev, pt) => s.emit (.stepFailed (Explore.describe act) e ev pt); return false
+
+/-- Read the screen into a list of elements for the user to pick from:
+    first the text OCR finds (a second or two, shown at once), then — in
+    the `grid2`/`grid3` modes — the buttons the model reads tile by tile
+    (Stop skips the rest). -/
+def Studio.readScreen (s : Studio) : IO Unit := do
+  let st ← s.state.get
+  let ctx ← s.ctx st.steps
+  let _ ← settle ctx (maxMs := 3000)
+  let (path, img) ← ctx.shot st.steps.length "read"
+  let t0 ← IO.monoMsNow
+  let lines ← try Ocr.read path catch _ => pure []
+  let mode ← s.readMode.get
+  let secs := fun (t : Nat) => s!"{(t - t0) / 1000}.{(t - t0) % 1000 / 100}"
+  if !lines.isEmpty then
+    s.state.modify ({ · with elements := Elements.ofOcr lines })
+    if mode == "ocr" then
+      s.push [("kind", "note"), ("text", .str s!"read the screen: {lines.length} text lines ({secs (← IO.monoMsNow)}s) — pick one to click or check")]
+      return
+    s.push [("kind", "note"), ("text", .str s!"OCR: {lines.length} text lines ({secs (← IO.monoMsNow)}s) — asking the model which are buttons (Stop to skip)…")]
+  let grid := if mode == "grid3" then 3 else 2
+  let (buttons, answer) ← Elements.list s.vlm img grid (stop := s.stopReq.get)
+  let es := Elements.merge buttons lines
+  s.state.modify ({ · with elements := es })
+  if buttons.isEmpty && !(← s.stopReq.get) then
+    s.push [("kind", "note"), ("text", .str s!"the model listed no buttons: {answer.take 300}")]
+  s.push [("kind", "note"),
+          ("text", .str s!"read the screen: {buttons.length} buttons, {es.length - buttons.length} more text ({secs (← IO.monoMsNow)}s) — pick one to click or check")]
+
+/-- The user picked a listed element to check: record that it is shown
+    (it is — the model just read it there). No browser needed, and the
+    list stays. -/
+def Studio.pickCheck (s : Studio) (e : Elements.Element) : IO Unit := do
+  let q := s!"Is {e.label} visible on the screen?"
+  s.state.modify fun st => { st with
+    steps := st.steps ++ [{ act := .waitUntil q (timeoutMs := 30000), note := "check picked from the screen list" }],
+    verified := none }
+  s.push [("kind", "stepOk"), ("text", .str s!"check: {e.label} is shown"), ("observed", .str "recorded"),
+          ("shot", .null), ("point", .null)]
+
+/-- The user picked a listed element to click: click its centre, record
+    it, and read the new screen. -/
+def Studio.pickClick (s : Studio) (e : Elements.Element) : IO Unit := do
+  if ← s.pointClick e.rect.cx.toUInt64.toNat e.rect.cy.toUInt64.toNat (some e.label) then s.readScreen
 
 def Studio.pushResult (s : Studio) (r : StepResult) : IO Unit := do
   let url ← s.keepShot r.evidencePath
@@ -507,7 +628,15 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
           ("kind", .str (match step.act with
             | .repeatStart .. => "repeat" | .repeatEnd => "end" | _ => "step"))])),
         ("plan", .str st.plan),
+        ("scenario", .str (← s.scenario.get)),
+        ("scenarios", .arr ((← s.scenarios).toArray.map Json.str)),
+        ("elements", .arr (st.elements.toArray.map fun e => Json.mkObj [
+          ("label", .str e.label), ("kind", .str e.kind),
+          ("x", .num (Int.ofNat e.rect.x.toUInt64.toNat)), ("y", .num (Int.ofNat e.rect.y.toUInt64.toNat)),
+          ("w", .num (Int.ofNat e.rect.w.toUInt64.toNat)), ("h", .num (Int.ofNat e.rect.h.toUInt64.toNat))])),
         ("script", (s.script st "qa_studio.draft").toJson),
+        ("scriptText", .str (toText st.steps)),
+        ("readMode", .str (← s.readMode.get)),
         ("verified", match st.verified with | some b => .bool b | none => .null),
         ("saved", match st.saved? with
           | some (p, c) => Json.mkObj [("path", .str p), ("command", .str c)]
@@ -541,8 +670,59 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
       s.pointer.set (some (x, y))
       s.push [("kind", "note"), ("text", .str "the running attempt clicks there next")]
       return ok
-    return if ← s.background (s.pointClick x y) then ok else busyErr
+    return if ← s.background (do let _ ← s.pointClick x y) then ok else busyErr
+  | "POST", "/api/read" =>
+    let mode := str (jsonBody req) "mode"
+    if ["ocr", "grid2", "grid3"].contains mode then s.readMode.set mode
+    return if ← s.background s.readScreen then ok else busyErr
+  | "POST", "/api/pick" =>
+    let j := jsonBody req
+    let some i := (j.getObjValD "index").getNat?.toOption | return err 400 "index needed"
+    let some e := (← s.state.get).elements[i]? | return err 400 "no such element — read the screen again"
+    let check := str j "mode" == "check"
+    s.push [("kind", "user"), ("text", .str s!"({if check then "check" else "click"} [{i + 1}] {e.label})")]
+    if check then
+      s.pickCheck e
+      s.persist
+      return ok
+    return if ← s.background (s.pickClick e) then ok else busyErr
   | "POST", "/api/stop" => s.stopReq.set true; return ok
+  | "POST", "/api/scenario" =>
+    -- new / open / rename / delete; the open one is saved first
+    if (← s.state.get).busy then return busyErr
+    let j := jsonBody req
+    let name := scenarioName (str j "name")
+    let cur ← s.scenario.get
+    match str j "action" with
+    | "new" =>
+      s.persist
+      s.load (← s.freeName (if name.isEmpty then "untitled" else name))
+      s.persist
+      return ok
+    | "open" =>
+      if !(← (s.scenarioPath name).pathExists) then return err 404 s!"no scenario {name}"
+      s.persist
+      s.load name
+      return ok
+    | "rename" =>
+      if name.isEmpty then return err 400 "name needed"
+      if name == cur then return ok
+      if (← s.scenarios).contains name then return err 409 s!"a scenario called {name} exists"
+      s.persist
+      IO.FS.rename (s.scenarioPath cur) (s.scenarioPath name)
+      s.scenario.set name
+      s.persist
+      return ok
+    | "delete" =>
+      let target := if name.isEmpty then cur else name
+      if ← (s.scenarioPath target).pathExists then IO.FS.removeFile (s.scenarioPath target)
+      if target == cur then
+        match (← s.scenarios) with
+        | first :: _ => s.load first
+        | [] => s.load "untitled"
+        s.persist
+      return ok
+    | a => return err 400 s!"unknown action {a}"
   | "POST", "/api/navigate" =>
     let url := str (jsonBody req) "url"
     if url.isEmpty then return err 400 "no url"
@@ -590,11 +770,27 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
       s.push [("kind", "note"), ("text", .str s!"test edited: {sc.steps.length} steps")]
       s.persist
       return ok
+  | "POST", "/api/scripttext" =>
+    if (← s.state.get).busy then return busyErr
+    match parseText (str (jsonBody req) "text") with
+    | .error e => return err 400 e
+    | .ok steps =>
+      s.state.modify fun st => { st with steps, verified := none }
+      s.push [("kind", "note"), ("text", .str s!"test edited: {steps.length} steps")]
+      s.persist
+      return ok
   | "POST", "/api/delete" =>
     if (← s.state.get).busy then return busyErr
     let j := jsonBody req
-    let some i := (j.getObjValD "index").getNat?.toOption | return err 400 "index needed"
-    s.state.modify fun st => { st with steps := st.steps.eraseIdx i, verified := none }
+    -- {"index": i} or {"indices": [i, …]}
+    let indices := match j.getObjValD "indices" with
+      | .arr xs => xs.toList.filterMap (fun (x : Json) => x.getNat?.toOption)
+      | _ => ((j.getObjValD "index").getNat?.toOption).toList
+    if indices.isEmpty then return err 400 "index needed"
+    let n := (← s.state.get).steps.length
+    s.state.modify fun st => { st with
+      steps := (st.steps.zipIdx.filter (fun (_, k) => !indices.contains k)).map (·.1), verified := none }
+    s.push [("kind", "note"), ("text", .str s!"deleted {indices.filter (· < n) |>.length} step(s)")]
     s.persist
     return ok
   | "POST", "/api/undo" =>
@@ -608,11 +804,15 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
   | "POST", "/api/save" =>
     let st ← s.state.get
     if st.steps.isEmpty then return err 400 "nothing recorded yet"
-    let name := sanitize (str (jsonBody req) "name")
+    let asked := str (jsonBody req) "name"
+    let cur ← s.scenario.get
+    let name := sanitize (if asked.isEmpty then cur else asked)
     let dir : System.FilePath := s.args.outDir
     IO.FS.createDirAll dir
     let path := dir / s!"{name}.json"
     IO.FS.writeFile path ((s.script st name).toJson.pretty 100 ++ "\n")
+    -- the same test as text, to edit by hand (`vision_qa` runs either)
+    IO.FS.writeFile (dir / s!"{name}.qa") (toText st.steps)
     let extra := (s.args.profile?.map (s!" --profile {·}")).getD "" ++ (s.args.clip?.map (s!" --clip {·}")).getD ""
     let cmd := s!"./.lake/build/bin/vision_qa {path} --target browser --url {st.startUrl} --model {s.vlm.model}{extra}"
     s.state.modify ({ · with saved? := some (path.toString, cmd) })
@@ -642,10 +842,11 @@ def main (argv : List String) : IO Unit := do
     | none => pure (Driver.browser session)
   let s : Studio := { args := a, session, drv, vlm, dir,
                       state := ← IO.mkRef { startUrl }, stopReq := ← IO.mkRef false, shotN := ← IO.mkRef 0,
-                      lock := ← IO.mkRef false, hints := ← IO.mkRef #[], pointer := ← IO.mkRef none, exploring := ← IO.mkRef false }
+                      lock := ← IO.mkRef false, hints := ← IO.mkRef #[], pointer := ← IO.mkRef none, exploring := ← IO.mkRef false,
+                      scenario := ← IO.mkRef "untitled", readMode := ← IO.mkRef "grid2" }
   let restored ← s.restore
   if restored then
-    IO.println s!"  restored {(← s.state.get).steps.length} recorded steps from {s.statePath}"
+    IO.println s!"  reopened scenario \"{← s.scenario.get}\" ({(← s.state.get).steps.length} recorded steps)"
   -- a kept browser already showing a page stays where it is (that's
   -- the point of keeping it); otherwise open the start page once the
   -- server below is answering (it may be /demo)

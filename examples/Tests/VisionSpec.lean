@@ -213,6 +213,59 @@ def planGroup : LSpec :=
       (matchingEnd loopScript.steps.toArray 0 == some 4 && matchingEnd loopScript.steps.toArray 1 == some 3)
   ]
 
+def elementsGroup : LSpec :=
+  -- a cut-off answer that repeats its last line, as Qwen-VL does
+  let answer := "[{\"label\": \"Start\", \"bbox_2d\": [100, 100, 200, 200]},\n" ++
+    "{\"label\": \"Menu\", \"bbox_2d\": [500, 0, 600, 100]},\n" ++
+    "{\"label\": \"Menu\", \"bbox_2d\": [500, 0, 600, 100]},\n{\"label\": \"Me"
+  let es := Elements.parse answer .norm1000 1000 500
+  let t := Elements.tiles 1000 500
+  let a : Elements.Element := { label := "OK", rect := { x := 10, y := 10, w := 40, h := 20 } }
+  let lines := Ocr.parse "[{\"text\":\"Start\",\"conf\":1,\"x\":110,\"y\":60,\"w\":40,\"h\":20},{\"text\":\"News\",\"conf\":0.5,\"x\":10,\"y\":300,\"w\":60,\"h\":20},{\"text\":\" \",\"conf\":1,\"x\":0,\"y\":0,\"w\":1,\"h\":1}]"
+  let merged := Elements.merge es lines
+  group "Screen elements" [
+    it "OCR output: blank lines dropped" (lines.map (·.text) == ["Start", "News"]),
+    it "OCR text inside a button is the button; other text is listed after the buttons"
+      (merged.map (fun e => (e.label, e.kind)) == [("Menu", "button"), ("Start", "button"), ("News", "text")]),
+    it "parses labels and boxes" (es.map (·.label) == ["Start", "Menu"]),
+    it "boxes in screen pixels" (es.head?.map (fun e => rectIs e.rect 100 50 100 50) == some true),
+    it "four overlapping quarters" (t == [(0, 0, 560, 310), (440, 0, 560, 310), (0, 190, 560, 310), (440, 190, 560, 310)]),
+    it "a 3×3 grid covers the screen" (let g := Elements.tiles 900 300 3 30
+      g.length == 9 && g.head? == some (0, 0, 330, 130) && g.getLast? == some (570, 170, 330, 130)),
+    it "same label at the same place is one element"
+      (a.same { a with rect := { a.rect with x := 14 } } && !a.same { a with label := "Cancel" }
+        && !a.same { a with rect := { a.rect with x := 300 } })
+  ]
+
+open LeanTea.Agent.Script in
+def scriptTextGroup : LSpec :=
+  let steps : List Step := [
+    { act := .waitUntil "Is \"Quest\" visible?" 30000, note := "wait for it", goal := some "Open quests" },
+    { act := .clickXy 176 711, note := "the user pointed here", goal := some "Open quests" },
+    { act := .repeatStart "All cleared?" 5, goal := some "Clear all" },
+    { act := .clickDescribed "the next stage # 2", goal := some "Clear all" },
+    { act := .assertPixel 1 2 "#ff00aa" 8, goal := some "Clear all" },
+    { act := .repeatEnd, goal := some "Clear all" },
+    { act := .assertVisual "Error shown?" false },
+    { act := .wait 500, expect := some "home" }]
+  let text := toText steps
+  let back := parseText text
+  let same := fun (a b : List Step) => (Script.toJson { name := "x", steps := a }).compress == (Script.toJson { name := "x", steps := b }).compress
+  group "Script as text" [
+    it "round trip keeps every step, note and goal" (match back with | .ok b => same steps b | .error _ => false),
+    it "goals become headings, loops are indented"
+      ((text.splitOn "\n").take 4 == ["## Open quests", "wait_until \"Is \\\"Quest\\\" visible?\" 30s  # wait for it",
+        "click 176 711  # the user pointed here", ""]
+       && (text.splitOn "\n").contains "  click \"the next stage # 2\""),
+    it "hand-written lines" (match parseText "click \"Start\"  # go\nwait 2s\ncheck not \"Error?\"\nkey Enter\n" with
+      | .ok [a, b, c, d] => a.note == "go" && describe' a.act == "click \"Start\"" && describe' b.act == "wait 2000 ms"
+          && describe' c.act == "assert \"Error?\" is no" && describe' d.act == "press Enter"
+      | _ => false),
+    it "errors name the line" (match parseText "click 1 2\nclik 3 4" with | .error e => e.startsWith "line 2" | .ok _ => false),
+    it "an unclosed loop is an error" (match parseText "repeat until \"x\" max 2\nwait 1s" with | .error _ => true | .ok _ => false)
+  ]
+where describe' := Explore.describe
+
 def run : IO LSpec := do
   -- Image ops (C / stb)
   let png ← testImage.encodePng
@@ -256,7 +309,7 @@ def run : IO LSpec := do
       (Qa.changedPixelsIn testImage testImage 0 0 4 2 == 0 && Qa.changedPixelsIn testImage testImage 3 1 50 50 == 0)
   ]
   return group "LeanTea.Vision" [parseGroup, geometryGroup, yesNoGroup, scriptGroup, ansiGroup, imgGroup, replay,
-                                 exploreGroup, changeGroup, planGroup]
+                                 exploreGroup, changeGroup, planGroup, elementsGroup, scriptTextGroup]
 
 def main : IO Unit := do
   let code ← lspecIO (← run)

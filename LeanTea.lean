@@ -52,6 +52,7 @@ import LeanTea.Llm.ChatStore
 import LeanTea.Browser
 import LeanTea.Agent.Memory
 import LeanTea.Agent.Script
+import LeanTea.Agent.ScriptText
 import LeanTea.Agent.Playbook
 import LeanTea.Agent.Conductor
 import LeanTea.Vision.Image
@@ -60,6 +61,8 @@ import LeanTea.Vision.Driver
 import LeanTea.Vision.Qa
 import LeanTea.Vision.Explore
 import LeanTea.Vision.Plan
+import LeanTea.Vision.Ocr
+import LeanTea.Vision.Elements
 import LeanTea.Net.S3Server
 import LeanTea.Site
 import LeanTea.Crypto.Base64
