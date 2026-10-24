@@ -26,6 +26,15 @@
 #include <libpq-fe.h>
 #endif
 
+#if defined(LEANTEA_HAVE_POSTGRES) && defined(__linux__)
+/* A system libpq built against glibc 2.38+ calls the C23 name of
+   strtoull, which the older glibc Lean links against does not have.
+   Weak, so a libc that has it wins. */
+__attribute__((weak)) unsigned long long __isoc23_strtoull(const char *s, char **end, int base) {
+  return strtoull(s, end, base);
+}
+#endif
+
 /* ---------- error helpers ---------- */
 
 static lean_object *err_str(const char *msg) {
