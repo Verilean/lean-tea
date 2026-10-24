@@ -234,15 +234,17 @@ trial and error (`LeanTea.Vision.Explore`):
   agrees. A 4B model tends to assert something easy once it has made
   some progress ("is the chapter ready to run?") and stop halfway. When it
   says no, the run goes on with what is left.
-  The same question is asked after every action and after a check that
-  misses: a small model otherwise keeps clicking past a finished goal
+  The same question is asked after every action, after any step that
+  fails, and before accepting that the model gives up: a small model otherwise keeps clicking past a finished goal
   ("click Quest" went on to Main Story and Sortie), or checks for the
   wrong thing and wanders off (looking for the battle after it was won,
   then pressing Next). Once the answer is yes, the model is told to
   assert what's on screen or reply done; if its own check fails anyway,
-  the goal ends as done without a check. The judge sees each step with
-  the model's reason for it, so "click the title (to tap to start)"
-  counts as the tap the goal asked for. On `/demo-game`, "Tap to start",
+  the goal ends as done without a check. The judge sees each step as
+  `DONE: <step> (purpose: <the model's reason>)`, so "click the title
+  (purpose: tap to start)" counts as the tap the goal asked for. A reason
+  written as "the goal is to click Next" read as a click still to make
+  until "DONE:" was put first. On `/demo-game`, "Tap to start",
   "Click Quest" and "Run the main story quest until the battle is won"
   each stopped where the goal did.
 
@@ -257,6 +259,56 @@ passed (10 steps, 12 s) and the saved
 `examples/VisionQa/scripts/notes.signin_add_task.json` passes under
 `vision_qa` — and fails at the welcome check when the password is
 changed to a wrong one.
+
+#### Broad instructions: plan, run, then edit
+
+A 4B model explores one short goal well and loses its way on a broad
+one ("clear every stage of chapter 1"). Type the broad instruction and
+press **Plan** instead of Send. The model looks at the screen and writes
+a plan (`LeanTea.Vision.Plan`): sub-goals one per line, with loops.
+The plan appears in the Plan panel as editable text:
+
+```
+Open Quest, then Main Story, and check that Chapter 1 is shown
+repeat until "Does the screen say All stages cleared?" max 4:
+  Sortie, skip the story and check that the battle is won
+  Click Next, then open Quest and Main Story, and check that Chapter 1 is shown
+end
+```
+
+Text that is already a plan (several lines, or a `repeat until` block)
+is taken as written instead of being sent to the model. Edit it and
+press **Run plan**. Each sub-goal is explored in turn and
+its steps are recorded under it. A loop becomes `repeat` …
+`end_repeat` steps in the script (`{"act": "repeat", "until": "…",
+"max": 4}`, `{"act": "end_repeat"}`):
+
+- before each round the question is asked, and yes leaves the loop;
+- the first round is explored;
+- later rounds replay the steps that round recorded;
+- more than `max` rounds fails.
+
+`vision_qa` runs the loop the same way. A plan that stops (a sub-goal
+not reached) can be helped with a hint or a click on the screen, or
+edited (drop the lines already done) and run again: recording goes on
+from where it is.
+
+To tune the recorded test afterwards:
+
+- the steps are listed under their sub-goals; hover a step for
+  **▶** (replay from that step on the current screen) and **×**
+  (delete it);
+- **Script JSON** is editable: change a target, a question or a loop's
+  `max`, then **Apply edits**.
+
+The model's own plans are drafts. For "clear every stage of chapter 1"
+it wrote a loop, but also a first round outside the loop and a guess
+at screens it couldn't see yet. Hence the editor. With the hand-edited plan above on `/demo-game`
+(now three stages, then "All stages cleared!"), round 1 was explored
+(8 steps), rounds 2 and 3 replayed them, and the loop ended on the
+cleared screen. The whole 15-step test replayed from the start page
+(33 steps run, 140 s). With `max` edited down to 2 it failed with
+"still not done after 2 rounds".
 
 #### Browser games and sites behind a login
 
@@ -280,6 +332,13 @@ vision_qa test.json --target browser --url https://example.com/game --profile ~/
   screens never go quiet); the model can also `wait` N seconds, and the
   wait is recorded. On a screen that animates by itself a click is
   judged by the area around it instead of the whole screen.
+- For something that plays by itself for a while (a battle), the model
+  can propose `wait_until` with a yes/no question (up to 600 s). A
+  `wait_until` gives up early when the screen hasn't changed for 20 s
+  (less than 0.3% of it moved): a story page or a dialog waits for a
+  click, not for time. Plain
+  waits may repeat up to 3 in a row; then it's told the screen needs an
+  action (a story scene waits for a click, not for time).
 - `click_described` takes up to 3 looks (600 ms apart) to find its
   target and a yes-assertion up to 3 looks to pass, so a blinking
   "TAP TO START" or a screen mid-transition doesn't fail a run; a

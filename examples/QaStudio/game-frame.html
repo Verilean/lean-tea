@@ -15,7 +15,8 @@
 // confirmation dialog — the same label twice) → battle → victory → home.
 const cv = document.getElementById('c'), g = cv.getContext('2d');
 const W = cv.width, H = cv.height;
-let screen = 'loading', t0 = performance.now(), entered = t0, stamina = 30, buttons = [], line = 0, confirm = false;
+let screen = 'loading', t0 = performance.now(), entered = t0, stamina = 30, buttons = [], line = 0, confirm = false,
+    cleared = 0;   // stages of chapter 1 won (3 in all) — something to loop over
 const stars = Array.from({ length: 90 }, () => ({ x: Math.random() * W, y: Math.random() * H, v: 0.3 + Math.random() * 1.2 }));
 
 function go(s) { screen = s; entered = performance.now(); }
@@ -56,9 +57,14 @@ function frame(now) {
     button('Event', W / 2 - 240, 290, 480, 70, () => {}, '#c58cff');
     button('Back', 40, H - 100, 140, 60, () => go('home'), '#9aa4c4');
   } else if (screen === 'story') {
-    hud(); text('Chapter 1: Starfall Hill', W / 2, 110, 36);
-    text('Stamina cost 10', W / 2, 170, 22, '#9fe6ff');
-    button('Sortie', W / 2 - 110, 250, 220, 80, () => { if (stamina >= 10) { stamina -= 10; line = 0; confirm = false; go('scene'); } }, '#ff8f6b');
+    hud(); text('Chapter 1: Starfall Hill', W / 2, 100, 36);
+    text([1, 2, 3].map(n => `1-${n} ${n <= cleared ? '✓' : '·'}`).join('     '), W / 2, 160, 24, '#ffe39a');
+    if (cleared >= 3) {
+      text('All stages cleared!', W / 2, 290, 40, '#7fd6a1');
+    } else {
+      text(`Next: Stage 1-${cleared + 1}   (stamina cost 10)`, W / 2, 210, 22, '#9fe6ff');
+      button('Sortie', W / 2 - 110, 250, 220, 80, () => { if (stamina >= 10) { stamina -= 10; line = 0; confirm = false; go('scene'); } }, '#ff8f6b');
+    }
     button('Back', 40, H - 100, 140, 60, () => go('quest'), '#9aa4c4');
   } else if (screen === 'scene') {
     const lines = ['The night wind carries ash over Starfall Hill.', 'Alice: Something is waiting beyond the ridge.',
@@ -88,7 +94,7 @@ function frame(now) {
   } else if (screen === 'victory') {
     hud(); text('Victory!', W / 2, 180, 72, '#ffe39a');
     text('Reward: Star Shard x3', W / 2, 260, 24);
-    button('Next', W / 2 - 100, 340, 200, 70, () => go('home'));
+    button('Next', W / 2 - 100, 340, 200, 70, () => { cleared = Math.min(3, cleared + 1); go('home'); });
   }
   requestAnimationFrame(frame);
 }

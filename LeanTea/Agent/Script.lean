@@ -79,6 +79,13 @@ inductive Action where
       or fail after `timeoutMs`. Gates a run on a slow screen (a game
       still loading) where pixel checks can't tell the states apart. -/
   | waitUntil (question : String) (timeoutMs : Nat := 60000)
+  /-- Start of a loop: the steps up to the matching `repeatEnd` run
+      again and again until the VLM answers yes to `question` (asked before
+      each round, so a loop whose work is already done runs zero times).
+      More than `max` rounds fails the run. -/
+  | repeatStart (question : String) (max : Nat := 10)
+  /-- End of the innermost open loop: go back to its `repeatStart`. -/
+  | repeatEnd
   deriving Inhabited
 
 structure Step where
@@ -89,6 +96,9 @@ structure Step where
   expect : Option String := none
   /-- Free-form note shown in the step trace. -/
   note   : String := ""
+  /-- The plain-language goal this step belongs to (`qa_studio` records a
+      test goal by goal; the editor groups steps under it). -/
+  goal   : Option String := none
   deriving Inhabited
 
 structure Script where
@@ -148,6 +158,9 @@ private def actionToJson : Action → Json
   | .typeText t => Json.mkObj [("act", Json.str "type"), ("text", Json.str t)]
   | .waitUntil q tms => Json.mkObj [("act", Json.str "wait_until"), ("question", Json.str q),
       ("timeoutMs", Json.num (Int.ofNat tms))]
+  | .repeatStart q mx => Json.mkObj [("act", Json.str "repeat"), ("until", Json.str q),
+      ("max", Json.num (Int.ofNat mx))]
+  | .repeatEnd => Json.mkObj [("act", Json.str "end_repeat")]
 
 private def stepToJson (s : Step) : Json :=
   let base := match actionToJson s.act with
@@ -159,7 +172,10 @@ private def stepToJson (s : Step) : Json :=
   let withNote :=
     if s.note.isEmpty then withExpect
     else withExpect ++ [("note", Json.str s.note)]
-  Json.mkObj withNote
+  let withGoal := match s.goal with
+    | some g => withNote ++ [("goal", Json.str g)]
+    | none   => withNote
+  Json.mkObj withGoal
 
 def Script.toJson (s : Script) : Json :=
   Json.mkObj [
@@ -213,6 +229,8 @@ private def actionFromJson (j : Json) : Except String Action := do
   | "key" => return .key (← getStr j "key")
   | "type" => return .typeText (← getStr j "text")
   | "wait_until" => return .waitUntil (← getStr j "question") (getNatOpt j "timeoutMs" 60000)
+  | "repeat" => return .repeatStart (← getStr j "until") (getNatOpt j "max" 10)
+  | "end_repeat" => return .repeatEnd
   | other => .error s!"unknown action: {other}"
 
 private def stepFromJson (j : Json) : Except String Step := do
@@ -220,7 +238,8 @@ private def stepFromJson (j : Json) : Except String Step := do
   return {
     act,
     expect := getStrOpt j "expect",
-    note   := getStrOpt j "note" |>.getD ""
+    note   := getStrOpt j "note" |>.getD "",
+    goal   := getStrOpt j "goal"
   }
 
 def Script.fromJson (j : Json) : Except String Script := do
@@ -229,6 +248,19 @@ def Script.fromJson (j : Json) : Except String Script := do
   let stepsJson ← (j.getObjVal? "steps").bind (·.getArr?)
   let steps ← stepsJson.toList.mapM stepFromJson
   return { name, description, steps }
+
+/-- Index of the `repeatEnd` that closes the loop opened at `start`
+    (loops nest). -/
+def matchingEnd (steps : Array Step) (start : Nat) : Option Nat := Id.run do
+  let mut depth := 0
+  for i in [start:steps.size] do
+    match steps[i]!.act with
+    | .repeatStart .. => depth := depth + 1
+    | .repeatEnd =>
+      depth := depth - 1
+      if depth == 0 then return some i
+    | _ => pure ()
+  return none
 
 /-! ## Classifier — pluggable -/
 
@@ -291,6 +323,8 @@ private def fmtAct : Action → String
   | .key k                => s!"key {k}"
   | .typeText t           => s!"type \"{t}\""
   | .waitUntil q _        => s!"wait until \"{q}\""
+  | .repeatStart q mx     => s!"repeat until \"{q}\" (max {mx})"
+  | .repeatEnd            => "end repeat"
 
 private def truncate (s : String) (n : Nat) : String :=
   if s.length ≤ n then s else (s.take (n - 1)).toString ++ "…"

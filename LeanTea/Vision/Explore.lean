@@ -101,6 +101,13 @@ def parseProposal (reply : String) : Except String Proposal := do
       | .num n => (n.mantissa.toNat / 10 ^ n.exponent)
       | _ => 2
     return .step (.wait ((max 1 (min 10 secs)) * 1000)) why
+  | "wait_until" =>
+    let q := str j "question"
+    if q.isEmpty then throw "wait_until needs a \"question\"" else
+    let secs := match (j.getObjValD "seconds") with
+      | .num n => (n.mantissa.toNat / 10 ^ n.exponent)
+      | _ => 120
+    return .step (.waitUntil q ((max 5 (min 600 secs)) * 1000)) why
   | "done" => return .done (if why.isEmpty then str j "summary" else why)
   | "fail" => return .fail (str j "reason")
   | a => throw s!"unknown action \"{a}\" (use click / type / key / assert / done / fail)"
@@ -116,6 +123,8 @@ def describe : Action → String
   | .assertPixel x y rgb _ => s!"assert pixel ({x}, {y}) is {rgb}"
   | .wait ms => s!"wait {ms} ms"
   | .waitUntil q _ => s!"wait until \"{q}\""
+  | .repeatStart q mx => s!"repeat until \"{q}\" (max {mx})"
+  | .repeatEnd => "end repeat"
   | _ => "other step"
 
 /-- The per-turn prompt. -/
@@ -140,6 +149,7 @@ def promptFor (goal : String) (notes : List String) (worked : List Action)
   "{\"action\": \"click\", \"target\": \"<the element to click, described by its visible text, colour and position>\", \"why\": \"<short>\"}\n" ++
   "{\"action\": \"key\", \"key\": \"Enter\", \"why\": \"<short>\"}\n" ++
   "{\"action\": \"wait\", \"seconds\": 3, \"why\": \"<short — e.g. the screen is still loading>\"}\n" ++
+  "{\"action\": \"wait_until\", \"question\": \"<yes/no question, yes when the wait is over — e.g. Is the battle result shown?>\", \"seconds\": 180, \"why\": \"<short — e.g. the battle plays by itself>\"}\n" ++
   "{\"action\": \"assert\", \"question\": \"<a yes/no question about what is visible now that checks the goal>\", \"expect\": \"yes\", \"why\": \"<short>\"}\n" ++
   "{\"action\": \"done\", \"why\": \"<what was verified>\"}   (only after an assert proved the goal, or when told the goal looks achieved)\n" ++
   "{\"action\": \"fail\", \"reason\": \"<why the goal cannot be done on this page>\"}\n" ++
@@ -205,7 +215,10 @@ def nameAt (c : Ctx) (img : Image) (x y : Nat) : IO (Option String) := do
   let name := (stripThink res.content).trimAscii.toString
   let name := String.ofList (name.toList.filter (fun ch => ch != '"' && ch != '\n'))
   let name := if name.endsWith "." then (name.dropEnd 1).toString else name
-  return if name.isEmpty || name.length > 60 then none else some name
+  -- "No button here", "There is nothing…": not a name to wait for
+  let low := name.toLower
+  let nothing := ["no ", "none", "nothing", "there is", "there are", "i cannot", "i can't", "empty"].any (fun (p : String) => low.startsWith p)
+  return if name.isEmpty || name.length > 60 || nothing then none else some name
 
 /-- The steps recorded for a click the user pointed at: wait until the
     thing there shows (so a replay doesn't click a loading screen), then
@@ -222,11 +235,13 @@ def pointedSteps (name? : Option String) (x y : Nat) : List Step :=
     it has made some progress, and stop halfway. `(true, _)` when the
     reply can't be read, so a confused judge never blocks a run. -/
 def goalReached (c : Ctx) (img : Image) (goal : String) (worked : List Step) : IO (Bool × String) := do
-  -- with the model's reason, so "click the title text — tap to start"
-  -- reads as the tap the goal asked for
+  -- with the model's reason, so "click the title text (purpose: tap to
+  -- start)" reads as the tap the goal asked for
   let done := if worked.isEmpty then "(none)" else
     String.intercalate "\n" (worked.zipIdx.map fun (st, k) =>
-      s!"{k + 1}. {describe st.act}" ++ (if st.note.isEmpty then "" else s!" (to {st.note})"))
+      -- "DONE:" first: a reason like "the goal is to click Next" otherwise
+      -- reads as a click still to make
+      s!"{k + 1}. DONE: {describe st.act}" ++ (if st.note.isEmpty then "" else s!" (purpose: {st.note})"))
   let prompt := s!"Goal: {goal}\nSteps done so far for this goal (each one worked):\n{done}\n" ++
     "Has the WHOLE goal been achieved? Count the steps above as done: a goal that only asks to click or press " ++
     "something is achieved once that click is in the steps, even if the button is gone now. " ++
@@ -344,6 +359,15 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
       if judgedDone then
         emit (.finished true "goal done (its last action was judged to finish it; no check of its own)")
         return (steps, true)
+      -- a small model gives up looking for a button the goal already got
+      -- past ("there is no Next here, this is the selection screen")
+      if acted then
+        let (_, now) ← c.shot idx "judge"
+        let (whole, _) ← try goalReached c now goal (steps.drop worked.length)
+          catch e => do emit (.note s!"judge call failed: {e}"); pure (false, "")
+        if whole then
+          emit (.finished true s!"goal done (judged from the screen; the model had given up: {reason})")
+          return (steps, true)
       emit (.finished false s!"the model gave up: {reason}")
       return (steps, false)
     | .ok (.done summary) =>
@@ -378,7 +402,19 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
       -- anything, means the goal was only that check
       -- (a click / key may well repeat: the same label on the next
       -- screen, e.g. Skip and then Skip in its confirmation dialog)
-      if acts.length == 1 && !acts.any mustChange && steps.getLast?.map (·.act |> describe) == some text then
+      let isWait := acts.any fun a => match a with | .wait _ | .waitUntil .. => true | _ => false
+      -- waiting may repeat (a long battle), but not forever on a screen
+      -- that waits for a click: after 3 waits in a row, ask for an action
+      let waitsInARow := ((steps.drop worked.length).reverse.takeWhile fun st =>
+        match st.act with | .wait _ | .waitUntil .. => true | _ => false).length
+      if isWait && waitsInARow ≥ 3 then
+        failures := failures + 1
+        lastError := some ("waiting has not moved the screen on (3 waits in a row). It needs an action: " ++
+          "a click (a Skip / Next / close button, or the screen itself), a key, or wait_until with a question if " ++
+          "something really plays by itself.")
+        emit (.note "refused a 4th wait in a row")
+        continue
+      if acts.length == 1 && !acts.any mustChange && !isWait && steps.getLast?.map (·.act |> describe) == some text then
         if !acted && acts.all confirms && checkedThisGoal then
           let (_, now) ← c.shot idx "judge"
           let (whole, left) ← try goalReached c now goal (steps.drop worked.length) catch _ => pure (true, "")
@@ -428,7 +464,7 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
             if !judgedDone then
               let (_, now) ← c.shot idx "judge"
               let (whole, _) ← try goalReached c now goal (steps.drop worked.length)
-                catch _ => pure (false, "")
+                catch e => do emit (.note s!"judge call failed: {e}"); pure (false, "")
               if whole then
                 judgedDone := true
                 lastError := some ("(not an error) the goal looks achieved now. Check the result with an assert that " ++
@@ -458,12 +494,13 @@ def explore (c : Ctx) (cfg : Config) (goal : String) (notes : List String) (work
           -- a check that misses may be checking the wrong thing: the
           -- screen can already show the goal (a battle that ended while
           -- the model looked for the battle). Ask before it wanders on.
-          if acted && !judgedDone && acts.all (fun a => match a with | .assertVisual .. => true | _ => false) then
+          if acted && !judgedDone then
             let (_, now) ← c.shot idx "judge"
-            let (whole, _) ← try goalReached c now goal (steps.drop worked.length) catch _ => pure (false, "")
+            let (whole, _) ← try goalReached c now goal (steps.drop worked.length)
+              catch e => do emit (.note s!"judge call failed: {e}"); pure (false, "")
             if whole then
               judgedDone := true
-              lastError := some (s!"that check failed ({err}), but the goal looks achieved on the screen now. " ++
+              lastError := some (s!"that step failed ({err}), but the goal looks achieved on the screen now. " ++
                 "Assert what the screen shows now that proves the goal, or reply done. Do not click anything else.")
               emit (.note "the goal looks done — asking for a check of what is on screen")
     if failures ≥ cfg.maxFailures then
