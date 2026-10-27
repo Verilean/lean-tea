@@ -1,19 +1,20 @@
 -- examples/Breezehollow/Combat.leanjs — the fighting rules, as one pure
 -- function.
 --
---   fight(state, player, input, moves, world, dt)
---     → { state, events, knock, face, rooted }
+--   fight(state, player, input, moves, world, dt) : Outcome
+--     = { state, events, knock, face, rooted }
 --
--- `state` is { hero, foes, bolts }: the heroine's fighting state, the
--- monsters and the wind bolts in flight. `player` is Physics.leanjs's
+-- `state` is a Battle { hero, foes, bolts }: the heroine's fighting state,
+-- the monsters and the wind bolts in flight. `player` is Physics.leanjs's
 -- player (position, facing, flying …) and `moves` the events its `step`
 -- returned this frame (the wind skill is one). Nothing is mutated; every
 -- frame returns a new state, and what the renderer should show (a swing,
--- a damage number, a monster's wind-up) comes back as events. `knock` is
+-- a damage number, a monster's wind-up) comes back as Events. `knock` is
 -- a velocity to add to the player (a step into a swing, being knocked
--- back), `face` a direction to turn her to (or null), and `rooted` says
+-- back), `face` a direction to turn her to (Face) or Keep, and `rooted` says
 -- whether she should ignore WASD next frame (mid-swing, or defeated).
--- examples/Tests/BreezehollowSpec.lean runs CombatTest.leanjs under node.
+-- examples/Tests/BreezehollowSpec.lean runs CombatTest.leanjs under node,
+-- and hands this file (with Physics.leanjs) to Lean to check its types.
 --
 -- The heroine fights with wind: on foot, a three-hit combo of palm
 -- strikes that turns her toward the nearest monster; in flight, bolts
@@ -21,78 +22,182 @@
 -- also blows back and hurts every monster round her. When her HP runs
 -- out she is down for DOWN_T seconds and the game brings her back.
 --
--- Monsters (KINDS) wander round their home, notice her within `aggro`,
--- chase her, wind up when she is within `reach`, strike (a lunge, or a
--- golem's slam) and recover. A strike hurts her once, if she is within
--- `contact` while it lasts; then she can't be hurt for GUARD seconds. A
--- monster that strays `leash` from home gives up and walks back, paying
--- her no attention until it is home. Hits
--- interrupt a monster's wind-up unless it has armour. Defeated monsters
--- come back at home after RESPAWN seconds.
+-- Monsters (Kind; their numbers in `stats`) wander round their home,
+-- notice her within `aggro`, chase her, wind up when she is within
+-- `reach`, strike (a lunge, or a golem's slam) and recover: the Mode of
+-- each monster. A strike hurts her once, if she is within `contact` while
+-- it lasts; then she can't be hurt for GUARD seconds. A monster that
+-- strays `leash` from home gives up and walks back (Return), paying her
+-- no attention until it is home. Hits interrupt a monster's wind-up
+-- unless it has armour. Defeated monsters come back at home after
+-- RESPAWN seconds.
 
-def HERO_HP := 100
--- the combo: length of each swing, when it lands, damage, reach, and how
--- hard she steps into it (the clips attack_1, attack_2, attack_3)
-def COMBO := [
-  {dur: 0.58, hitAt: 0.22, dmg: 12, reach: 2.8, step: 4},
-  {dur: 0.58, hitAt: 0.22, dmg: 12, reach: 2.8, step: 4},
-  {dur: 0.75, hitAt: 0.32, dmg: 24, reach: 3.4, step: 6}]
+def HERO_HP : Float := 100
+
+-- one swing of the combo: its length, when it lands, damage, reach, and
+-- how hard she steps into it (the clips attack_1, attack_2, attack_3)
+record Swing where
+  dur : Float, hitAt : Float, dmg : Float, reach : Float, step : Float
+
+def COMBO : Array Swing := [
+  Swing {dur: 0.58, hitAt: 0.22, dmg: 12, reach: 2.8, step: 4},
+  Swing {dur: 0.58, hitAt: 0.22, dmg: 12, reach: 2.8, step: 4},
+  Swing {dur: 0.75, hitAt: 0.32, dmg: 24, reach: 3.4, step: 6}]
 def COMBO_GAP := 0.45
 -- a swing hits monsters within this cosine of straight ahead (≈ ±75°)
 def ARC := 0.25
 -- a swing turns her toward a monster this near
-def ASSIST := 6
-def BOLT_V := 34
-def BOLT_DMG := 10
+def ASSIST : Float := 6
+def BOLT_V : Float := 34
+def BOLT_DMG : Float := 10
 def BOLT_LIFE := 1.1
 def BOLT_CD := 0.3
 def BOLT_R := 0.6
-def BOLT_RANGE := 26
+def BOLT_RANGE : Float := 26
 -- how quickly a bolt turns toward its target (per second)
-def BOLT_TURN := 8
-def SKILL_DMG := 20
-def SKILL_R := 6
+def BOLT_TURN : Float := 8
+def SKILL_DMG : Float := 20
+def SKILL_R : Float := 6
 def GUARD := 0.9
-def DOWN_T := 3
-def CALM := 5
-def REGEN_HP := 8
-def RESPAWN := 30
+def DOWN_T : Float := 3
+def CALM : Float := 5
+def REGEN_HP : Float := 8
+def RESPAWN : Float := 30
 -- the middle of her body above her feet, in metres
 def CHEST := 1.0
 
+inductive Kind where
+  | Slime
+  | Wisp
+  | Golem
+
+-- What a monster is doing.
+inductive Mode where
+  | Idle
+  | Return
+  | Chase
+  | Windup
+  | Strike
+  | Recover
+  | Hurt
+  | Dead
+
+-- What the renderer should show. Positions are where it happened.
+inductive Event where
+  | Damaged(id : Float, amount : Float, big : Bool, x : Float, y : Float, z : Float)
+  | Defeated(id : Float, kind : Kind, x : Float, y : Float, z : Float)
+  | Respawned(id : Float)
+  | Noticed(id : Float)
+  | WoundUp(id : Float, kind : Kind)
+  | Struck(id : Float, kind : Kind, x : Float, y : Float, z : Float)
+  | Swung(combo : Nat, x : Float, y : Float, z : Float, facing : Float)
+  | Fired(x : Float, y : Float, z : Float)
+  | Burst(x : Float, y : Float, z : Float)
+  | Wounded(amount : Float, x : Float, y : Float, z : Float)
+  | Downed
+  | Revived
+
 -- hp; speed; aggro, reach and contact radii; damage; seconds of wind-up,
 -- strike and recovery; lunge speed; leash; body radius and height; fly:
--- hovers instead of walking; armour: hits don't interrupt it
-def KINDS := {
-  slime: {hp: 40, speed: 3.4, aggro: 14, reach: 2.0, contact: 1.3, dmg: 8,
-          windup: 0.6, strike: 0.35, recover: 0.9, lunge: 8, leash: 24, r: 0.8, h: 1.0,
-          fly: false, armor: false},
-  wisp: {hp: 26, speed: 6, aggro: 18, reach: 3.5, contact: 1.2, dmg: 6,
-         windup: 0.5, strike: 0.4, recover: 1.1, lunge: 15, leash: 30, r: 0.6, h: 0,
-         fly: true, armor: false},
-  golem: {hp: 120, speed: 2.2, aggro: 12, reach: 2.8, contact: 3.0, dmg: 18,
-          windup: 1.1, strike: 0.12, recover: 1.6, lunge: 0, leash: 20, r: 1.3, h: 2.6,
-          fly: false, armor: true}}
+-- hovers instead of walking; armor: hits don't interrupt it
+record Stats where
+  hp : Float, speed : Float, aggro : Float, reach : Float, contact : Float, dmg : Float,
+  windup : Float, strike : Float, recover : Float, lunge : Float, leash : Float,
+  r : Float, h : Float, fly : Bool, armor : Bool
 
-def newHero() := {hp: HERO_HP, swing: -1, combo: 2, gap: 99, struck: false,
-                  guard: 0, down: 0, calm: 99, boltCd: 0}
+def SLIME := Stats {hp: 40, speed: 3.4, aggro: 14, reach: 2.0, contact: 1.3, dmg: 8,
+  windup: 0.6, strike: 0.35, recover: 0.9, lunge: 8, leash: 24, r: 0.8, h: 1.0, fly: false, armor: false}
+def WISP := Stats {hp: 26, speed: 6, aggro: 18, reach: 3.5, contact: 1.2, dmg: 6,
+  windup: 0.5, strike: 0.4, recover: 1.1, lunge: 15, leash: 30, r: 0.6, h: 0, fly: true, armor: false}
+def GOLEM := Stats {hp: 120, speed: 2.2, aggro: 12, reach: 2.8, contact: 3.0, dmg: 18,
+  windup: 1.1, strike: 0.12, recover: 1.6, lunge: 0, leash: 20, r: 1.3, h: 2.6, fly: false, armor: true}
 
-def newFoe(id, kind, x, y, z) := {
+def stats(k : Kind) : Stats := match k with | Slime => SLIME | Wisp => WISP | Golem => GOLEM
+
+def kindName(k : Kind) : String := match k with | Slime => "slime" | Wisp => "wisp" | Golem => "golem"
+
+def modeName(m : Mode) : String := match m with
+  | Idle => "idle" | Return => "return" | Chase => "chase" | Windup => "windup"
+  | Strike => "strike" | Recover => "recover" | Hurt => "hurt" | Dead => "dead"
+
+-- swing: seconds into the swing under way (-1: none); combo: which swing
+-- (0–2) it is or was; gap: seconds since the last one ended; struck: it
+-- has landed; guard: seconds she can't be hurt; down: seconds left
+-- knocked out; calm: seconds since anything happened
+record Hero where
+  hp : Float, swing : Float, combo : Nat, gap : Float, struck : Bool,
+  guard : Float, down : Float, calm : Float, boltCd : Float
+
+-- home: where it wanders and returns to; t: seconds in this mode; hit:
+-- this strike has hurt her; (tx, tz): where it is wandering to; n: how
+-- many places it has wandered to (seeds the next)
+record Foe where
+  id : Float, kind : Kind, homeX : Float, homeZ : Float,
+  x : Float, y : Float, z : Float, vx : Float, vy : Float, vz : Float,
+  facing : Float, hp : Float, mode : Mode, t : Float, hit : Bool,
+  tx : Float, tz : Float, n : Float
+
+-- A bolt homes on the monster it is locked on to.
+inductive Lock where
+  | Free
+  | Locked(id : Float)
+
+record Bolt where
+  x : Float, y : Float, z : Float, vx : Float, vy : Float, vz : Float,
+  life : Float, target : Lock
+
+record Battle where
+  hero : Hero, foes : Array Foe, bolts : Array Bolt
+
+record Vec3 where
+  x : Float, y : Float, z : Float
+
+-- Which way she should turn.
+inductive Turn where
+  | Keep
+  | Face(angle : Float)
+
+-- A monster found by `nearestFoe`, or none.
+inductive Pick where
+  | NoFoe
+  | Nearest(foe : Foe)
+
+-- This frame's attack button, and the camera's yaw and pitch (to aim).
+record Attack where
+  attack : Bool, yaw : Float, pitch : Float
+
+record Outcome where
+  state : Battle, events : Array Event, knock : Vec3, face : Turn, rooted : Bool
+
+-- results of the helpers below: a monster hit, a monster's frame, a swing
+record FoeHit where
+  foe : Foe, events : Array Event
+record FoeTurn where
+  foe : Foe, events : Array Event, dmg : Float
+record SwingHits where
+  foes : Array Foe, events : Array Event, n : Float
+
+def newHero() : Hero := Hero {hp: HERO_HP, swing: -1, combo: 2, gap: 99, struck: false,
+                              guard: 0, down: 0, calm: 99, boltCd: 0}
+
+def newFoe(id : Float, kind : Kind, x : Float, y : Float, z : Float) : Foe := Foe {
   id: id, kind: kind, homeX: x, homeZ: z, x: x, y: y, z: z, vx: 0, vy: 0, vz: 0,
-  facing: 0, hp: KINDS[kind].hp, state: "idle", t: 0, hit: false, tx: x, tz: z, n: 0}
+  facing: 0, hp: stats(kind).hp, mode: Idle, t: 0, hit: false, tx: x, tz: z, n: 0}
+
+def isDead(f : Foe) : Bool := match f.mode with | Dead => true | _ => false
 
 -- A repeatable number in [0, 1) for monster `a`'s n-th choice.
-def rnd(a, b) :=
+def rnd(a : Float, b : Float) : Float :=
   let v := Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
   v - Math.floor(v)
 
 -- Height of the middle of a monster's body.
-def centerY(f) := if KINDS[f.kind].fly then f.y else f.y + KINDS[f.kind].h * 0.5
+def centerY(f : Foe) : Float := if stats(f.kind).fly then f.y else f.y + stats(f.kind).h * 0.5
 
 -- The nearest living monster within `range` of her whose direction is
--- within cosine `cosMin` of (dirX, dirZ); null if none.
-def nearestFoe(foes, p, range, dirX, dirZ, cosMin) := do
-  let mut best := null;
+-- within cosine `cosMin` of (dirX, dirZ).
+def nearestFoe(foes : Array Foe, p : Player, range : Float, dirX : Float, dirZ : Float, cosMin : Float) : Pick := do
+  let mut best := NoFoe;
   let mut bestD := range;
   for f in foes do (
     let dx := f.x - p.x;
@@ -100,41 +205,41 @@ def nearestFoe(foes, p, range, dirX, dirZ, cosMin) := do
     let d := Math.hypot(dx, dz, centerY(f) - p.y - CHEST);
     let flat := Math.hypot(dx, dz);
     let ahead := flat < 0.001 || (dx * dirX + dz * dirZ) / flat >= cosMin;
-    if f.state != "dead" && d < bestD && ahead then (
-      best := f;
+    if !isDead(f) && d < bestD && ahead then (
+      best := Nearest(f);
       bestD := d)
   );
   best
 
 -- `f` takes `amount` damage from something at (fx, fz) and is pushed
 -- away at `knock` m/s (and up at `lift`).
-def hitFoe(f, amount, fx, fz, knock, lift) :=
-  let K := KINDS[f.kind];
+def hitFoe(f : Foe, amount : Float, fx : Float, fz : Float, knock : Float, lift : Float) : FoeHit :=
+  let K := stats(f.kind);
   let dx := f.x - fx;
   let dz := f.z - fz;
   let d := Math.max(0.001, Math.hypot(dx, dz));
   let kb := if K.armor then knock * 0.2 else knock;
   let hp := Math.max(0, f.hp - amount);
   let dead := hp <= 0;
-  let keep := K.armor && f.state != "idle";
-  let shown := {ev: "damage", id: f.id, amount: amount, big: amount >= 20,
-                x: f.x, y: centerY(f) + K.r + 0.4, z: f.z};
-  if f.state == "dead" then {foe: f, events: []}
-  else {
+  -- armour keeps a monster at what it was doing (a wanderer turns on her)
+  let keep := K.armor && (match f.mode with | Idle => false | _ => true);
+  let shown := Damaged(f.id, amount, amount >= 20, f.x, centerY(f) + K.r + 0.4, f.z);
+  if isDead(f) then FoeHit {foe: f, events: []}
+  else FoeHit {
     foe: { f with hp := hp, vx := dx / d * kb, vz := dz / d * kb,
            vy := (if K.armor then f.vy else lift),
-           state := (if dead then "dead" else if keep then f.state else if K.armor then "chase" else "hurt"),
+           mode := (if dead then Dead else if keep then f.mode else if K.armor then Chase else Hurt),
            t := (if keep then f.t else 0) },
-    events: [shown].concat(if dead then [{ev: "defeat", id: f.id, kind: f.kind, x: f.x, y: centerY(f), z: f.z}] else []) }
+    events: [shown].concat(if dead then [Defeated(f.id, f.kind, f.x, centerY(f), f.z)] else []) }
 
 -- Replace the monster with the same id.
-def swapFoe(foes, g) := foes.map(fun (f) => if f.id == g.id then g else f)
+def swapFoe(foes : Array Foe, g : Foe) : Array Foe := foes.map(fun (f) => if f.id == g.id then g else f)
 
 -- One frame of one monster. `alive`: she can be fought (not down).
 -- Returns the new monster, its events and the damage it dealt her.
-def foeStep(f, p, alive, world, dt) := do
-  let K := KINDS[f.kind];
-  let mut st := f.state;
+def foeStep(f : Foe, p : Player, alive : Bool, world : Terrain, dt : Float) : FoeTurn := do
+  let K := stats(f.kind);
+  let mut st := f.mode;
   let mut t := f.t + dt;
   let mut hit := f.hit;
   let mut tx := f.tx;
@@ -156,164 +261,179 @@ def foeStep(f, p, alive, world, dt) := do
   let dist := if K.fly then Math.hypot(dh, dy) else dh;
   let level := K.fly || Math.abs(dy) < 2.5;
   let fromHome := Math.hypot(f.x - f.homeX, f.z - f.homeZ);
-  if st == "dead" then (
-    if t >= RESPAWN then (
-      st := "idle";
-      t := 0;
-      hp := K.hp;
-      x0 := f.homeX;
-      z0 := f.homeZ;
-      tx := f.homeX;
-      tz := f.homeZ;
-      evs := [{ev: "respawn", id: f.id}]))
-  else if st == "idle" then (
-    let wx := tx - f.x;
-    let wz := tz - f.z;
-    let wd := Math.hypot(wx, wz);
-    if wd > 0.5 then (
-      wantX := wx / wd * K.speed * 0.4;
-      wantZ := wz / wd * K.speed * 0.4;
-      face := Math.atan2(wx, wz))
-    else if t > 2.5 then (
-      n := n + 1;
-      t := 0;
-      let a := rnd(f.id, n) * 2 * Math.PI;
-      let rr := 2 + rnd(n, f.id) * 5;
-      tx := f.homeX + Math.cos(a) * rr;
-      tz := f.homeZ + Math.sin(a) * rr);
-    hp := Math.min(K.hp, hp + K.hp * 0.1 * dt);
-    if alive && dist < K.aggro && (K.fly || Math.abs(dy) < 6) then (
-      st := "chase";
-      t := 0;
-      evs := [{ev: "notice", id: f.id}]))
-  else if st == "return" then (
-    let wx := f.homeX - f.x;
-    let wz := f.homeZ - f.z;
-    let wd := Math.max(0.001, Math.hypot(wx, wz));
-    wantX := wx / wd * K.speed;
-    wantZ := wz / wd * K.speed;
-    face := Math.atan2(wx, wz);
-    hp := Math.min(K.hp, hp + K.hp * 0.3 * dt);
-    if wd < 1 then (
-      st := "idle";
-      t := 0;
-      tx := f.homeX;
-      tz := f.homeZ))
-  else if st == "chase" then (
-    face := Math.atan2(dx, dz);
-    if !alive || fromHome > K.leash || dist > K.aggro * 1.8 then (
-      st := "return";
-      t := 0)
-    else if dist < K.reach && level then (
-      st := "windup";
-      t := 0;
-      evs := [{ev: "windup", id: f.id, kind: f.kind}])
-    else (
-      wantX := dx / dh * K.speed;
-      wantZ := dz / dh * K.speed))
-  else if st == "windup" then (
-    face := Math.atan2(dx, dz);
-    if t >= K.windup then (
-      st := "strike";
-      t := 0;
-      hit := false;
-      snap := true;
-      evs := [{ev: "strike", id: f.id, kind: f.kind, x: f.x, y: f.y, z: f.z}]))
-  else if st == "strike" then (
-    wantX := Math.sin(f.facing) * K.lunge;
-    wantZ := Math.cos(f.facing) * K.lunge;
-    face := f.facing;
-    if !hit && alive && dist < K.contact && level then (
-      hit := true;
-      dmg := K.dmg);
-    if t >= K.strike then (
-      st := "recover";
-      t := 0))
-  else if st == "recover" then (
-    if t >= K.recover then (
-      st := "chase";
-      t := 0))
-  else if st == "hurt" then (
-    if t >= 0.35 then (
-      st := "chase";
-      t := 0));
+  match f.mode with
+    | Dead => (
+      if t >= RESPAWN then (
+        st := Idle;
+        t := 0;
+        hp := K.hp;
+        x0 := f.homeX;
+        z0 := f.homeZ;
+        tx := f.homeX;
+        tz := f.homeZ;
+        evs := [Respawned(f.id)]))
+    | Idle => (
+      let wx := tx - f.x;
+      let wz := tz - f.z;
+      let wd := Math.hypot(wx, wz);
+      if wd > 0.5 then (
+        wantX := wx / wd * K.speed * 0.4;
+        wantZ := wz / wd * K.speed * 0.4;
+        face := Math.atan2(wx, wz))
+      else if t > 2.5 then (
+        n := n + 1;
+        t := 0;
+        let a := rnd(f.id, n) * 2 * Math.PI;
+        let rr := 2 + rnd(n, f.id) * 5;
+        tx := f.homeX + Math.cos(a) * rr;
+        tz := f.homeZ + Math.sin(a) * rr);
+      hp := Math.min(K.hp, hp + K.hp * 0.1 * dt);
+      if alive && dist < K.aggro && (K.fly || Math.abs(dy) < 6) then (
+        st := Chase;
+        t := 0;
+        evs := [Noticed(f.id)]))
+    | Return => (
+      let wx := f.homeX - f.x;
+      let wz := f.homeZ - f.z;
+      let wd := Math.max(0.001, Math.hypot(wx, wz));
+      wantX := wx / wd * K.speed;
+      wantZ := wz / wd * K.speed;
+      face := Math.atan2(wx, wz);
+      hp := Math.min(K.hp, hp + K.hp * 0.3 * dt);
+      if wd < 1 then (
+        st := Idle;
+        t := 0;
+        tx := f.homeX;
+        tz := f.homeZ))
+    | Chase => (
+      face := Math.atan2(dx, dz);
+      if !alive || fromHome > K.leash || dist > K.aggro * 1.8 then (
+        st := Return;
+        t := 0)
+      else if dist < K.reach && level then (
+        st := Windup;
+        t := 0;
+        evs := [WoundUp(f.id, f.kind)])
+      else (
+        wantX := dx / dh * K.speed;
+        wantZ := dz / dh * K.speed))
+    | Windup => (
+      face := Math.atan2(dx, dz);
+      if t >= K.windup then (
+        st := Strike;
+        t := 0;
+        hit := false;
+        snap := true;
+        evs := [Struck(f.id, f.kind, f.x, f.y, f.z)]))
+    | Strike => (
+      wantX := Math.sin(f.facing) * K.lunge;
+      wantZ := Math.cos(f.facing) * K.lunge;
+      face := f.facing;
+      if !hit && alive && dist < K.contact && level then (
+        hit := true;
+        dmg := K.dmg);
+      if t >= K.strike then (
+        st := Recover;
+        t := 0))
+    | Recover => (
+      if t >= K.recover then (
+        st := Chase;
+        t := 0))
+    | Hurt => (
+      if t >= 0.35 then (
+        st := Chase;
+        t := 0));
   -- move: ease toward the wanted velocity (a knock-back fades out)
-  let k := Math.min(1, (if st == "strike" then 12 else 5) * dt);
+  let dead := match st with | Dead => true | _ => false;
+  let striking := match st with | Strike => true | _ => false;
+  let busy := match st with | Chase => true | Windup => true | Strike => true | _ => false;
+  let k := Math.min(1, (if striking then 12 else 5) * dt);
   let vx := mix(f.vx, wantX, k);
   let vz := mix(f.vz, wantZ, k);
-  let at0 := if st == "dead" then [x0, z0] else world.push(x0 + vx * dt, z0 + vz * dt, f.y);
+  let at0 := if dead then [x0, z0] else world.push(x0 + vx * dt, z0 + vz * dt, f.y);
   -- bodies don't overlap hers (a flyer above or below her may pass)
   let ox := at0[0] - p.x;
   let oz := at0[1] - p.z;
   let od := Math.hypot(ox, oz);
   let room := K.r + 0.45;
-  let at := if st != "dead" && od < room && od > 0.001 && Math.abs(dy) < K.h * 0.5 + 1.2
+  let at := if !dead && od < room && od > 0.001 && Math.abs(dy) < K.h * 0.5 + 1.2
             then [p.x + ox / od * room, p.z + oz / od * room] else at0;
   let g := world.ground(at[0], at[1], f.y + 1);
-  let busy := st == "chase" || st == "windup" || st == "strike";
   let ty := if busy then Math.max(g + 1.4, p.y + CHEST) else g + 2.6;
   let fvy := if K.fly then mix(f.vy, (ty - f.y) * 2.5, Math.min(1, 3 * dt)) else f.vy - GRAVITY * dt;
   let fy := f.y + fvy * dt;
   let landed := !K.fly && fy <= g;
-  { foe: { f with
-      x := at[0], z := at[1], y := (if landed || st == "dead" && !K.fly then g else fy),
+  FoeTurn { foe: { f with
+      x := at[0], z := at[1], y := (if landed || dead && !K.fly then g else fy),
       vx := vx, vz := vz, vy := (if landed then 0 else fvy),
       facing := (if snap then face else f.facing + turn(f.facing, face) * Math.min(1, 8 * dt)),
-      hp := hp, state := st, t := t, hit := hit, tx := tx, tz := tz, n := n },
+      hp := hp, mode := st, t := t, hit := hit, tx := tx, tz := tz, n := n },
     events: evs, dmg: dmg }
 
 -- Her swing lands: every living monster within reach in front of her.
-def strikeFoes(foes, p, c) := do
+def strikeFoes(foes : Array Foe, p : Player, c : Swing) : SwingHits := do
   let mut out := [];
   let mut evs := [];
   let mut n := 0;
   let fx := Math.sin(p.facing);
   let fz := Math.cos(p.facing);
   for f in foes do (
-    let K := KINDS[f.kind];
+    let K := stats(f.kind);
     let dx := f.x - p.x;
     let dz := f.z - p.z;
     let d := Math.hypot(dx, dz);
     let dy := centerY(f) - p.y - CHEST;
     let inFront := d < 1.0 || (dx * fx + dz * fz) / d >= ARC;
-    if f.state != "dead" && d < c.reach + K.r && Math.abs(dy) < 1.6 + K.h * 0.5 && inFront then (
+    if !isDead(f) && d < c.reach + K.r && Math.abs(dy) < 1.6 + K.h * 0.5 && inFront then (
       let r := hitFoe(f, c.dmg, p.x, p.z, (if c.dmg >= 20 then 11 else 6), (if c.dmg >= 20 then 6 else 2));
       out := out.concat([r.foe]);
       evs := evs.concat(r.events);
       n := n + 1)
     else (out := out.concat([f]))
   );
-  {foes: out, events: evs, n: n}
+  SwingHits {foes: out, events: evs, n: n}
 
 -- Living monsters that overlap are pushed apart, half each.
-def separate(foes) := foes.map(fun (f) => do
+def separate(foes : Array Foe) : Array Foe := foes.map(fun (f) => do
   let mut x := f.x;
   let mut z := f.z;
   for g in foes do (
     let dx := f.x - g.x;
     let dz := f.z - g.z;
     let d := Math.hypot(dx, dz);
-    let room := KINDS[f.kind].r + KINDS[g.kind].r;
-    if g.id != f.id && f.state != "dead" && g.state != "dead" && d < room && d > 0.001
+    let room := stats(f.kind).r + stats(g.kind).r;
+    if g.id != f.id && !isDead(f) && !isDead(g) && d < room && d > 0.001
        && Math.abs(f.y - g.y) < 1.5 then (
       x := x + dx / d * (room - d) * 0.5;
       z := z + dz / d * (room - d) * 0.5)
   );
   { f with x := x, z := z })
 
-def fight(s, p, inp, moves, world, dt) := do
+-- Is the bolt locked on to this monster?
+def lockedOn(b : Bolt, f : Foe) : Bool := match b.target with | Locked(id) => id == f.id | Free => false
+
+-- The living monster a bolt at `b` is touching.
+def touching(foes : Array Foe, b : Bolt) : Pick := do
+  let mut hit := NoFoe;
+  for f in foes do (
+    if !isDead(f) && Math.hypot(f.x - b.x, centerY(f) - b.y, f.z - b.z) < stats(f.kind).r + BOLT_R
+    then (hit := Nearest(f))
+  );
+  hit
+
+def fight(s : Battle, p : Player, inp : Attack, moves : Array String, world : Terrain, dt : Float) : Outcome := do
   let mut h := { s.hero with guard := Math.max(0, s.hero.guard - dt), calm := s.hero.calm + dt,
                              boltCd := Math.max(0, s.hero.boltCd - dt) };
   let mut foes := s.foes;
   let mut bolts := s.bolts;
   let mut evs := [];
-  let mut knock := {x: 0, y: 0, z: 0};
-  let mut face := null;
+  let mut knock := Vec3 {x: 0, y: 0, z: 0};
+  let mut face := Keep;
   if h.down > 0 then (
     h := { h with down := h.down - dt };
     if h.down <= 0 then (
       h := { h with down := 0, hp := HERO_HP, guard := 2, swing := -1, combo := 2 };
-      evs := evs.concat([{ev: "revive"}])))
+      evs := evs.concat([Revived])))
   else (
     -- the swing under way: land it once, end it
     if h.swing >= 0 then (
@@ -332,24 +452,25 @@ def fight(s, p, inp, moves, world, dt) := do
       let fz := -Math.cos(inp.yaw);
       let tgt := nearestFoe(foes, p, BOLT_RANGE, fx, fz, 0.5);
       let oy := p.y + CHEST + 0.3;
-      let aim := if tgt == null then [fx, -(inp.pitch - LEVEL_PITCH) * 0.8, fz]
-                 else [tgt.x - p.x, centerY(tgt) - oy, tgt.z - p.z];
+      let aim := match tgt with
+        | Nearest(g) => [g.x - p.x, centerY(g) - oy, g.z - p.z]
+        | NoFoe => [fx, -(inp.pitch - LEVEL_PITCH) * 0.8, fz];
       let len := Math.max(0.001, Math.hypot(aim[0], aim[1], aim[2]));
-      bolts := bolts.concat([{x: p.x, y: oy, z: p.z, vx: aim[0] / len * BOLT_V, vy: aim[1] / len * BOLT_V,
-                              vz: aim[2] / len * BOLT_V, life: BOLT_LIFE,
-                              target: (if tgt == null then null else tgt.id)}]);
+      bolts := bolts.concat([Bolt {x: p.x, y: oy, z: p.z, vx: aim[0] / len * BOLT_V, vy: aim[1] / len * BOLT_V,
+                                   vz: aim[2] / len * BOLT_V, life: BOLT_LIFE,
+                                   target: (match tgt with | Nearest(g) => Locked(g.id) | NoFoe => Free)}]);
       h := { h with boltCd := BOLT_CD };
-      evs := evs.concat([{ev: "bolt", x: p.x, y: oy, z: p.z}]))
+      evs := evs.concat([Fired(p.x, oy, p.z)]))
     else if inp.attack && !p.flying && !p.gliding
             && (h.swing < 0 || h.struck && h.swing >= COMBO[h.combo].hitAt + 0.1) then (
       let chained := (h.swing >= 0 || h.gap < COMBO_GAP) && h.combo < 2;
       let next := if chained then h.combo + 1 else 0;
       let tgt := nearestFoe(foes, p, ASSIST, 0, 0, -1);
-      face := if tgt == null then null else Math.atan2(tgt.x - p.x, tgt.z - p.z);
-      let fa := if face == null then p.facing else face;
+      face := (match tgt with | Nearest(g) => Face(Math.atan2(g.x - p.x, g.z - p.z)) | NoFoe => Keep);
+      let fa := match face with | Face(a) => a | Keep => p.facing;
       h := { h with swing := 0, combo := next, struck := false };
-      knock := {x: Math.sin(fa) * COMBO[next].step, y: 0, z: Math.cos(fa) * COMBO[next].step};
-      evs := evs.concat([{ev: "swing", combo: next, x: p.x, y: p.y, z: p.z, facing: fa}]));
+      knock := Vec3 {x: Math.sin(fa) * COMBO[next].step, y: 0, z: Math.cos(fa) * COMBO[next].step};
+      evs := evs.concat([Swung(next, p.x, p.y, p.z, fa)]));
     -- the wind skill blows back and hurts everything round her
     if moves.includes("skill") then (
       let mut out := [];
@@ -370,7 +491,7 @@ def fight(s, p, inp, moves, world, dt) := do
     let mut vy := b.vy;
     let mut vz := b.vz;
     for f in foes do (
-      if f.id == b.target && f.state != "dead" then (
+      if lockedOn(b, f) && !isDead(f) then (
         let ax := f.x - b.x;
         let ay := centerY(f) - b.y;
         let az := f.z - b.z;
@@ -386,17 +507,13 @@ def fight(s, p, inp, moves, world, dt) := do
     );
     let nb := { b with x := b.x + vx * dt, y := b.y + vy * dt, z := b.z + vz * dt,
                        vx := vx, vy := vy, vz := vz, life := b.life - dt };
-    let mut tgt := null;
-    for f in foes do (
-      if f.state != "dead" && Math.hypot(f.x - nb.x, centerY(f) - nb.y, f.z - nb.z) < KINDS[f.kind].r + BOLT_R
-      then (tgt := f)
-    );
-    if tgt != null then (
-      let r := hitFoe(tgt, BOLT_DMG, b.x, b.z, 5, 2);
-      foes := swapFoe(foes, r.foe);
-      evs := evs.concat(r.events).concat([{ev: "burst", x: nb.x, y: nb.y, z: nb.z}]);
-      h := { h with calm := 0 })
-    else if nb.life > 0 then (flying := flying.concat([nb]))
+    match touching(foes, nb) with
+      | Nearest(tgt) => (
+        let r := hitFoe(tgt, BOLT_DMG, b.x, b.z, 5, 2);
+        foes := swapFoe(foes, r.foe);
+        evs := evs.concat(r.events).concat([Burst(nb.x, nb.y, nb.z)]);
+        h := { h with calm := 0 })
+      | NoFoe => (if nb.life > 0 then (flying := flying.concat([nb])))
   );
   -- the monsters act; a strike that reaches her hurts her
   let alive := h.down <= 0;
@@ -412,11 +529,11 @@ def fight(s, p, inp, moves, world, dt) := do
       let d := Math.max(0.001, Math.hypot(dx, dz));
       h := { h with hp := hp, guard := GUARD, calm := 0, swing := -1,
                     down := (if hp <= 0 then DOWN_T else 0) };
-      knock := {x: dx / d * 9, y: 5, z: dz / d * 9};
-      evs := evs.concat([{ev: "hurt", amount: r.dmg, x: p.x, y: p.y + 2.3, z: p.z}])
-                .concat(if hp <= 0 then [{ev: "down"}] else []))
+      knock := Vec3 {x: dx / d * 9, y: 5, z: dz / d * 9};
+      evs := evs.concat([Wounded(r.dmg, p.x, p.y + 2.3, p.z)])
+                .concat(if hp <= 0 then [Downed] else []))
   );
   let moved := separate(acted);
   if h.calm > CALM && h.down <= 0 then (h := { h with hp := Math.min(HERO_HP, h.hp + REGEN_HP * dt) });
-  { state: {hero: h, foes: moved, bolts: flying}, events: evs, knock: knock, face: face,
-    rooted: h.down > 0 || h.swing >= 0 && h.swing < COMBO[h.combo].dur * 0.8 }
+  Outcome { state: Battle {hero: h, foes: moved, bolts: flying}, events: evs, knock: knock, face: face,
+            rooted: h.down > 0 || h.swing >= 0 && h.swing < COMBO[h.combo].dur * 0.8 }

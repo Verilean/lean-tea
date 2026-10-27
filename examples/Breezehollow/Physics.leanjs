@@ -16,37 +16,40 @@
 -- plain flight is free and slowly refills it. Touching the ground while
 -- not climbing lands you.
 --
--- `world` answers four questions about the terrain:
+-- `world` (a Terrain) answers four questions about the terrain:
 --   ground(x, z, y) — height of the surface someone at height y stands on
 --   lift(x, z, y)   — 1 inside an updraft, else 0
 --   wade(x, z)      — true in water deep enough to slow you down
 --   push(x, z, y)   — [x, z] moved out of trees / rocks / the world edge
+--
+-- Every definition is typed: breezehollow_spec hands this file to Lean
+-- (LeanJs.Typed), which checks it like any Lean program.
 
-def GRAVITY := 28
+def GRAVITY : Float := 28
 def JUMP_V := 10.5
-def WALK := 6.5
-def SPRINT := 12.5
-def WADE := 4
+def WALK : Float := 6.5
+def SPRINT : Float := 12.5
+def WADE : Float := 4
 def GLIDE := 9.5
 def GLIDE_SINK := 2.4
 def GLIDE_DRIFT := 4.5
 def UPDRAFT_DRIFT := 1.2
-def UPDRAFT_ACCEL := 42
-def UPDRAFT_MAX := 13
+def UPDRAFT_ACCEL : Float := 42
+def UPDRAFT_MAX : Float := 13
 def GLIDE_MIN_HEIGHT := 1.2
-def SKILL_V := 17
-def SKILL_CD := 5
-def SPRINT_DRAIN := 22
-def GLIDE_DRAIN := 7
-def REGEN := 30
-def MAX_STAMINA := 100
-def RECOVER_AT := 35
-def FLY := 15
-def FLY_BOOST := 32
-def FLY_RISE := 9
-def FLY_DRAIN := 16
-def FLY_REGEN := 8
-def TAKE_OFF_V := 8
+def SKILL_V : Float := 17
+def SKILL_CD : Float := 5
+def SPRINT_DRAIN : Float := 22
+def GLIDE_DRAIN : Float := 7
+def REGEN : Float := 30
+def MAX_STAMINA : Float := 100
+def RECOVER_AT : Float := 35
+def FLY : Float := 15
+def FLY_BOOST : Float := 32
+def FLY_RISE : Float := 9
+def FLY_DRAIN : Float := 16
+def FLY_REGEN : Float := 8
+def TAKE_OFF_V : Float := 8
 -- the camera pitch at which W keeps her level (CAM's default)
 def LEVEL_PITCH := 0.32
 
@@ -56,19 +59,39 @@ record Player where
   facing : Float, onGround : Bool, gliding : Bool, flying : Bool,
   stamina : Float, exhausted : Bool, skillCd : Float
 
-def newPlayer(x, y, z) := Player {
+-- One frame of input: WASD as kx (right) and kz (forward), the camera's
+-- yaw and pitch, and the keys held / pressed this frame. rise: +1 Space,
+-- -1 C while flying.
+record Input where
+  kx : Float, kz : Float, yaw : Float, pitch : Float,
+  sprint : Bool, jump : Bool, skill : Bool, fly : Bool, rise : Float
+
+record Terrain where
+  ground : Float → Float → Float → Float,
+  lift : Float → Float → Float → Float,
+  wade : Float → Float → Bool,
+  push : Float → Float → Float → Array Float
+
+-- what one frame did: the new player and what happened ("jump", "land" …)
+record Moved where
+  player : Player, events : Array String
+
+record Dir where
+  x : Float, z : Float, moving : Bool
+
+def newPlayer(x : Float, y : Float, z : Float) : Player := Player {
   x: x, y: y, z: z, vx: 0, vy: 0, vz: 0, facing: Math.PI,
   onGround: false, gliding: false, flying: false, stamina: MAX_STAMINA, exhausted: false, skillCd: 0 }
 
-def mix(a, b, t) := a + (b - a) * t
+def mix(a : Float, b : Float, t : Float) : Float := a + (b - a) * t
 
 -- Signed angle from a to b, in (-π, π].
-def turn(a, b) :=
+def turn(a : Float, b : Float) : Float :=
   let d := (b - a) / (2 * Math.PI) + 0.5;
   (d - Math.floor(d)) * 2 * Math.PI - Math.PI
 
 -- WASD relative to the camera's yaw → a unit direction on the ground.
-def moveDir(inp) :=
+def moveDir(inp : Input) : Dir :=
   let fx := -Math.sin(inp.yaw);
   let fz := -Math.cos(inp.yaw);
   let rx := Math.cos(inp.yaw);
@@ -76,13 +99,16 @@ def moveDir(inp) :=
   let mx := rx * inp.kx + fx * inp.kz;
   let mz := rz * inp.kx + fz * inp.kz;
   let len := Math.hypot(mx, mz);
-  if len > 0.01 then {x: mx / len, z: mz / len, moving: true}
-  else {x: 0, z: 0, moving: false}
+  if len > 0.01 then Dir {x: mx / len, z: mz / len, moving: true}
+  else Dir {x: 0, z: 0, moving: false}
 
-def clamp1(x, a, b) := Math.min(b, Math.max(a, x))
+-- [ev] if `on`, else nothing
+def tag(on : Bool, ev : String) : Array String := if on then [ev] else []
+
+def clamp1(x : Float, a : Float, b : Float) : Float := Math.min(b, Math.max(a, x))
 
 -- One frame of flight. Always airborne unless she touches down.
-def flyStep(p, inp, world, dt, takeOff) :=
+def flyStep(p : Player, inp : Input, world : Terrain, dt : Float, takeOff : Bool) : Moved :=
   let m := moveDir(inp);
   let boost := inp.sprint && m.moving && !p.exhausted;
   let speed := if boost then FLY_BOOST else FLY;
@@ -101,15 +127,15 @@ def flyStep(p, inp, world, dt, takeOff) :=
   let ny := p.y + vy * dt;
   let g := world.ground(at[0], at[1], ny);
   let landed := ny <= g && vy <= 0.5;
-  { player: { p with
+  Moved { player: { p with
       x := at[0], z := at[1], y := Math.max(ny, g),
       vx := vx, vz := vz, vy := (if landed then 0 else vy), facing := facing,
       onGround := landed, gliding := false, flying := !landed,
       stamina := stamina, exhausted := exhausted,
       skillCd := Math.max(0, p.skillCd - dt) },
-    events: [].concat((if takeOff then ["fly"] else []), (if landed then ["land"] else [])) }
+    events: tag(takeOff, "fly").concat(tag(landed, "land")) }
 
-def walkStep(p, inp, world, dt) :=
+def walkStep(p : Player, inp : Input, world : Terrain, dt : Float) : Moved :=
   let m := moveDir(inp);
   let inLift := world.lift(p.x, p.z, p.y) == 1;
   let wade := p.onGround && world.wade(p.x, p.z);
@@ -150,12 +176,9 @@ def walkStep(p, inp, world, dt) :=
   let ny := p.y + vy * dt;
   let g := world.ground(at[0], at[1], ny);
   let landed := ny <= g;
-  let events := [].concat(
-    (if jumped then ["jump"] else []),
-    (if glideOn then ["glide"] else []),
-    (if skill then ["skill"] else []),
-    (if landed && !grounded then ["land"] else []));
-  { player: { p with
+  let events := tag(jumped, "jump").concat(tag(glideOn, "glide")).concat(tag(skill, "skill"))
+    .concat(tag(landed && !grounded, "land"));
+  Moved { player: { p with
       x := at[0], z := at[1], y := (if landed then g else ny),
       vx := vx, vz := vz, vy := (if landed then 0 else vy), facing := facing,
       onGround := landed || ny - g < 0.05,
@@ -165,7 +188,7 @@ def walkStep(p, inp, world, dt) :=
     events: events }
 
 -- Q toggles flight; otherwise walk / jump / glide.
-def step(p, inp, world, dt) :=
+def step(p : Player, inp : Input, world : Terrain, dt : Float) : Moved :=
   let takeOff := inp.fly && !p.flying;
   let stopFlying := inp.fly && p.flying;
   if takeOff || (p.flying && !stopFlying) then flyStep(p, inp, world, dt, takeOff)
