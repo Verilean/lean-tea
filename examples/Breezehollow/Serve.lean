@@ -11,8 +11,9 @@ $ lake exe breezehollow --dev      # recompile World.leanjs on every request
 The game client is `World.leanjs`: Lean-shaped source that this
 server compiles to an ES module at startup (`Breezehollow.Game`) and
 serves as `/world.js`. `page.html` is the HUD plus an import map that
-pulls three.js from a CDN; the module imports `three` and the bloom
-post-processing addons by bare name. -/
+pulls three.js from a CDN; the module imports `three`, the bloom
+post-processing addons and the glTF loader by bare name. `/heroine.glb`
+is the player character, built in Blender by `tools/heroine-vrm/`. -/
 
 open LeanTea LeanTea.Net.Http LeanTea.Net.Server
 
@@ -32,6 +33,11 @@ def handler (pageProv : Template.Provider) (world : IO (String × Bool)) : Handl
       else ""
     return Response.html 200 (← (← pageProv).renderFlat [("errorBanner", banner)])
   | "/world.js" => return jsResponse (← world).1
+  | "/heroine.glb" =>
+    let bytes ← IO.FS.readBinFile (← Breezehollow.findFile "heroine.glb")
+    return { status := 200,
+             headers := #[("content-type", "model/gltf-binary"), ("cache-control", "no-cache")],
+             body := bytes }
   | "/favicon.ico" => return { status := 204 }
   | _ => return Response.notFound
 

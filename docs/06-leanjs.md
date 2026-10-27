@@ -100,8 +100,8 @@ compiles, and serves the JS at startup (see
 `examples/Breezehollow/World.leanjs` is a whole 3D game client: an
 anime-style open-world vignette with cel-shaded terrain, instanced
 grass with a wind shader, floating islands, a wind shrine,
-collectible motes, updrafts, a chibi hero who runs, jumps and glides,
-bloom post-processing and a canvas minimap.
+collectible motes, updrafts, a heroine who runs, jumps, glides and
+flies, bloom post-processing and a canvas minimap.
 
 ```text
 import * as THREE from "three"
@@ -139,10 +139,45 @@ def step(p, inp, world, dt) :=
 
 `World.leanjs` `include`s it and is only the shell: it reads the keys,
 calls `step`, stores the new player and turns the returned events
-(`"jump"`, `"glide"`, `"skill"`, `"land"`) into particles. Because
+(`"jump"`, `"glide"`, `"fly"`, `"skill"`, `"land"`) into particles. Because
 `step` is a plain function, `PhysicsTest.leanjs` checks jump height,
-glide sink rate, stamina, updrafts and the wind skill on toy worlds
-under node, and `breezehollow_spec` turns each result into a test.
+glide sink rate, stamina, updrafts, the wind skill and flight on toy
+worlds under node, and `breezehollow_spec` turns each result into a test.
+
+The heroine is a glTF model, `examples/Breezehollow/heroine.glb`, put
+together in Blender from two freely licensed sample avatars: the body,
+face and dress of one and the long hair of the other, recoloured toward
+her character sheet. `tools/heroine-vrm/` has the scripts, where the
+avatars come from and their licences:
+
+- **`build.py`** combines the two avatars and recolours their textures
+  (silver hair, violet eyes, a white and violet dress).
+- **`rig.py`** gives her the skeleton and clips of
+  `tools/blender/heroine.py`, so the bone names, spring chains and the
+  clips `idle`, `run`, `glide`, `hover`, `fly` and `fall` carry over.
+  Each vertex keeps the avatar's weights, renamed to the game's bones;
+  the avatar's hair and skirt weights go to the hair and coat chains.
+
+```bash
+$ blender -b --factory-startup --python tools/heroine-vrm/build.py -- \
+    body.vrm hair.vrm /tmp/heroine.blend
+$ blender -b --factory-startup --python tools/heroine-vrm/rig.py -- \
+    /tmp/heroine.blend examples/Breezehollow/heroine.glb --preview /tmp/heroine.png
+```
+
+Run on its own, `tools/blender/heroine.py` still builds a complete
+heroine from code (body, painted face, hair, coat, rig and clips), the
+earlier version.
+
+The game loads her with `GLTFLoader` and swaps each material for a toon
+material with a rim light, plus an outline (an inverted hull grown along
+the unskinned normal, so it follows the skin), tinted and thinner on
+skin and hair. Materials are told apart by name: eyes, brows and lashes
+are drawn flat with no outline, and see-through cloth gets none either. It cross-fades the clips by state.
+Every frame it swings the hair and coat chains with a verlet spring per
+bone, which keeps each bone outside a few spheres on her body.
+`breezehollow_spec` checks that the `.glb` has every clip, chain and
+collider bone that `World.leanjs` names.
 
 Shader source fits in ordinary string literals, which may span lines.
 

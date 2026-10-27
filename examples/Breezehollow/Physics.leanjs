@@ -8,7 +8,13 @@
 -- (dust on landing, the skill's wind ring) comes back as an event name.
 -- World.leanjs includes this file and only feeds it input and the world
 -- queries; examples/Tests/BreezehollowSpec.lean runs it under node to check
--- jump height, glide sink rate, stamina, updrafts and the wind skill.
+-- jump height, glide sink rate, stamina, updrafts, the wind skill and flight.
+--
+-- Flight (Q to take off, Q again to come down): no gravity; WASD moves
+-- relative to the camera, Space rises, C sinks, and holding W follows the
+-- camera's pitch (look down to dive). Shift boosts and drains stamina;
+-- plain flight is free and slowly refills it. Touching the ground while
+-- not climbing lands you.
 --
 -- `world` answers four questions about the terrain:
 --   ground(x, z, y) — height of the surface someone at height y stands on
@@ -35,16 +41,24 @@ def GLIDE_DRAIN := 7
 def REGEN := 30
 def MAX_STAMINA := 100
 def RECOVER_AT := 35
+def FLY := 15
+def FLY_BOOST := 32
+def FLY_RISE := 9
+def FLY_DRAIN := 16
+def FLY_REGEN := 8
+def TAKE_OFF_V := 8
+-- the camera pitch at which W keeps her level (CAM's default)
+def LEVEL_PITCH := 0.32
 
 record Player where
   x : Float, y : Float, z : Float,
   vx : Float, vy : Float, vz : Float,
-  facing : Float, onGround : Bool, gliding : Bool,
+  facing : Float, onGround : Bool, gliding : Bool, flying : Bool,
   stamina : Float, exhausted : Bool, skillCd : Float
 
 def newPlayer(x, y, z) := Player {
   x: x, y: y, z: z, vx: 0, vy: 0, vz: 0, facing: Math.PI,
-  onGround: false, gliding: false, stamina: MAX_STAMINA, exhausted: false, skillCd: 0 }
+  onGround: false, gliding: false, flying: false, stamina: MAX_STAMINA, exhausted: false, skillCd: 0 }
 
 def mix(a, b, t) := a + (b - a) * t
 
@@ -65,7 +79,37 @@ def moveDir(inp) :=
   if len > 0.01 then {x: mx / len, z: mz / len, moving: true}
   else {x: 0, z: 0, moving: false}
 
-def step(p, inp, world, dt) :=
+def clamp1(x, a, b) := Math.min(b, Math.max(a, x))
+
+-- One frame of flight. Always airborne unless she touches down.
+def flyStep(p, inp, world, dt, takeOff) :=
+  let m := moveDir(inp);
+  let boost := inp.sprint && m.moving && !p.exhausted;
+  let speed := if boost then FLY_BOOST else FLY;
+  let follow := if inp.kz > 0 then -(inp.pitch - LEVEL_PITCH) * speed * 0.9 else 0;
+  let tvy := clamp1(inp.rise * FLY_RISE + follow, -FLY_BOOST, FLY_BOOST);
+  let k := Math.min(1, 2.5 * dt);
+  let vx := mix(p.vx, m.x * speed, k);
+  let vz := mix(p.vz, m.z * speed, k);
+  let vy := if takeOff then Math.max(p.vy, TAKE_OFF_V) else mix(p.vy, tvy, Math.min(1, 4 * dt));
+  let facing := if m.moving then p.facing + turn(p.facing, Math.atan2(m.x, m.z)) * Math.min(1, 6 * dt)
+                else p.facing;
+  let st := if boost then p.stamina - FLY_DRAIN * dt else Math.min(MAX_STAMINA, p.stamina + FLY_REGEN * dt);
+  let stamina := Math.max(0, st);
+  let exhausted := if st <= 0 then true else if p.exhausted && stamina > RECOVER_AT then false else p.exhausted;
+  let at := world.push(p.x + vx * dt, p.z + vz * dt, p.y);
+  let ny := p.y + vy * dt;
+  let g := world.ground(at[0], at[1], ny);
+  let landed := ny <= g && vy <= 0.5;
+  { player: { p with
+      x := at[0], z := at[1], y := Math.max(ny, g),
+      vx := vx, vz := vz, vy := (if landed then 0 else vy), facing := facing,
+      onGround := landed, gliding := false, flying := !landed,
+      stamina := stamina, exhausted := exhausted,
+      skillCd := Math.max(0, p.skillCd - dt) },
+    events: [].concat((if takeOff then ["fly"] else []), (if landed then ["land"] else [])) }
+
+def walkStep(p, inp, world, dt) :=
   let m := moveDir(inp);
   let inLift := world.lift(p.x, p.z, p.y) == 1;
   let wade := p.onGround && world.wade(p.x, p.z);
@@ -119,3 +163,10 @@ def step(p, inp, world, dt) :=
       stamina := stamina, exhausted := exhausted,
       skillCd := (if skill then SKILL_CD else Math.max(0, p.skillCd - dt)) },
     events: events }
+
+-- Q toggles flight; otherwise walk / jump / glide.
+def step(p, inp, world, dt) :=
+  let takeOff := inp.fly && !p.flying;
+  let stopFlying := inp.fly && p.flying;
+  if takeOff || (p.flying && !stopFlying) then flyStep(p, inp, world, dt, takeOff)
+  else walkStep({ p with flying := false }, inp, world, dt)
