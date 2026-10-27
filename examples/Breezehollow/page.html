@@ -49,6 +49,20 @@
                              transform: rotate(-90deg); transform-origin: 30px 30px; }
     #stamina.tired #stamina-ring { stroke: #ff6b6b; }
 
+    #hp { bottom: 64px; left: 50%; transform: translateX(-50%); width: 260px; height: 12px; border-radius: 999px;
+          background: rgba(20,30,52,.55); box-shadow: 0 0 0 2px rgba(255,255,255,.8); overflow: hidden; }
+    #hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #7dffb2, #3fd99a); transition: width .15s; }
+    #hp.low #hp-fill { background: linear-gradient(90deg, #ff8a7a, #ff5a6b); }
+    #hp-text { position: absolute; inset: 0; display: grid; place-items: center; font-size: 10px; font-weight: 800;
+               text-shadow: 0 1px 2px rgba(0,0,0,.7); }
+    #defeats { top: 222px; right: 22px; display: flex; align-items: center; gap: 8px;
+               background: var(--glass); padding: 6px 12px 6px 8px; border-radius: 999px; font-weight: 800; }
+    #defeats .claw { width: 14px; height: 14px; border-radius: 50%; background: #ff8a7a; box-shadow: 0 0 10px #ff8a7a; }
+    #fx { inset: 0; overflow: hidden; }
+    .num { position: absolute; left: 0; top: 0; margin: -14px 0 0 -20px; width: 40px; text-align: center;
+           font-weight: 800; font-size: 20px; color: #fff6c8; text-shadow: 0 2px 0 #26304a, 0 0 6px rgba(0,0,0,.4); }
+    .num.big { font-size: 28px; color: #ffe27a; }
+    .num.hurt { color: #ff7a7a; }
     #state { bottom: 32px; left: 50%; transform: translateX(-50%); font-family: 'Cinzel', serif;
              letter-spacing: 3px; font-size: 14px; color: var(--gold); }
     #toast { top: 22%; left: 50%; transform: translate(-50%, -8px); opacity: 0; transition: all .35s;
@@ -73,6 +87,7 @@
       #help { display: none; }
       #mapwrap, #minimap { width: 110px; height: 110px; }
       #counter { top: 140px; }
+      #defeats { top: 180px; }
     }
   </style>
   <script type="importmap">
@@ -94,6 +109,8 @@
 
   <div class="hud" id="mapwrap"><canvas id="minimap" width="150" height="150"></canvas><span class="n">N</span></div>
   <div class="hud" id="counter"><span class="gem"></span><span>Breeze Motes</span><span id="motes">0 / 0</span></div>
+  <div class="hud" id="defeats"><span class="claw"></span><span>Monsters</span><span id="defeated">0</span></div>
+  <div class="hud" id="fx"></div>
 
   <div class="hud" id="stamina">
     <svg width="60" height="60"><circle class="bg" cx="30" cy="30" r="26"></circle><circle id="stamina-ring" cx="30" cy="30" r="26"></circle></svg>
@@ -109,6 +126,7 @@
     </div>
   </div>
 
+  <div class="hud" id="hp"><div id="hp-fill"></div><span id="hp-text"></span></div>
   <div class="hud" id="state"></div>
   <div class="hud" id="toast"></div>
   <div class="hud" id="prompt"><b>F</b>Attune the Wind Shrine</div>
@@ -118,9 +136,10 @@
     <div><b>Shift</b>sprint</div>
     <div><b>Space</b>jump · again in air to glide</div>
     <div><b>Q</b>fly · Space up · C down · Shift boost</div>
-    <div><b>E</b>wind skill (lifts you up)</div>
+    <div><b>Click</b>attack · in flight a wind bolt</div>
+    <div><b>E</b>wind skill (lifts you up, blows foes back)</div>
     <div><b>Mouse</b>click &amp; drag to look · wheel zoom</div>
-    <div style="opacity:.8;margin-top:4px">Glide into the swirling updrafts to reach the floating islands.</div>
+    <div style="opacity:.8;margin-top:4px">Glide into the swirling updrafts to reach the floating islands. Monsters roam the meadows.</div>
   </div>
 
   <div class="hud" id="loading">Breezehollow</div>

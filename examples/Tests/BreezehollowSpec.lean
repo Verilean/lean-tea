@@ -17,7 +17,9 @@ CDN, so this only guards the build side.
     every spring-chain and collider bone `World.leanjs` names
   * the movement rules (`Physics.leanjs`, a pure `step`) behave:
     `PhysicsTest.leanjs` runs them under node on toy worlds and each
-    `PASS` / `FAIL` line becomes a test here -/
+    `PASS` / `FAIL` line becomes a test here
+  * the fighting rules (`Combat.leanjs`, a pure `fight`) behave, checked
+    the same way by `CombatTest.leanjs` -/
 
 open LeanTea LeanTea.LSpec
 
@@ -51,16 +53,17 @@ def chainBones (src : String) : List String :=
       (List.range (n + 1)).map (s!"{name}_{·}")
     | _ => []
 
-/-- Compile `PhysicsTest.leanjs`, run it with node, one test per line. -/
-def physicsTests : IO (List LSpec) := do
-  match ← Breezehollow.compileFile (← Breezehollow.findFile "PhysicsTest.leanjs") with
-  | .error e => return [it "PhysicsTest.leanjs compiles" false e]
+/-- Compile a test file (`PhysicsTest.leanjs`, `CombatTest.leanjs`), run it
+    with node, one test per line. -/
+def nodeTests (file : String) : IO (List LSpec) := do
+  match ← Breezehollow.compileFile (← Breezehollow.findFile file) with
+  | .error e => return [it s!"{file} compiles" false e]
   | .ok js =>
-    let tmp : System.FilePath := s!"/tmp/breezehollow-physics-{← IO.rand 0 0xffffff}.js"
+    let tmp : System.FilePath := s!"/tmp/breezehollow-test-{← IO.rand 0 0xffffff}.js"
     IO.FS.writeFile tmp js
     let out ← IO.Process.output { cmd := "node", args := #[tmp.toString] }
     IO.FS.removeFile tmp
-    if out.exitCode != 0 then return [it "PhysicsTest.leanjs runs" false out.stderr]
+    if out.exitCode != 0 then return [it s!"{file} runs" false out.stderr]
     let lines := (out.stdout.splitOn "\n").filter (!·.isEmpty)
     return lines.map fun l =>
       if l.startsWith "PASS " then it (l.drop 5).toString true
@@ -81,7 +84,7 @@ def main : IO UInt32 := do
   if check.exitCode != 0 then IO.eprintln check.stderr
   let glb := glbJson (← IO.FS.readBinFile (← Breezehollow.findFile "heroine.glb"))
   let gj := glb.getD ""
-  let clips := ["idle", "run", "glide", "hover", "fly", "fall"]
+  let clips := ["idle", "run", "glide", "hover", "fly", "fall", "attack_1", "attack_2", "attack_3", "hurt"]
   let bones := (chainBones src ++ quotedAfter src "bone").eraseDups
   let missingBones := bones.filter (fun b => !has gj s!"\"name\":\"{b}\"")
   if !missingBones.isEmpty then IO.eprintln s!"bones missing from heroine.glb: {missingBones}"
@@ -113,7 +116,8 @@ def main : IO UInt32 := do
       it "is loaded with GLTFLoader from /heroine.glb"
         (has js "from 'three/addons/loaders/GLTFLoader.js'" && has js "/heroine.glb")
     ],
-    group "Physics.step (node, toy worlds)" (← physicsTests)
+    group "Physics.step (node, toy worlds)" (← nodeTests "PhysicsTest.leanjs"),
+    group "Combat.fight (node, flat ground)" (← nodeTests "CombatTest.leanjs")
   ]
   let code ← lspecIO tree
   return if code == 0 then 0 else 1

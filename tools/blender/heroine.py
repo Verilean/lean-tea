@@ -19,8 +19,9 @@ by editing the numbers here:
   * armature: a body rig plus bone chains for the hair and coat tails
     (`hair_*`, `lock_*`, `coat_*`), which the game swings with springs;
     only the body bones are animated here
-  * actions: idle, run, glide, hover, fly, fall — exported as glTF
-    animations of those names
+  * actions: idle, run, glide, hover, fly, fall (loops) and attack_1,
+    attack_2, attack_3, hurt (one-shots that start and end near idle) —
+    exported as glTF animations of those names
 
 Blender: +Z is up and she faces -Y; glTF turns that into +Y up, +Z
 forward, which is how the game faces the hero. Her left is +X.
@@ -1060,8 +1061,78 @@ def p_fall(t):
     return r, 0.0
 
 
+def ease(a, b, t):
+    x = min(1.0, max(0.0, (t - a) / (b - a)))
+    return x * x * (3 - 2 * x)
+
+
+def mirror(rots):
+    """The same pose for the other side: _L and _R swap, turns about y and z flip."""
+    swap = lambda n: n[:-2] + ("_R" if n.endswith("_L") else "_L") if n[-2:] in ("_L", "_R") else n
+    return {swap(n): [(ax, -ang if ax in "yz" else ang) for ax, ang in lst] for n, lst in rots.items()}
+
+
+# One-shot clips start and end in a ready pose close to idle, so the game
+# can fade in and out of them: wind up (w), strike (h), recover.
+def p_attack_1(t):
+    """A palm thrust with the right hand, stepping in on the left foot."""
+    w = ease(0.0, 0.25, t) * (1 - ease(0.25, 0.38, t))
+    h = ease(0.25, 0.40, t) * (1 - ease(0.62, 1.0, t))
+    r = arms_down([("x", 0.04 + 0.45 * h)], [("x", 0.02 + 0.55 * w - 1.50 * h)], 0.40)
+    r["upper_arm_R"].insert(0, ("y", -0.25 * h))
+    r.update({
+        "forearm_L": [("x", -0.18 - 0.6 * h)], "forearm_R": [("x", -0.12 - 0.9 * w + 0.06 * h)],
+        "hand_L": [("y", 0.2)], "hand_R": [("y", -0.2 + 0.2 * h)],
+        "chest": [("z", -0.22 * w + 0.32 * h)], "spine": [("x", 0.02 + 0.10 * h)],
+        "hips": [("z", -0.08 * w + 0.14 * h)],
+        "thigh_L": [("x", -0.40 * h)], "shin_L": [("x", 0.35 * h)],
+        "thigh_R": [("x", 0.28 * h)], "shin_R": [("x", 0.18 * h)],
+        "neck": [("x", 0.04)], "head": [("z", 0.10 * w - 0.38 * h)],
+    })
+    return r, -0.05 * h
+
+
+def p_attack_2(t):
+    """The same thrust with the left hand."""
+    r, hz = p_attack_1(t)
+    return mirror(r), hz
+
+
+def p_attack_3(t):
+    """Both palms pushed out together: the combo's finisher."""
+    w = ease(0.0, 0.30, t) * (1 - ease(0.30, 0.42, t))
+    h = ease(0.30, 0.44, t) * (1 - ease(0.66, 1.0, t))
+    arm = [("x", 0.45 * w - 1.40 * h)]
+    r = arms_down(list(arm), list(arm), 0.40 - 0.05 * h)
+    r.update({
+        "forearm_L": [("x", -0.12 - 1.1 * w + 0.04 * h)], "forearm_R": [("x", -0.12 - 1.1 * w + 0.04 * h)],
+        "hand_L": [("y", 0.2 - 0.3 * h)], "hand_R": [("y", -0.2 + 0.3 * h)],
+        "spine": [("x", 0.02 - 0.14 * w + 0.20 * h)], "chest": [("x", -0.06 * w + 0.04 * h)],
+        "thigh_L": [("x", -0.48 * h)], "shin_L": [("x", 0.45 * h)],
+        "thigh_R": [("x", 0.34 * h)], "shin_R": [("x", 0.22 * h)],
+        "neck": [("x", 0.04 - 0.08 * h)], "head": [("x", -0.10 * h)],
+    })
+    return r, 0.02 * w - 0.07 * h
+
+
+def p_hurt(t):
+    """Knocked back a step, arms up."""
+    f = ease(0.0, 0.15, t) * (1 - ease(0.35, 1.0, t))
+    r = arms_down([("x", 0.04 - 0.55 * f)], [("x", 0.02 - 0.45 * f)], 0.40 + 0.1 * f)
+    r.update({
+        "forearm_L": [("x", -0.18 - 1.0 * f)], "forearm_R": [("x", -0.12 - 1.1 * f)],
+        "spine": [("x", 0.02 - 0.22 * f)], "chest": [("x", -0.10 * f), ("z", 0.08 * f)],
+        "thigh_R": [("x", 0.22 * f)], "shin_R": [("x", 0.25 * f)],
+        "thigh_L": [("x", -0.08 * f)],
+        "neck": [("x", -0.05 * f)], "head": [("x", -0.06 * f), ("z", -0.10 * f)],
+    })
+    return r, -0.03 * f
+
+
 ACTIONS = [("idle", p_idle, 72), ("run", p_run, 16), ("glide", p_glide, 48),
-           ("hover", p_hover, 48), ("fly", p_fly, 40), ("fall", p_fall, 24)]
+           ("hover", p_hover, 48), ("fly", p_fly, 40), ("fall", p_fall, 24),
+           ("attack_1", p_attack_1, 14), ("attack_2", p_attack_2, 14),
+           ("attack_3", p_attack_3, 18), ("hurt", p_hurt, 10)]
 
 
 def build_actions(arm):
@@ -1071,7 +1142,7 @@ def build_actions(arm):
         act = bpy.data.actions.new(name)
         act.use_fake_user = True
         arm.animation_data.action = act
-        step = 2 if frames <= 24 else 4
+        step = 1 if name.startswith(("attack", "hurt")) else 2 if frames <= 24 else 4
         for f in list(range(0, frames, step)) + [frames]:
             rots, hz = fn((f % frames) / frames)
             pose(arm, rots, hz)
