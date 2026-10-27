@@ -157,21 +157,23 @@ end MatchBranch
 instance : Inhabited Expr := ⟨.num 0⟩
 instance : Inhabited MatchBranch := ⟨.mk .wildcard (.num 0)⟩
 
-/-- One constructor of an inductive declaration. We only carry
-    the *arity* (number of fields); no type-checking happens at
-    the AST level. -/
-structure CtorDecl where
-  name  : String
-  arity : Nat
-  deriving Inhabited, Repr
-
-/-- One formal parameter of a `def`. `type? = none` means the
-    parameter was written without an annotation — we default to
-    `Int` when emitting Lean source so the program stays compilable. -/
+/-- One formal parameter of a `def` (or field of a constructor).
+    `type? = none` means it was written without an annotation — we
+    default to `Int` when emitting Lean source so the program stays
+    compilable. -/
 structure Param where
   name  : String
   type? : Option String := none
-  deriving Inhabited
+  deriving Inhabited, Repr
+
+/-- One constructor of an inductive declaration: `Some(v)` or, with
+    types, `Damaged(id : Float, amount : Float)`. JavaScript only needs
+    the *arity*; the field types are for `LeanJs.Typed`. -/
+structure CtorDecl where
+  name   : String
+  arity  : Nat
+  fields : List Param := []
+  deriving Inhabited, Repr
 
 /-- One binding of an `import` clause.
     * `namespaceAs none`        → `import { name } from "…"`

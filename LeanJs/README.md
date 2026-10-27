@@ -41,6 +41,8 @@ Files in this directory:
 | `Codegen.lean`   | `Ast` → JS (via `LeanTea.Js.Expr` so it composes)     |
 | `Eval.lean`      | Tree-walking interpreter (used for cross-checks)      |
 | `LeanEmit.lean`  | `Ast` → real Lean source for `lean --run`             |
+| `Check.lean`     | arity, fields, names, order of definitions, `match`   |
+| `Typed.lean`     | typed pure rules → Lean, checked by Lean's elaborator |
 
 ---
 
@@ -49,16 +51,18 @@ Files in this directory:
 ```text
 Program ::= TopDef*
 
-TopDef  ::= 'def' ident ('(' params ')')? (':' Ident)? ':=' Expr
+TopDef  ::= 'def' ident ('(' params ')')? (':' Type)? ':=' Expr
          |  'async' 'def' ident ('(' params ')')? ':=' Expr
          |  'extern' 'js' '"' raw-js '"' ident
          |  'inductive' ident 'where' ('|' Ctor)+
          |  'class' ident 'where' ident+
          |  'instance' ident ident 'where' Method (',' Method)*
 
-Ctor    ::= ident ('(' ident (',' ident)* ')')?
+Ctor    ::= ident ('(' Param (',' Param)* ')')?
 Method  ::= ident ':=' Expr
-Param   ::= ident (':' Ident)?       -- type annotation optional
+Param   ::= ident (':' Type)?        -- type annotation optional
+Type    ::= TypeAtom+ (('→' | '->') Type)?   -- Float, Array Foe, Float → Bool
+TypeAtom::= ident | '(' Type ')'
 
 Expr    ::= 'let' ident ':=' Expr ';' Expr
          |  'if' Expr 'then' Expr 'else' Expr
@@ -358,9 +362,12 @@ const pi     = 314 / 100;
 const ratio  = (a, b) => { return a / b; };
 ```
 
-The return-type and per-param `: Type` annotations are *advisory* —
-LeanJs does not type-check. They flow into `LeanEmit` so the emitted
-real-Lean source compiles; defaults to `Int` when absent.
+The return-type and per-param `: Type` annotations are written as in
+Lean (`Float`, `Array Foe`, `Float → Float → Bool`). JavaScript ignores
+them; `LeanJs.Check` uses a parameter's record type to check its fields
+(`f : Foe` makes `f.hpp` an error); `LeanJs.Typed` hands them to Lean,
+which checks the whole definition (see *Types through Lean* below);
+`LeanEmit` defaults a missing one to `Int`.
 
 Top-level `def main := …` is the conventional entry point used by
 the bilingual test runners (its value is printed).
@@ -440,9 +447,28 @@ the top of the JS output. Required for ES-module entry points
 inductive Shape where
   | Rect(w, h)
   | Circle(r)
+
+inductive Event where
+  | Damaged(id : Float, amount : Float)   -- typed fields, for LeanJs.Typed
+  | Downed
 ```
 
-See *match* above for the dispatch story.
+See *match* above for the dispatch story. Compare constructors with
+`match`, not `==`: in JavaScript `==` on two constructed values
+compares the objects, not what they hold.
+
+A `match` in statement position (inside `do`) lowers to a chain of
+`if`s, so its arms may reassign `let mut` locals like an `if` branch:
+
+```text
+def f(m) := do
+  let mut n := 1;
+  match m with
+    | Idle => (n := 10)
+    | Chase(s) => (let k := s * 2; n := n + k)
+    | Dead => null;
+  n
+```
 
 ### `class` / `instance`
 
@@ -529,7 +555,7 @@ Deliberate omissions, with the rationale and the workaround:
 |---------------------|----------------------------------------------------|----------------------------------------------|
 | Template literals   | keeps the string story single-quoted + `+`         | `"a" + x + "b"` (or a small `sconcat` extern) |
 | Ternary `cond ? a : b` | use `if cond then a else b`                     | n/a                                          |
-| Type checking       | optional annotations exist but aren't enforced     | `LeanJs.Check` catches the cheap classes: arity, record fields, unknown identifiers, fields of top-level object literals (see below) |
+| Type checking       | not built in                                       | `LeanJs.Check` catches the cheap classes (see below); `LeanJs.Typed` has Lean check typed pure rules (`leanjs_compile --typed`) |
 | Source maps         | none                                               | column-1 errors in node's stack trace        |
 
 Things you *can* express now (since the imperative extension landed):
@@ -573,7 +599,40 @@ servers) names the enclosing definition and reports:
 - fields of top-level object literals:
   `def P := {x: 0, stamina: 100}` fixes `P`'s fields, so `P.stamna`,
   `P.y := 1` and `{ P with z := 1 }` are errors. An empty literal
-  (`def keys := {}`) is a dictionary and isn't checked.
+  (`def keys := {}`) is a dictionary and isn't checked;
+- fields of records: a parameter annotated with a record type
+  (`def hurt(f : Foe) := { f with hpp := … }`), or a `let` bound to
+  `Foe { … }` or to an update of one, has that record's fields;
+- a value used before its definition. Every `def` is a JavaScript
+  `const`, so code that runs as the module loads (a `def` without
+  parameters, a top-level expression, and any function they call) may
+  only use names defined above it —
+  ``in `def A`: `K` is used before its definition (through `f`)``.
+  Function bodies and lambdas may use later names.
+
+## Types through Lean
+
+`LeanJs.Typed` gives pure rules real types without a type checker in
+LeanJs: it translates the program to Lean and lets Lean's elaborator
+check it (nothing is run; the JavaScript still comes from `Codegen`).
+
+| LeanJs                               | Lean                                      |
+|--------------------------------------|-------------------------------------------|
+| `record R where x : Float, …`        | `structure R where x : Float …`           |
+| `inductive E where \| A(t : Float)`  | `inductive E where \| A (t : Float)`      |
+| `def f(x : Float) : R := do …`       | `def f (x : Float) : R := Id.run do …`    |
+| `let mut`, `for`, `if`, `match`, `x := e` in `do` | the same statements          |
+| `[a, b]`, `xs[i]`                    | `#[a, b]`, `xs[i]!`                       |
+| `R {x: 1}`, `{x: 1}`, `{ r with x := 2 }` | structure instances                  |
+| `Math.sin`, `xs.concat(ys)` …        | a small prelude                           |
+
+Parameters need types, and so do constants whose literal is an integer
+but whose value is a `Float` (`def HERO_HP : Float := 100`). `null`,
+`extern js`, `new`, `?.`, `async` and assignment to a field are refused
+with a message. Run it with `lake exe leanjs_compile file.leanjs
+--typed` (`--lean` prints the generated Lean); `breezehollow_spec`
+checks `examples/Breezehollow/Physics.leanjs` and `Combat.leanjs` this
+way.
 
 ---
 

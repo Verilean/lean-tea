@@ -178,6 +178,19 @@ partial def compileStmts (tail : Bool) : Ast.Expr → Block
     -- A `null` terminal means "no value" — emit nothing so a void
     -- block doesn't end with a spurious `return null`.
     []
+  | .matchE scr bs =>
+    -- A `match` in statement position is a chain of `if`s on `__m`
+    -- (in its own `{ … }`, so `__m` doesn't clash), so its arms are
+    -- statement blocks: they may reassign `let mut` locals.
+    let rec arms : List MatchBranch → Block
+      | [] => []
+      | b :: rest =>
+        let body := (patBinds (i "__m") b.pat).map (fun (x, e) => constV x e) ++ compileStmts tail b.body
+        match patGuard (i "__m") b.pat with
+        | none => body
+        | some g => [ifS g body (arms rest)]
+    let blk : Block := constV "__m" (compileExpr scr) :: arms bs
+    [.rawS ("{" ++ blk.render ++ "}")]
   | .doBlock body =>
     -- A nested `do` in statement position (an `if` branch, a loop
     -- body) is inlined as a `{ … }` block instead of an IIFE: same
