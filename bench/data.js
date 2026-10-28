@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792821794963,
+  "lastUpdate": 1793166139553,
   "repoUrl": "https://github.com/Verilean/lean-tea",
   "entries": {
     "HTTP throughput (lean-tea reactor vs nginx)": [
@@ -1936,6 +1936,85 @@ window.BENCHMARK_DATA = {
           {
             "name": "nginx /json",
             "value": 106239,
+            "unit": "RPS"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "junjihashimoto@users.noreply.github.com",
+            "name": "junji hashimoto",
+            "username": "junjihashimoto"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "534efc07441d6e9f8e2de2be467cd54994335841",
+          "message": "Merge pull request #32 from Verilean/feat/breezehollow-heroine\n\nBreezehollow: a rigged anime heroine with flight",
+          "timestamp": "2026-10-28T14:39:18+09:00",
+          "tree_id": "a5849041b4666c8bca1e0b683d3989d174530789",
+          "url": "https://github.com/Verilean/lean-tea/commit/534efc07441d6e9f8e2de2be467cd54994335841"
+        },
+        "date": 1793166138739,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "lean-tea libuv /health",
+            "value": 4874,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /json",
+            "value": 5414,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /echo",
+            "value": 5318,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /health",
+            "value": 152104,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /json",
+            "value": 153045,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /echo",
+            "value": 122767,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /health",
+            "value": 180691,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /json",
+            "value": 180884,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /echo",
+            "value": 147694,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /health",
+            "value": 189212,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /json",
+            "value": 180743,
             "unit": "RPS"
           }
         ]
