@@ -918,14 +918,14 @@ include "Combat.leanjs"
 
 -- Where they live: [kind, x, z].
 def SPAWNS := [
-  ["slime", 18, 8], ["slime", 22, 13], ["slime", 14, 14],
-  ["slime", -30, 42], ["slime", -35, 46],
-  ["slime", 40, -10], ["slime", 45, -5], ["slime", 37, -3],
-  ["wisp", -20, -8], ["wisp", -25, -13],
-  ["wisp", 58, 62], ["wisp", 64, 57],
-  ["wisp", 8, -78], ["wisp", 1, -83],
-  ["golem", -55, -45], ["slime", -49, -39], ["slime", -60, -38],
-  ["golem", 112, -6]
+  [Slime, 18, 8], [Slime, 22, 13], [Slime, 14, 14],
+  [Slime, -30, 42], [Slime, -35, 46],
+  [Slime, 40, -10], [Slime, 45, -5], [Slime, 37, -3],
+  [Wisp, -20, -8], [Wisp, -25, -13],
+  [Wisp, 58, 62], [Wisp, 64, 57],
+  [Wisp, 8, -78], [Wisp, 1, -83],
+  [Golem, -55, -45], [Slime, -49, -39], [Slime, -60, -38],
+  [Golem, 112, -6]
 ]
 
 def FIGHT := {state: {hero: newHero(), foes: [], bolts: []}, rooted: false, defeated: 0, shake: 0}
@@ -1038,7 +1038,7 @@ def makeGolem(id) := do
   );
   root.add(body);
   -- where the slam will land
-  let tele := new THREE.Mesh(new THREE.RingGeometry(KINDS.golem.contact - 0.25, KINDS.golem.contact, 40),
+  let tele := new THREE.Mesh(new THREE.RingGeometry(GOLEM.contact - 0.25, GOLEM.contact, 40),
     new THREE.MeshBasicMaterial({color: 0xff7a6b, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide}));
   tele.rotation.x := -PI / 2;
   tele.position.y := 0.08;
@@ -1050,9 +1050,9 @@ def buildMonsters() := do
   let mut foes := [];
   let mut id := 1;
   for s in SPAWNS do (
-    let y := groundAt(s[1], s[2], 99) + (if KINDS[s[0]].fly then 2.6 else 0);
+    let y := groundAt(s[1], s[2], 99) + (if stats(s[0]).fly then 2.6 else 0);
     push(foes, newFoe(id, s[0], s[1], y, s[2]));
-    let view := if s[0] == "slime" then makeSlime(id) else if s[0] == "wisp" then makeWisp(id) else makeGolem(id);
+    let view := match s[0] with | Slime => makeSlime(id) | Wisp => makeWisp(id) | Golem => makeGolem(id);
     view.root.position.set(s[1], y, s[2]);
     scene.add(view.root);
     foeViews[id] := { view with flash: 0, gone: 0, seed: hash2(id, 7) * 10 };
@@ -1065,42 +1065,48 @@ def buildMonsters() := do
 def updateMonsters(dt, t) := do
   for f in FIGHT.state.foes do (
     let v := foeViews[f.id];
-    let K := KINDS[f.kind];
+    let K := stats(f.kind);
     let tt := t + v.seed;
+    let winding := match f.mode with | Windup => true | _ => false;
+    let striking := match f.mode with | Strike => true | _ => false;
+    let walking := match f.mode with | Chase => true | Return => true | _ => false;
     v.flash := Math.max(0, v.flash - dt);
-    v.gone := if f.state == "dead" then Math.min(1, v.gone + dt * 4) else Math.max(0, v.gone - dt * 2);
+    v.gone := if isDead(f) then Math.min(1, v.gone + dt * 4) else Math.max(0, v.gone - dt * 2);
     v.root.position.set(f.x, f.y, f.z);
     v.root.rotation.y := f.facing;
     v.root.scale.setScalar(Math.max(0.001, 1 - v.gone));
     v.root.visible := v.gone < 1;
-    let wind := if f.state == "windup" then clamp(f.t / K.windup, 0, 1) else 0;
+    let wind := if winding then clamp(f.t / K.windup, 0, 1) else 0;
     -- body language
-    if f.kind == "slime" then (
-      let hop := if f.state == "chase" || f.state == "return" then Math.abs(Math.sin(tt * 9)) * 0.35
-                 else if f.state == "strike" then 0.5 * Math.sin(clamp(f.t / K.strike, 0, 1) * PI) else 0;
-      let sq := if f.state == "windup" then 1 - wind * 0.35 else 1 + Math.sin(tt * 4) * 0.05;
+    match f.kind with
+    | Slime => (
+      let hop := if walking then Math.abs(Math.sin(tt * 9)) * 0.35
+                 else if striking then 0.5 * Math.sin(clamp(f.t / K.strike, 0, 1) * PI) else 0;
+      let sq := if winding then 1 - wind * 0.35 else 1 + Math.sin(tt * 4) * 0.05;
       v.body.position.y := hop;
       v.body.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq)))
-    else if f.kind == "wisp" then (
+    | Wisp => (
       v.body.position.y := Math.sin(tt * 2.5) * 0.15;
       for k in range(0, v.rings.length, 1) do (
         v.rings[k].rotation.x := tt * (1.5 + k) + k;
         v.rings[k].rotation.y := tt * (0.9 + k * 0.7));
-      v.body.position.x := if f.state == "windup" then Math.sin(tt * 60) * 0.05 * wind else 0;
+      v.body.position.x := if winding then Math.sin(tt * 60) * 0.05 * wind else 0;
       v.mats[0].emissiveIntensity := 1.6 + wind * 2.5)
-    else (
-      let lift := if f.state == "windup" then wind
-                  else if f.state == "strike" then 1 - clamp(f.t / K.strike, 0, 1) else 0;
+    | Golem => (
+      let lift := if winding then wind
+                  else if striking then 1 - clamp(f.t / K.strike, 0, 1) else 0;
       for a in v.arms do (a.rotation.x := -lift * 2.6);
-      v.body.rotation.z := if f.state == "chase" || f.state == "return" then Math.sin(tt * 5) * 0.06 else 0;
+      v.body.rotation.z := if walking then Math.sin(tt * 5) * 0.06 else 0;
       v.tele.position.set(f.x + Math.sin(f.facing) * 0.6, f.y + 0.08, f.z + Math.cos(f.facing) * 0.6);
-      v.tele.material.opacity := if f.state == "windup" then 0.25 + wind * 0.55 else 0);
-    -- a white flash when hit (an emissive tint on the toon materials)
+      v.tele.material.opacity := if winding then 0.25 + wind * 0.55 else 0);
+    -- a white flash when hit (an emissive tint on the toon materials; a
+    -- wisp glows already)
+    let tinted := match f.kind with | Wisp => false | _ => true;
     for m in v.mats do (
-      if f.kind != "wisp" then m.emissive.setScalar(v.flash * 5));
+      if tinted then m.emissive.setScalar(v.flash * 5));
     -- the health bar shows once hurt
     let frac := f.hp / K.hp;
-    let shown := f.state != "dead" && frac < 0.999;
+    let shown := !isDead(f) && frac < 0.999;
     v.bar.bg.visible := shown;
     v.bar.fill.visible := shown;
     v.bar.fill.scale.x := Math.max(0.001, v.bar.w * frac);
@@ -1188,36 +1194,38 @@ def updateNumbers(dt) := do
 
 -- What a fight event looks like and sounds like on screen.
 def showFightEvent(e) := do
-  if e.ev == "swing" then swingArc(G.p, e.facing, e.combo == 2);
-  if e.ev == "damage" then (
-    popNumber(e.x, e.y, e.z, "" + e.amount, (if e.big then "big" else ""));
-    burst(e.x, e.y - 0.6, e.z, (if e.big then 26 else 12), (if e.big then 6 else 4));
-    let v := foeViews[e.id];
-    v.flash := 0.12);
-  if e.ev == "defeat" then (
+  match e with
+  | Swung(combo, _, _, _, facing) => swingArc(G.p, facing, combo == 2)
+  | Damaged(id, amount, big, x, y, z) => (
+    popNumber(x, y, z, "" + amount, (if big then "big" else ""));
+    burst(x, y - 0.6, z, (if big then 26 else 12), (if big then 6 else 4));
+    let v := foeViews[id];
+    v.flash := 0.12)
+  | Defeated(_, _, x, y, z) => (
     FIGHT.defeated := FIGHT.defeated + 1;
-    burst(e.x, e.y, e.z, 60, 7);
-    ringBurst(e.x, e.y - 0.4, e.z, 40, 5));
-  if e.ev == "respawn" then (
-    let f := FIGHT.state.foes.filter(fun (g) => g.id == e.id)[0];
-    burst(f.x, f.y + 0.6, f.z, 20, 3));
-  if e.ev == "strike" && e.kind == "golem" then (
-    ringBurst(e.x, e.y, e.z, 70, 8);
-    FIGHT.shake := 0.35);
-  if e.ev == "bolt" then burst(e.x, e.y, e.z, 8, 2);
-  if e.ev == "burst" then burst(e.x, e.y, e.z, 18, 4);
-  if e.ev == "hurt" then (
-    popNumber(e.x, e.y, e.z, "" + e.amount, "hurt");
+    burst(x, y, z, 60, 7);
+    ringBurst(x, y - 0.4, z, 40, 5))
+  | Respawned(id) => (
+    let f := FIGHT.state.foes.filter(fun (g) => g.id == id)[0];
+    burst(f.x, f.y + 0.6, f.z, 20, 3))
+  | Struck(_, Golem, x, y, z) => (
+    ringBurst(x, y, z, 70, 8);
+    FIGHT.shake := 0.35)
+  | Fired(x, y, z) => burst(x, y, z, 8, 2)
+  | Burst(x, y, z) => burst(x, y, z, 18, 4)
+  | Wounded(amount, x, y, z) => (
+    popNumber(x, y, z, "" + amount, "hurt");
     G.hurtT := 0.42;
-    FIGHT.shake := Math.max(FIGHT.shake, 0.2));
-  if e.ev == "down" then toast("Knocked out…");
-  if e.ev == "revive" then (
+    FIGHT.shake := Math.max(FIGHT.shake, 0.2))
+  | Downed => toast("Knocked out…")
+  | Revived => (
     let tx := if SHRINE.attuned then SHRINE.x + 4 else 0;
     let tz := if SHRINE.attuned then SHRINE.z + 4 else 30;
     G.p := { G.p with x := tx, z := tz, y := heightAt(tx, tz) + 0.5, vx := 0, vy := 0, vz := 0,
                       gliding := false, flying := false };
     burst(tx, G.p.y + 1, tz, 60, 6);
-    toast(if SHRINE.attuned then "Back at the Wind Shrine" else "Back on your feet"));
+    toast(if SHRINE.attuned then "Back at the Wind Shrine" else "Back on your feet"))
+  | _ => null;
   null
 
 -- ───────────────────────── per-frame update ─────────────────────────
@@ -1237,7 +1245,7 @@ def updatePlayer(dt) := do
   G.p := { G.p with vx := G.p.vx + kn.x, vz := G.p.vz + kn.z,
                     vy := (if kn.y > 0 then Math.max(G.p.vy, kn.y) else G.p.vy),
                     onGround := G.p.onGround && kn.y <= 0,
-                    facing := (if f.face == null then G.p.facing else f.face) };
+                    facing := (match f.face with | Face(a) => a | Keep => G.p.facing) };
   for e in f.events do (showFightEvent(e));
   let p := G.p;
   for ev in r.events do (
@@ -1404,11 +1412,12 @@ def drawMinimap() := do
       ctx.fill())
   );
   for f in FIGHT.state.foes do (
-    if f.state != "dead" then (
+    if !isDead(f) then (
       let q := mapXY(f.x, f.z);
-      ctx.fillStyle := if f.kind == "golem" then "#ff5a4f" else "#ff8a7a";
+      let big := match f.kind with | Golem => true | _ => false;
+      ctx.fillStyle := if big then "#ff5a4f" else "#ff8a7a";
       ctx.beginPath();
-      ctx.arc(q[0], q[1], (if f.kind == "golem" then 2.2 else 1.3), 0, TAU);
+      ctx.arc(q[0], q[1], (if big then 2.2 else 1.3), 0, TAU);
       ctx.fill())
   );
   let sp := mapXY(SHRINE.x, SHRINE.z);
@@ -1521,7 +1530,7 @@ def frame(ms) := do
                          flying: G.p.flying, heroine: hero.mixer != null,
                          motes: G.motes, fps: clock.fps, attuned: SHRINE.attuned,
                          hp: FIGHT.state.hero.hp, defeated: FIGHT.defeated,
-                         foes: FIGHT.state.foes.map(fun (f) => {kind: f.kind, state: f.state, hp: f.hp, x: f.x, z: f.z})};
+                         foes: FIGHT.state.foes.map(fun (f) => {kind: kindName(f.kind), state: modeName(f.mode), hp: f.hp, x: f.x, z: f.z})};
   raf(frame)
 
 def boot() := do

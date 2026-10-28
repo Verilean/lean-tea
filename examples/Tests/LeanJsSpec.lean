@@ -6,6 +6,7 @@ import LeanJs.Eval
 import LeanJs.JsParser
 import LeanJs.LeanEmit
 import LeanJs.Includes
+import LeanJs.Typed
 
 /-! # examples/Tests/LeanJsSpec.lean — LSpec tests for the Fay pipeline
 
@@ -507,6 +508,12 @@ def compiled (src : String) : String :=
   | .ok p => compileToString p
 
 def ergonomicNodeCases : List NodeCase := [
+  { label := "match-statement-reassigns", jsOnly := true, source :=
+      "inductive Mode where | Idle | Chase(speed) | Dead\n"
+   ++ "def f(m) := do\n  let mut n := 1;\n  match m with\n    | Idle => (n := 10)\n"
+   ++ "    | Chase(s) => (let k := s * 2; n := n + k)\n    | Dead => null;\n  n\n"
+   ++ "def main := f(Idle) + f(Chase(3)) + f(Dead)",
+    expected := "18" },
   { label := "col0-stops-space-app", jsOnly := true, source :=
       "def logged := []\ndef push1(v) := logged.push(v)\ndef boot() := push1(1)\nboot()\n"
    ++ "def main := logged.length",
@@ -593,12 +600,66 @@ def ergonomicSpecs : LSpec := group "ergonomics" [
   it "pattern: a lowercase constructor name gets a hint"
     (has (compileErr "inductive Msg where | inc | dec\ndef f(m) := match m with | inc => 1 | _ => 0")
       "`inc` is a constructor"),
+  it "a value used before its definition"
+    (has (compileErr "def a := later + 1\ndef later := 2")
+      "in `def a`: `later` is used before its definition"),
+  it "use before definition, through a function called at load"
+    (has (compileErr "def f(x) := x + K\ndef A := f(1)\ndef K := 3")
+      "`K` is used before its definition (through `f`)"),
+  it "functions and lambdas may use later names"
+    (compileErr ("def f(x) := x + K\ndef K := 3\ndef A := f(1)\n"
+      ++ "def g() := B\ndef h := fun () => B\ndef B := 1\ndef C := g()")
+      == "<compiled>"),
+  it "a parameter of a record type has that record's fields"
+    (has (compileErr "record Foe where hp : Float, kind : String\ndef hurt(f : Foe, d) := { f with hpp := f.hp - d }")
+      "`f` (a `Foe`) has no field `hpp` (did you mean `hp`?)"),
+  it "so does a let bound to a record (or an update of one)"
+    (has (compileErr "record Foe where hp : Float, kind : String\ndef k(f : Foe) := let g := { f with hp := 1 }; g.kidn")
+      "`g` (a `Foe`) has no field `kidn`"),
+  it "types: applications, arrows and constructor fields parse"
+    (compileErr ("record T where f : Float → Float, xs : Array (List Float)\n"
+      ++ "inductive E where | Hit(id : Float, big : Bool) | Gone\n"
+      ++ "def g(t : T, e : E) : Array Float := match e with | Hit(i, _) => [t.f(i)] | Gone => []")
+      == "<compiled>"),
   it "every node-case program passes the checks (no false positives)"
     ((nodeCases ++ ergonomicNodeCases).all fun c =>
       match parseProgramString c.source with
       | .ok p => (match LeanJs.Check.check p with | .ok _ => true | .error _ => false)
       | .error _ => true)
 ]
+
+/-! ## Types through Lean (`LeanJs.Typed`) -/
+
+/-- A small typed rule set: records, an inductive with typed fields, a
+    `do` block with `let mut`, `for` and a `match` statement. -/
+def typedOk : String :=
+  "inductive Mode where | Idle | Hurt(t : Float)\n"
+  ++ "record Foe where hp : Float, mode : Mode, hit : Bool\n"
+  ++ "def MAX : Float := 10\n"
+  ++ "def hurt(f : Foe, d : Float) : Foe := { f with hp := Math.max(0, f.hp - d), mode := Hurt(0) }\n"
+  ++ "def total(fs : Array Foe) : Float := do\n  let mut n := 0;\n"
+  ++ "  for f in fs do (match f.mode with | Hurt(t) => (n := n + t) | Idle => (n := n + 1));\n  n\n"
+
+def typedErr (src : String) : IO String := do
+  match parseProgramString src with
+  | .error e => return s!"parse: {e}"
+  | .ok p => match ← LeanJs.Typed.check p with
+    | .ok () => return "<typed>"
+    | .error e => return e
+
+def typedSpecs : IO LSpec := do
+  let ok := typedOk
+  return group "typed (Lean)" [
+    it "typed records, inductives and do blocks elaborate" ((← typedErr ok) == "<typed>") (← typedErr ok),
+    it "a field typo in an update is a Lean error"
+      (has (← typedErr (ok.replace "hp := Math.max" "hpp := Math.max")) "hpp"),
+    it "a Float where a Bool belongs is a Lean error"
+      (has (← typedErr (ok ++ "def bad(f : Foe) : Foe := { f with hit := f.hp }\n")) "Type mismatch"),
+    it "an untyped parameter is refused"
+      (has (← typedErr "def f(x) : Float := x") "parameter `x` needs a type"),
+    it "null is refused, with the alternative"
+      (has (← typedErr "def f(x : Float) : Array Float := [x, null]") "`null` has no type")
+  ]
 
 def main : IO UInt32 := do
   IO.println "── LeanJs pure tests ─────────────────────────────────────"
@@ -633,4 +694,8 @@ def main : IO UInt32 := do
     ergLeaves := ergLeaves ++ [(← runNodeCase c)]
   let ergCode ← lspecIO (group "ergonomics" ergLeaves)
 
-  return pureCode + nodeCode + dualCode + leanCode + incCode + ergCode
+  IO.println ""
+  IO.println "── LeanJs types through Lean ─────────────────────────────"
+  let typedCode ← lspecIO (← typedSpecs)
+
+  return pureCode + nodeCode + dualCode + leanCode + incCode + ergCode + typedCode

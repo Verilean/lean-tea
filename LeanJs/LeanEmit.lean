@@ -124,7 +124,8 @@ def emitInductive (name : String) (ctors : List CtorDecl) : String :=
   let arms := ctors.map fun c =>
     if c.arity == 0 then s!"  | {c.name}"
     else
-      let fields := (List.range c.arity).map fun _ => "Int"
+      let fields := (List.range c.arity).map fun k =>
+        ((c.fields[k]?).bind (·.type?)).getD "Int"
       let body := String.intercalate " → " fields
       s!"  | {c.name} ({body})"
   String.intercalate "\n" (header :: arms)

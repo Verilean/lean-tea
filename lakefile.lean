@@ -68,7 +68,7 @@ lean_lib LeanTea where
 lean_lib LeanJs where
   roots := #[`LeanJs.Ast, `LeanJs.Parser, `LeanJs.Codegen,
              `LeanJs.Eval, `LeanJs.JsParser, `LeanJs.LeanEmit,
-             `LeanJs.Check, `LeanJs.Includes, `LeanJs.TypeCheck]
+             `LeanJs.Check, `LeanJs.Includes, `LeanJs.TypeCheck, `LeanJs.Typed]
 
 lean_lib Examples where
   srcDir := "examples"

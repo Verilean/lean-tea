@@ -325,10 +325,30 @@ def objectShapes (p : Program) : List (String × List String) := p.toList.filter
 structure Scope where
   globals : List String
   shapes  : List (String × List String)
+  /-- declared records: name → fields -/
+  records : List (String × List String) := []
   locals  : List String := []
+  /-- locals known to hold a record: a parameter annotated with a
+      record type (`f : Foe`), or a `let` bound to `Foe { … }` -/
+  typed   : List (String × String) := []
 
 private def Scope.bind (sc : Scope) (ns : List String) : Scope :=
-  { sc with locals := ns ++ sc.locals }
+  { sc with locals := ns ++ sc.locals, typed := sc.typed.filter (!ns.contains ·.1) }
+
+/-- Bind one local; `ty?` is the record it is known to hold, if any. -/
+private def Scope.bindAs (sc : Scope) (n : String) (ty? : Option String) : Scope :=
+  let sc := sc.bind [n]
+  match ty? with
+  | some ty => if (sc.records.find? (·.1 == ty)).isSome then { sc with typed := (n, ty) :: sc.typed } else sc
+  | none => sc
+
+/-- The record an expression is known to evaluate to: a record literal,
+    a typed local, or an update of one. -/
+private def Scope.recordOf (sc : Scope) : Ast.Expr → Option String
+  | .recordLitE cls _ => some cls
+  | .var n => (sc.typed.find? (·.1 == n)).map (·.2)
+  | .updE b _ => sc.recordOf b
+  | _ => none
 
 private def Scope.knows (sc : Scope) (n : String) : Bool :=
   sc.locals.contains n || sc.globals.contains n || jsGlobals.contains n
@@ -336,6 +356,12 @@ private def Scope.knows (sc : Scope) (n : String) : Bool :=
 private def checkField (sc : Scope) (obj : Ast.Expr) (f : String) : Except String Unit :=
   match obj with
   | .var n =>
+    match sc.typed.find? (·.1 == n) with
+    | some (_, ty) =>
+      let fields := ((sc.records.find? (·.1 == ty)).map (·.2)).getD []
+      if fields.contains f then pure ()
+      else throw s!"`{n}` (a `{ty}`) has no field `{f}`{suggest f fields} — fields: {String.intercalate ", " fields}"
+    | none =>
     if sc.locals.contains n then pure () else
     match sc.shapes.find? (·.1 == n) with
     | some (_, fields) =>
@@ -351,7 +377,8 @@ partial def checkNames (sc : Scope) : Ast.Expr → Except String Unit
   | .num _ | .numF _ | .str _ | .nullE | .boolE _ => pure ()
   | .app f args => do checkNames sc f; args.forM (checkNames sc)
   | .binop _ l r => do checkNames sc l; checkNames sc r
-  | .letE n v b | .letMutE n v b => do checkNames sc v; checkNames (sc.bind [n]) b
+  | .letE n v b => do checkNames sc v; checkNames (sc.bindAs n (sc.recordOf v)) b
+  | .letMutE n v b => do checkNames sc v; checkNames (sc.bind [n]) b
   | .ifE c t e => do checkNames sc c; checkNames sc t; checkNames sc e
   | .fnE ps b => checkNames (sc.bind ps) b
   | .matchE scr bs => do
@@ -373,7 +400,8 @@ partial def checkNames (sc : Scope) : Ast.Expr → Except String Unit
     fs.forM (fun (_, v) => checkNames sc v)
 
 def checkTopNames (sc : Scope) : TopDef → Except String Unit
-  | .defE _ ps _ body | .asyncDefE _ ps body => checkNames (sc.bind (ps.map (·.name))) body
+  | .defE _ ps _ body | .asyncDefE _ ps body =>
+    checkNames (ps.foldl (fun sc p => sc.bindAs p.name p.type?) sc) body
   | .instE _ _ methods => methods.forM (fun (_, b) => checkNames sc b)
   | .exprE e => checkNames sc e
   | _ => pure ()
@@ -391,13 +419,92 @@ def checkTop (t : Tables) : TopDef → Except String Unit
   | .recordE _ _        => pure ()
   | .exprE e            => checkExpr t e
 
+/-! ## Order of definitions
+
+Every top-level `def` becomes a JavaScript `const`, so a value used
+before its own line has run is a load-time error ("cannot access
+before initialization"). Code that runs as the module loads — the
+body of a `def` without parameters, a top-level expression — may only
+use names defined above it. Function bodies don't run until called,
+so they may use anything; but a function *called* while the module
+loads runs then, so its body is held to the same rule (followed
+through further calls). Lambdas are not followed: when they run is
+up to whoever receives them. -/
+
+/-- Top-level name → position. -/
+def topIndex (p : Program) : List (String × Nat) :=
+  p.toList.zipIdx.flatMap fun (d, i) => (topNames #[d]).map (·, i)
+
+/-- Bodies of top-level functions. -/
+def fnBodies (p : Program) : List (String × List String × Ast.Expr) := p.toList.filterMap fun
+  | .defE n ps _ b => if ps.isEmpty then (match b with | .fnE xs inner => some (n, xs, inner) | _ => none)
+                      else some (n, ps.map (·.name), b)
+  | _ => none
+
+/-- Walk code that runs now, for the top-level form at `pos`. `via` is
+    the chain of calls that led here (for the message); the state holds
+    the functions already followed. -/
+partial def orderErr (idx : List (String × Nat)) (fns : List (String × List String × Ast.Expr)) (pos : Nat)
+    (via : List String) (locals : List String) (e : Ast.Expr) :
+    StateT (List String) (Except String) Unit := do
+  let go := orderErr idx fns pos via
+  match e with
+  | .var n =>
+    if locals.contains n then pure () else
+    match idx.find? (·.1 == n) with
+    | some (_, j) =>
+      if j >= pos then
+        let chain := match via with
+          | [] => ""
+          | _ => s!" (through {String.intercalate " → " (via.reverse.map (s!"`{·}`"))})"
+        throw s!"`{n}` is used before its definition{chain}: move the definition above, or use it inside a function"
+    | none => pure ()
+  | .app f args => do
+    go locals f
+    for a in args do go locals a
+    if let .var n := f then
+      if !locals.contains n && !(← get).contains n then
+        if let some (_, params, body) := fns.find? (·.1 == n) then
+          modify (n :: ·)
+          orderErr idx fns pos (n :: via) params body
+  | .fnE _ _ => pure ()
+  | .num _ | .numF _ | .str _ | .nullE | .boolE _ => pure ()
+  | .binop _ l r | .assignE l r | .seqE l r | .idxE l r => do go locals l; go locals r
+  | .letE n v b | .letMutE n v b => do go locals v; go (n :: locals) b
+  | .ifE c t f => do go locals c; go locals t; go locals f
+  | .matchE scr bs => do
+    go locals scr
+    for b in bs do go (b.pat.binders ++ locals) b.body
+  | .dotE x _ | .optDotE x _ | .awaitE x | .unopE _ x | .doBlock x => go locals x
+  | .arrE xs => xs.forM (go locals)
+  | .objE fs | .recordLitE _ fs => fs.forM (fun (_, v) => go locals v)
+  | .newE c xs => do go locals c; xs.forM (go locals)
+  | .forE v it b => do go locals it; go (v :: locals) b
+  | .whileE c b => do go locals c; go locals b
+  | .updE b fs => do go locals b; fs.forM (fun (_, v) => go locals v)
+
+/-- The first use of a name before its definition, in code that runs
+    as the module loads. -/
+def checkOrderProgram (p : Program) : Except String Unit := do
+  let idx := topIndex p
+  let fns := fnBodies p
+  for (d, i) in p.toList.zipIdx do
+    let now? := match d with
+      | .defE n [] _ b => (match b with | .fnE _ _ => none | _ => some (s!"in `def {n}`: ", b))
+      | .exprE e => some ("in a top-level expression: ", e)
+      | _ => none
+    if let some (whereAt, body) := now? then
+      match (orderErr idx fns i [] [] body).run' [] with
+      | .ok () => pure ()
+      | .error e => throw (whereAt ++ e)
+
 /-- Verify every direct application against the program's arity
     table, plus every record construction against its declared shape.
     Returns the program unchanged on success; the first mismatch
     becomes the error. -/
 def check (p : Program) : Except String Program := do
   let t := buildTables p
-  let sc : Scope := { globals := topNames p, shapes := objectShapes p }
+  let sc : Scope := { globals := topNames p, shapes := objectShapes p, records := t.records }
   for d in p do
     -- name the enclosing definition: the AST carries no positions
     let whereAt := match d with
@@ -408,6 +515,7 @@ def check (p : Program) : Except String Program := do
     match checkTop t d *> checkTopNames sc d with
     | .ok () => pure ()
     | .error e => throw (whereAt ++ e)
+  checkOrderProgram p
   return p
 
 end LeanJs.Check

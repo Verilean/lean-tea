@@ -1,5 +1,6 @@
 import LeanTea
 import Breezehollow.Game
+import LeanJs.Typed
 
 /-! # breezehollow_spec — offline checks for the Breezehollow demo
 
@@ -19,7 +20,9 @@ CDN, so this only guards the build side.
     `PhysicsTest.leanjs` runs them under node on toy worlds and each
     `PASS` / `FAIL` line becomes a test here
   * the fighting rules (`Combat.leanjs`, a pure `fight`) behave, checked
-    the same way by `CombatTest.leanjs` -/
+    the same way by `CombatTest.leanjs`
+  * both rule files are typed: `LeanJs.Typed` turns them into Lean and
+    Lean's elaborator accepts every definition -/
 
 open LeanTea LeanTea.LSpec
 
@@ -69,6 +72,15 @@ def nodeTests (file : String) : IO (List LSpec) := do
       if l.startsWith "PASS " then it (l.drop 5).toString true
       else it ((l.drop 5).toString.takeWhile (· != '{')).toString false l
 
+/-- `Physics.leanjs` + `Combat.leanjs`, type-checked by Lean. -/
+def rulesTyped : IO (Except String Unit) := do
+  -- includes resolve next to the entry (which is itself never included)
+  let dir := (System.FilePath.mk (← Breezehollow.findFile "Physics.leanjs")).parent.getD "."
+  let entry := (dir / "rules.leanjs").toString
+  match LeanJs.Parser.parseProgramString "include \"Physics.leanjs\"\ninclude \"Combat.leanjs\"\n" with
+  | .error e => return .error e
+  | .ok p => LeanJs.Typed.check (← LeanJs.Includes.resolve entry p)
+
 def main : IO UInt32 := do
   let src ← IO.FS.readFile (← Breezehollow.findFile "World.leanjs")
   let page ← IO.FS.readFile "examples/Breezehollow/page.html"
@@ -88,6 +100,7 @@ def main : IO UInt32 := do
   let bones := (chainBones src ++ quotedAfter src "bone").eraseDups
   let missingBones := bones.filter (fun b => !has gj s!"\"name\":\"{b}\"")
   if !missingBones.isEmpty then IO.eprintln s!"bones missing from heroine.glb: {missingBones}"
+  let typed ← rulesTyped
   let tree := group "Breezehollow" [
     group "LeanJs build" [
       it "World.leanjs (+ Physics.leanjs) parses and passes the checks"
@@ -115,6 +128,11 @@ def main : IO UInt32 := do
         (has gj "\"baseColorTexture\"" && has gj "\"mimeType\":\"image/png\""),
       it "is loaded with GLTFLoader from /heroine.glb"
         (has js "from 'three/addons/loaders/GLTFLoader.js'" && has js "/heroine.glb")
+    ],
+    group "types (Lean)" [
+      it "Physics.leanjs and Combat.leanjs type-check"
+        (match typed with | .ok () => true | .error _ => false)
+        (match typed with | .ok () => "" | .error e => e)
     ],
     group "Physics.step (node, toy worlds)" (← nodeTests "PhysicsTest.leanjs"),
     group "Combat.fight (node, flat ground)" (← nodeTests "CombatTest.leanjs")

@@ -134,29 +134,41 @@ less grass, no shadows and no bloom.
 The movement rules are a separate, pure file, `Physics.leanjs`:
 
 ```text
-def step(p, inp, world, dt) :=
+def step(p : Player, inp : Input, world : Terrain, dt : Float) : Moved :=
   let jumped := inp.jump && p.onGround;
   …
-  { player: { p with x := at[0], z := at[1], vy := (if landed then 0 else vy), … },
-    events: events }
+  Moved { player: { p with x := at[0], z := at[1], vy := (if landed then 0 else vy), … },
+          events: events }
 ```
 
 Fighting follows the same pattern in `Combat.leanjs`:
 
 ```text
-def fight(s, p, inp, moves, world, dt) := do
+inductive Mode where
+  | Idle | Return | Chase | Windup | Strike | Recover | Hurt | Dead
+
+def fight(s : Battle, p : Player, inp : Attack, moves : Array String,
+          world : Terrain, dt : Float) : Outcome := do
   …
-  { state: {hero: h, foes: moved, bolts: flying}, events: evs, knock: knock, face: face,
-    rooted: h.down > 0 || h.swing >= 0 && h.swing < COMBO[h.combo].dur * 0.8 }
+  Outcome { state: Battle {hero: h, foes: moved, bolts: flying}, events: evs,
+            knock: knock, face: face,
+            rooted: h.down > 0 || h.swing >= 0 && h.swing < COMBO[h.combo].dur * 0.8 }
 ```
 
 The heroine's HP and combo, the monsters (slimes, wisps and golems that
 wander, notice her, wind up and strike) and her wind bolts are one state
 record. Each frame `fight` takes it with the player `step` just moved
 and the events it returned (the wind skill hurts monsters too), and
-gives back the next state, events for the renderer (`"swing"`,
-`"damage"`, `"defeat"`, `"hurt"` …), a knock to add to her velocity and
-whether she is rooted mid-swing. `World.leanjs` builds the monsters from
+gives back the next state, events for the renderer (an `inductive`:
+`Swung(…)`, `Damaged(…)`, `Defeated(…)`, `Wounded(…)` …, which
+`World.leanjs` takes apart with `match`), a knock to add to her
+velocity and whether she is rooted mid-swing. A monster's kind
+(`Slime | Wisp | Golem`) and what it is doing (`Mode`) are inductives
+too, so a misspelt state is a compile error rather than a comparison
+that is silently never true.
+
+Both rule files are typed throughout, and `breezehollow_spec` has Lean
+check them (see *Types through Lean* below). `World.leanjs` builds the monsters from
 primitives and animates them from their state. `CombatTest.leanjs`
 checks the combo, monster AI, guard time, defeat and respawn under
 node, as `PhysicsTest.leanjs` does for movement.
@@ -211,15 +223,47 @@ Shader source fits in ordinary string literals, which may span lines.
 Parse errors give the line, column, the source line and a caret at
 the deepest point the parser reached. `LeanJs.Check` names the
 enclosing `def` and catches wrong arity, bad record fields, unknown
-identifiers (suggesting the closest name) and typos in the fields of
-top-level object literals — see the LeanJs README for the details.
+identifiers (suggesting the closest name), typos in the fields of
+top-level object literals and of parameters with a record type
+(`f : Foe`), and a value used before its definition (which JavaScript
+only reports when the page loads) — see the LeanJs README for the
+details.
+
+## Types through Lean
+
+LeanJs has no type checker of its own, and doesn't need one: for pure
+rules, `LeanJs.Typed` translates the program to Lean and lets Lean's
+elaborator check it. Records become structures, inductives (with typed
+constructor fields) become inductives, `do` blocks become `Id.run do`
+with the same `let mut` / `for` / `if` / `match` statements, and arrays
+become `Array`s.
+
+```text
+$ lake exe leanjs_compile rules.leanjs --typed -o rules.js
+typed: in `walkStep`, …/typed.lean:226:187: error: Type mismatch
+    | …onGround := (landed || (ny - g)), gliding := …
+  ny - g
+has type
+  Float
+but is expected to have type
+  Bool
+```
+
+Parameters and integer-valued constants need their types
+(`def HERO_HP : Float := 100`); everything else is inferred. What has
+no type is refused instead of guessed at: `null` (write an inductive
+with an empty case, like `Keep | Face(angle : Float)`), `extern js`,
+assignment to fields. So the check fits the pure rule files
+(`Physics.leanjs`, `Combat.leanjs`), not the three.js shell.
+`--lean` prints the Lean source being checked.
 
 ## CLI trio
 
 Three executables share the LeanJs frontend:
 
-- **`leanjs_compile file.leanjs [-o out.js]`** — pure compiler
-  (parse + check + codegen). No execution.
+- **`leanjs_compile file.leanjs [--typed] [-o out.js]`** — pure compiler
+  (parse + check + codegen). No execution. `--typed` also has Lean
+  check the types.
 - **`leanjs_interp file.leanjs`** — pure-Lean evaluator via
   `LeanJs.Eval`. No node, no FFI.
 - **`leanjs_run file.leanjs`** — compile + execute via `node`.

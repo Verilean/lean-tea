@@ -762,16 +762,35 @@ end
 
 /-! ## Top-level defs and programs -/
 
+/-- A type, as written: names applied to arguments and arrows —
+    `Float`, `Array Foe`, `Float → Float → Float`, `(Float → Bool)`.
+    Kept as text; `LeanJs.Typed` hands it to Lean. A name at column 0
+    starts the next top-level form, so it is never part of a type. -/
+partial def parseType : Parser String := do
+  let atom : Parser String :=
+    (attempt do sym "("; let t ← parseType; sym ")"; return s!"({t})") <|> ident
+  let head ← atom
+  let args ← many (attempt do
+    if ← atLineStart then fail "type: next form"
+    atom)
+  let app := String.intercalate " " (head :: args.toList)
+  let rest ← optional (attempt do (sym "→" <|> sym "->"); parseType)
+  return match rest with
+    | some r => s!"{app} → {r}"
+    | none => app
+
+/-- `: Type` after a name, unless the colon starts `:=`. -/
+partial def parseTypeAnn : Parser (Option String) :=
+  (attempt do
+    sym ":"
+    match ← peek? with
+    | some '=' => fail "that was :="
+    | _ => return some (← parseType)) <|> pure none
+
 /-- A formal parameter `name` or `name : Type` (type optional). -/
 partial def parseParam : Parser Param := do
   let name ← ident
-  let type? ← (attempt do
-    sym ":"
-    -- Bail out if the `:` was actually the start of `:=`
-    match ← peek? with
-    | some '=' => fail "param: that was :="
-    | _ => let t ← ident; return some t
-  ) <|> pure none
+  let type? ← parseTypeAnn
   return { name, type? }
 
 partial def parseDef : Parser TopDef := do
@@ -790,13 +809,7 @@ partial def parseDef : Parser TopDef := do
     return ps.toList)
   -- Optional return-type annotation: `def f(...) : Int := …`
   -- `attempt` so that bare `:=` (no return type) doesn't consume the colon.
-  let retType? ← (attempt do
-    sym ":"
-    -- Refuse if the colon was actually the start of `:=`.
-    match ← peek? with
-    | some '=' => fail "ret-type: that was :="
-    | _ => let t ← ident; return some t
-  ) <|> pure none
+  let retType? ← parseTypeAnn
   sym ":="
   let body ← parseExpr
   match parens with
@@ -837,10 +850,10 @@ partial def parseCtorDecl : Parser CtorDecl := attempt do
   let name ← ident
   let args ← (do
     sym "("
-    let xs ← sepBy ident (sym ",")
+    let xs ← sepBy parseParam (sym ",")
     sym ")"
     return xs.toList) <|> pure []
-  return { name, arity := args.length }
+  return { name, arity := args.length, fields := args }
 
 partial def parseInductive : Parser TopDef := attempt do
   keyword "inductive"
@@ -925,7 +938,7 @@ partial def parseRecord : Parser TopDef := attempt do
   let parseField : Parser (String × String) := attempt do
     let fname ← ident
     sym ":"
-    let ftype ← ident
+    let ftype ← parseType
     return (fname, ftype)
   let fields ← sepBy parseField (sym ",")
   return .recordE name fields.toList
