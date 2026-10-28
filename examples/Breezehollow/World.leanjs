@@ -2,21 +2,24 @@
 --
 -- An anime-style open-world vignette on three.js: cel-shaded hills,
 -- a lake, floating islands, a wind shrine and collectible motes. You
--- run, sprint, jump, glide on updrafts and use a wind skill.
+-- run, sprint, jump, glide on updrafts, fly and use a wind skill.
 --
 -- Served by examples/Breezehollow/Serve.lean, which parses this file
 -- with LeanJs.Parser, checks it (arity / records) and compiles it to an
--- ES module at startup (`--dev` recompiles on every request). Every
--- asset is generated here from primitives — no models or textures.
+-- ES module at startup (`--dev` recompiles on every request). The world
+-- is generated here from primitives, without textures; the heroine is a
+-- glTF model put together in Blender (tools/heroine-vrm/).
 --
--- Controls: WASD move · Shift sprint · Space jump / glide · E wind
--- skill · F attune shrine · T return to shrine · mouse look · wheel zoom
+-- Controls: WASD move · Shift sprint · Space jump / glide · Q fly (Space
+-- up, C down, Shift boost) · E wind skill · F attune shrine · T return to
+-- shrine · mouse look · wheel zoom
 
 import * as THREE from "three"
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js"
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js"
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js"
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js"
 
 -- ───────────────────────── host primitives ─────────────────────────
 
@@ -595,110 +598,218 @@ def updateSparks(dt) := do
   sparkGeo.attributes.position.needsUpdate := true;
   null
 
--- ───────────────────────── the hero ─────────────────────────
--- An original chibi traveller: navy hair, teal coat, white cape, and a
--- pair of leaf-shaped glider wings that unfold in the air.
+-- ───────────────────────── the heroine ─────────────────────────
+-- Put together in Blender from two freely licensed sample avatars
+-- (tools/heroine-vrm/) and given tools/blender/heroine.py's skeleton:
+-- examples/Breezehollow/heroine.glb, which the server serves as
+-- /heroine.glb. It is a set of skinned meshes with idle, run, glide,
+-- hover, fly and fall clips. Her materials are swapped for the world's
+-- toon ones, each with an outline that follows the skin, and her hair and
+-- skirt are bone chains swung by springs every frame
+-- (`updateSprings`).
 
-def SKIN := 0xffe1cf
-def HAIR := 0x263a6b
-def COAT := 0x1fa6a0
-def TRIM := 0xf4f1e8
+def HERO_SCALE := 1.15
+-- her hips, in metres: the pivot she leans about when gliding or flying
+def HIPS := 1.0
+extern js "(e) => console.error(e)" logError
+-- An inverted hull that stays a constant width on a skinned mesh: push
+-- each vertex out along its (unskinned) normal before skinning.
+extern js "(m, w) => { m.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>' + String.fromCharCode(10) + 'transformed += normal * ' + w.toFixed(4) + ';'); }; return m; }" grownHull
+-- The same for a surface cut out by its texture's alpha (hair tips, lace):
+-- the hull keeps the cut-outs but not the texture's colours.
+extern js "(m, w) => { m.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>' + String.fromCharCode(10) + 'transformed += normal * ' + w.toFixed(4) + ';'); sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', 'diffuseColor.a *= texture2D(map, vMapUv).a;'); }; return m; }" grownCutHull
 
-def capsule(r, len) := new THREE.CapsuleGeometry(r, len, 4, 10)
+-- Outlines tinted to what they go round, thinner on the face, as anime
+-- toon shading draws them. (color, width)
+def HULL_STYLE := {
+  Face: [0x7a4a48, 0.0030], Neck: [0x7a4a48, 0.0030], Skin: [0x7a4a48, 0.0035],
+  Hair: [0x6a6488, 0.0040], Default: [0x3a3058, 0.0045]}
+def hullStyle(name) := if HULL_STYLE[name] then HULL_STYLE[name] else HULL_STYLE.Default
+def HULLS := {}
+def hullFor(name, old) := do
+  let st := hullStyle(name);
+  if old.alphaTest > 0 then
+    grownCutHull(new THREE.MeshBasicMaterial({color: st[0], side: THREE.BackSide, map: old.map, alphaTest: old.alphaTest}), st[1])
+  else (do
+    if !HULLS[name] then (HULLS[name] := grownHull(new THREE.MeshBasicMaterial({color: st[0], side: THREE.BackSide}), st[1]));
+    HULLS[name])
 
-def limb(r, len, color, x, y) := do
-  let pivot := new THREE.Group();
-  let part := outlined(capsule(r, len), color, 1.1);
-  part.position.y := -len / 2 - r * 0.5;
-  pivot.add(part);
-  pivot.position.set(x, y, 0);
-  pivot
-
-def wingGeo() := do
-  let s := new THREE.Shape();
-  s.moveTo(0, 0);
-  s.quadraticCurveTo(1.2, 0.9, 2.6, 0.5);
-  s.quadraticCurveTo(1.6, -0.1, 0, -0.4);
-  new THREE.ShapeGeometry(s)
+-- Rim light: a sky-tinted edge on the side away from the camera's view,
+-- added after the toon lighting.
+extern js "(m, color, k) => { m.onBeforeCompile = (sh) => { sh.uniforms.rimColor = { value: new THREE.Color(color).multiplyScalar(k) }; sh.fragmentShader = 'uniform vec3 rimColor;' + String.fromCharCode(10) + sh.fragmentShader.replace('#include <opaque_fragment>', 'float rimF = 1.0 - max(dot(normalize(vViewPosition), normal), 0.0); outgoingLight += rimColor * smoothstep(0.62, 0.92, rimF);' + String.fromCharCode(10) + '#include <opaque_fragment>'); }; return m; }" rimLit
 
 def hero := do
   let root := new THREE.Group();
-  let body := new THREE.Group();
-  root.add(body);
-  let legL := limb(0.17, 0.45, 0x2b2b3d, -0.18, 0.78);
-  let legR := limb(0.17, 0.45, 0x2b2b3d, 0.18, 0.78);
-  body.add(legL); body.add(legR);
-  let torso := outlined(capsule(0.34, 0.42), COAT, 1.08);
-  torso.position.y := 1.12;
-  body.add(torso);
-  let belt := new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.05, 6, 20), toon(0xc9a84a));
-  belt.rotation.x := PI / 2;
-  belt.position.y := 0.98;
-  body.add(belt);
-  let collar := outlined(new THREE.CylinderGeometry(0.22, 0.3, 0.16, 12), TRIM, 1.08);
-  collar.position.y := 1.5;
-  body.add(collar);
-  let armL := limb(0.11, 0.42, COAT, -0.44, 1.42);
-  let armR := limb(0.11, 0.42, COAT, 0.44, 1.42);
-  body.add(armL); body.add(armR);
-  -- cape: a thin box hinged at the shoulders
-  let capePivot := new THREE.Group();
-  capePivot.position.set(0, 1.5, -0.28);
-  let cape := new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.46, 0.9, 12, 1, true, PI - 0.9, 1.8),
-    new THREE.MeshToonMaterial({color: 0xdcefff, gradientMap: toonRamp, side: THREE.DoubleSide}));
-  cape.position.set(0, -0.45, 0.28);
-  capePivot.add(cape);
-  body.add(capePivot);
-  -- head
-  let head := new THREE.Group();
-  head.position.y := 1.98;
-  body.add(head);
-  let face := outlined(new THREE.SphereGeometry(0.42, 20, 16), SKIN, 1.05);
-  face.children[0].material.emissive.set(0x4a3028);
-  head.add(face);
-  let hairCap := outlined(new THREE.SphereGeometry(0.46, 18, 14, 0, TAU, 0, 1.9), HAIR, 1.04);
-  hairCap.rotation.x := -0.35;
-  hairCap.position.set(0, 0.04, -0.03);
-  head.add(hairCap);
-  for k in range(0, 7, 1) do (
-    let spike := outlined(new THREE.ConeGeometry(0.1, 0.3, 6), HAIR, 1.06);
-    let a := (k - 3) * 0.32;
-    spike.position.set(Math.sin(a) * 0.3, 0.22, 0.33 + Math.cos(a) * 0.02);
-    spike.rotation.set(2.6, 0, a * 0.6);
-    head.add(spike)
-  );
-  let tail := outlined(new THREE.ConeGeometry(0.16, 0.8, 7), HAIR, 1.06);
-  tail.position.set(0, -0.15, -0.46);
-  tail.rotation.x := -2.6;
-  head.add(tail);
-  -- big anime eyes with highlights
-  for side in [-1, 1] do (
-    let eye := new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 10), new THREE.MeshBasicMaterial({color: 0x1d3f6e}));
-    eye.scale.set(0.8, 1.25, 0.4);
-    eye.position.set(side * 0.15, -0.02, 0.38);
-    head.add(eye);
-    let shine := new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), new THREE.MeshBasicMaterial({color: 0xffffff}));
-    shine.position.set(side * 0.15 + 0.025, 0.03, 0.415);
-    head.add(shine)
-  );
-  -- glider wings, hidden until gliding
-  let wings := new THREE.Group();
-  wings.position.set(0, 1.45, -0.32);
-  let wmat := new THREE.MeshToonMaterial({color: 0xf6fbff, gradientMap: toonRamp, side: THREE.DoubleSide,
-                                          emissive: 0x335566});
-  for side in [-1, 1] do (
-    let w := new THREE.Mesh(wingGeo(), wmat);
-    w.scale.set(side, 1, 1);
-    w.rotation.y := side * 0.25;
-    wings.add(w)
-  );
-  wings.visible := false;
-  body.add(wings);
-  -- cast shadows on the ground, but don't self-shadow (hair would darken the face)
-  root.traverse(fun (o) => if o.isMesh then (o.castShadow := true; o.receiveShadow := false));
+  let pivot := new THREE.Group();
+  pivot.position.y := HIPS * HERO_SCALE;
+  root.add(pivot);
   scene.add(root);
-  {root: root, body: body, legL: legL, legR: legR, armL: armL, armR: armR,
-   cape: capePivot, head: head, wings: wings}
+  {root: root, pivot: pivot, model: null, mixer: null, actions: {}, current: "",
+   springs: [], colliders: []}
+
+-- Materials are told apart by name, up to the first dot ("Hair.002" is
+-- hair): Face, Skin, Neck, Hair, Gem, Eye (eyes, brows, lashes and mouth,
+-- drawn flat with no outline), and anything else (clothes). See-through
+-- surfaces get no outline either.
+def dressUp(m) := do
+  let old := m.material;
+  let name := old.name.split(".")[0];
+  let color := old.color;
+  let map := old.map;
+  let cut := {map: map, color: color, transparent: old.transparent, alphaTest: old.alphaTest, side: old.side};
+  m.material := if name == "Gem" then new THREE.MeshStandardMaterial({color: color, emissive: color, emissiveIntensity: 1.4})
+                else if name == "Eye" then new THREE.MeshBasicMaterial(cut)
+                else rimLit(new THREE.MeshToonMaterial({ cut with gradientMap := toonRamp }), 0xcfe6ff,
+                            (if name == "Face" || name == "Neck" then 0.25 else 0.45));
+  -- warm the shadows on skin; the painted face keeps its own colours
+  if name == "Skin" || name == "Neck" then m.material.emissive.set(0x3a2420);
+  if name == "Face" then (
+    m.material.emissive.set(0x5a5a5a);
+    m.material.emissiveMap := map);
+  m.castShadow := name != "Eye";
+  m.receiveShadow := false;
+  -- skinned bounds don't follow the animation
+  m.frustumCulled := false;
+  if name != "Gem" && name != "Eye" && !(old.transparent && old.alphaTest == 0) then (
+    let hull := new THREE.SkinnedMesh(m.geometry, hullFor(name, old));
+    hull.bind(m.skeleton, m.bindMatrix);
+    hull.frustumCulled := false;
+    m.add(hull));
+  null
+
+-- Spring chains: bones `<name>_0` … `<name>_<n>` (the last is a tip).
+-- stiff pulls a bone back to its rest direction, drag damps it, grav
+-- pulls it down; r is the bone's thickness against the colliders.
+def CHAINS := [
+  {name: "hair_C", n: 4, stiff: 0.8, drag: 0.30, grav: 0.6, r: 0.025},
+  {name: "hair_L", n: 4, stiff: 0.8, drag: 0.30, grav: 0.6, r: 0.025},
+  {name: "hair_R", n: 4, stiff: 0.8, drag: 0.30, grav: 0.6, r: 0.025},
+  {name: "lock_L", n: 3, stiff: 1.3, drag: 0.40, grav: 0.4, r: 0.02},
+  {name: "lock_R", n: 3, stiff: 1.3, drag: 0.40, grav: 0.4, r: 0.02},
+  {name: "coat_FL", n: 3, stiff: 1.5, drag: 0.45, grav: 0.4, r: 0.03},
+  {name: "coat_BL", n: 3, stiff: 1.5, drag: 0.45, grav: 0.4, r: 0.03},
+  {name: "coat_B", n: 3, stiff: 1.5, drag: 0.45, grav: 0.4, r: 0.03},
+  {name: "coat_BR", n: 3, stiff: 1.5, drag: 0.45, grav: 0.4, r: 0.03},
+  {name: "coat_FR", n: 3, stiff: 1.5, drag: 0.45, grav: 0.4, r: 0.03}]
+
+-- Spheres of her body the chains can't pass through: the bone that
+-- carries it, its centre in her rest pose (model space, metres), radius.
+def COLLIDERS := [
+  {bone: "head", at: [0, 1.69, 0], r: 0.13},
+  {bone: "neck", at: [0, 1.53, 0], r: 0.055},
+  {bone: "chest", at: [0.05, 1.36, 0], r: 0.09},
+  {bone: "chest", at: [-0.05, 1.36, 0], r: 0.09},
+  {bone: "spine", at: [0.035, 1.20, 0], r: 0.075},
+  {bone: "spine", at: [-0.035, 1.20, 0], r: 0.075},
+  {bone: "hips", at: [0.06, 1.04, 0], r: 0.10},
+  {bone: "hips", at: [-0.06, 1.04, 0], r: 0.10},
+  {bone: "thigh_L", at: [0.075, 0.88, 0], r: 0.085},
+  {bone: "thigh_L", at: [0.068, 0.72, 0], r: 0.07},
+  {bone: "thigh_R", at: [-0.075, 0.88, 0], r: 0.085},
+  {bone: "thigh_R", at: [-0.068, 0.72, 0], r: 0.07},
+  {bone: "shin_L", at: [0.056, 0.45, 0], r: 0.06},
+  {bone: "shin_R", at: [-0.056, 0.45, 0], r: 0.06}]
+
+def buildSprings(model) := do
+  let bones := {};
+  model.traverse(fun (o) => if o.isBone then (bones[o.name] := o));
+  hero.root.updateMatrixWorld(true);
+  for c in CHAINS do (
+    for i in range(0, c.n, 1) do (
+      let bone := bones[c.name + "_" + i];
+      let child := bones[c.name + "_" + (i + 1)];
+      if bone && child then (
+        let head := bone.getWorldPosition(new THREE.Vector3());
+        let tail := child.getWorldPosition(new THREE.Vector3());
+        push(hero.springs, {bone: bone, rest: bone.quaternion.clone(),
+                            toTail: child.position.clone().normalize(), len: head.distanceTo(tail),
+                            tail: tail, prev: tail.clone(),
+                            stiff: c.stiff, drag: c.drag, grav: c.grav, r: c.r * HERO_SCALE}))
+    )
+  );
+  for c in COLLIDERS do (
+    let bone := bones[c.bone];
+    if bone then (
+      let w := model.localToWorld(new THREE.Vector3(c.at[0], c.at[1], c.at[2]));
+      push(hero.colliders, {bone: bone, local: bone.worldToLocal(w), r: c.r * HERO_SCALE,
+                            at: new THREE.Vector3()}))
+  );
+  null
+
+-- One verlet step per spring bone, root to tip: the tail keeps its
+-- momentum, is pulled back toward the bone's rest direction and down,
+-- stays at the bone's length and outside her body; then the bone turns
+-- to point at it. `moved` is how far she moved this frame: the tails are
+-- carried most of that way, so only part of her speed reads as wind.
+def updateSprings(dt, moved) := do
+  let carry := moved.clone().multiplyScalar(0.7);
+  let teleport := moved.length() > 4;
+  for c in hero.colliders do (c.at.copy(c.local).applyMatrix4(c.bone.matrixWorld));
+  for s in hero.springs do (
+    let head := s.bone.getWorldPosition(new THREE.Vector3());
+    let parentQ := s.bone.parent.getWorldQuaternion(new THREE.Quaternion());
+    let restQ := parentQ.clone().multiply(s.rest);
+    let restDir := s.toTail.clone().applyQuaternion(restQ);
+    if teleport then (
+      s.tail.copy(head).addScaledVector(restDir, s.len);
+      s.prev.copy(s.tail))
+    else (
+      s.tail.add(carry);
+      s.prev.add(carry));
+    let next := s.tail.clone().addScaledVector(s.tail.clone().sub(s.prev), 1 - s.drag);
+    next.addScaledVector(restDir, s.stiff * dt);
+    next.y := next.y - s.grav * dt;
+    next.sub(head).normalize().multiplyScalar(s.len).add(head);
+    for c in hero.colliders do (
+      let d := next.clone().sub(c.at);
+      let minD := c.r + s.r;
+      if d.length() < minD && d.length() > 0.00001 then (
+        next.copy(c.at).addScaledVector(d.normalize(), minD);
+        next.sub(head).normalize().multiplyScalar(s.len).add(head))
+    );
+    s.prev.copy(s.tail);
+    s.tail.copy(next);
+    let q := new THREE.Quaternion().setFromUnitVectors(restDir, next.clone().sub(head).normalize());
+    s.bone.quaternion.copy(parentQ.invert().multiply(q.multiply(restQ)));
+    s.bone.updateMatrixWorld(true)
+  );
+  null
+
+-- Cross-fade to the clip `name` (no-op if it is already playing).
+def play(name) := do
+  if hero.current != name then (
+    let next := hero.actions[name];
+    next.reset();
+    next.fadeIn(0.25);
+    next.play();
+    if hero.current != "" then hero.actions[hero.current].fadeOut(0.25);
+    hero.current := name);
+  null
+
+def setupHeroine(gltf) := do
+  let model := gltf.scene;
+  model.scale.setScalar(HERO_SCALE);
+  model.position.y := -HIPS * HERO_SCALE;
+  let meshes := [];
+  model.traverse(fun (o) => if o.isSkinnedMesh then push(meshes, o));
+  for m in meshes do (dressUp(m));
+  hero.pivot.add(model);
+  hero.model := model;
+  let mixer := new THREE.AnimationMixer(model);
+  for clip in gltf.animations do (hero.actions[clip.name] := mixer.clipAction(clip));
+  hero.mixer := mixer;
+  buildSprings(model);
+  play("idle");
+  toggleClass(byId("loading"), "hidden", true);
+  null
+
+def loadHeroine() := do
+  let loader := new GLTFLoader();
+  loader.load("/heroine.glb", fun (gltf) => setupHeroine(gltf), fun (e) => null, fun (e) => do
+    logError(e);
+    toggleClass(byId("loading"), "hidden", true);
+    null);
+  null
 
 -- ───────────────────────── game state ─────────────────────────
 -- The movement rules live in Physics.leanjs as a pure
@@ -707,7 +818,7 @@ def hero := do
 include "Physics.leanjs"
 
 def G := {p: newPlayer(0, 4, 30), phase: 0, motes: 0, toastT: 0}
-def CAM := {yaw: 0.2, pitch: 0.32, dist: 10, x: 0, y: 8, z: 40, dragging: false}
+def CAM := {yaw: 0.2, pitch: 0.32, dist: 7.5, x: 0, y: 8, z: 40, dragging: false}
 def keys := {}
 def pressed := {}
 
@@ -771,9 +882,12 @@ def readInput() := {
   kx: (if keys["d"] then 1 else 0) - (if keys["a"] then 1 else 0),
   kz: (if keys["w"] then 1 else 0) - (if keys["s"] then 1 else 0),
   yaw: CAM.yaw,
+  pitch: CAM.pitch,
   sprint: keys["shift"] == true,
   jump: consume(" "),
-  skill: consume("e") }
+  skill: consume("e"),
+  fly: consume("q"),
+  rise: (if keys[" "] then 1 else 0) - (if keys["c"] then 1 else 0) }
 
 def toast(msg) := do
   let el := byId("toast");
@@ -790,6 +904,7 @@ def updatePlayer(dt) := do
   let p := G.p;
   for ev in r.events do (
     if ev == "glide" then burst(p.x, p.y + 1.4, p.z, 14, 3);
+    if ev == "fly" then ringBurst(p.x, p.y, p.z, 60, 6);
     if ev == "skill" then ringBurst(p.x, p.y, p.z, 90, 9);
     if ev == "land" then burst(p.x, p.y + 0.1, p.z, 6, 2)
   );
@@ -820,34 +935,41 @@ def updatePlayer(dt) := do
   null
 
 def animateHero(dt, t) := do
-  let speed := Math.hypot(G.p.vx, G.p.vz);
-  let amt := if G.p.onGround then Math.min(1, speed / 7) else 0;
-  G.phase := G.phase + dt * (4 + speed * 1.1);
-  let s := Math.sin(G.phase);
-  hero.root.position.set(G.p.x, G.p.y, G.p.z);
-  hero.root.rotation.y := G.p.facing;
-  hero.legL.rotation.x := if G.p.onGround then s * 0.9 * amt else -0.6;
-  hero.legR.rotation.x := if G.p.onGround then -s * 0.9 * amt else 0.3;
-  hero.armL.rotation.x := if G.p.gliding then 0 else -s * 0.8 * amt;
-  hero.armR.rotation.x := if G.p.gliding then 0 else s * 0.8 * amt;
-  hero.armL.rotation.z := if G.p.gliding then -1.3 else -0.12;
-  hero.armR.rotation.z := if G.p.gliding then 1.3 else 0.12;
-  hero.body.position.y := if G.p.onGround then Math.abs(s) * 0.08 * amt else 0;
-  hero.body.rotation.x := lerp(hero.body.rotation.x, (if G.p.gliding then 0.9 else speed * 0.025), Math.min(1, 8 * dt));
-  hero.cape.rotation.x := 0.15 + speed * 0.06 + Math.sin(t * 7) * 0.06 * (0.3 + amt) + (if G.p.onGround then 0 else 0.5);
-  hero.head.rotation.z := Math.sin(t * 1.3) * 0.03;
-  hero.wings.visible := G.p.gliding;
-  hero.wings.scale.setScalar(if G.p.gliding then 1 else 0.01);
+  let p := G.p;
+  let moved := new THREE.Vector3(p.x, p.y, p.z).sub(hero.root.position);
+  hero.root.position.set(p.x, p.y, p.z);
+  let turnRate := turn(hero.root.rotation.y, p.facing) / dt;
+  hero.root.rotation.y := p.facing;
+  if hero.mixer then (
+    let speed := Math.hypot(p.vx, p.vz);
+    play(if p.flying then (if speed > 9 then "fly" else "hover")
+         else if p.gliding then "glide"
+         else if !p.onGround then "fall"
+         else if speed > 0.8 then "run" else "idle");
+    hero.actions["run"].timeScale := clamp(speed / 7.5, 0.75, 1.7);
+    -- lean forward with speed when flying (less when climbing), bank into turns
+    let lean := if p.flying then clamp((speed - 6) / 20, 0, 1) * 1.25 - clamp(p.vy / 20, -0.3, 0.4)
+                else if p.gliding then 0.9 else 0;
+    let bank := if p.flying || p.gliding then clamp(-turnRate * 0.15, -0.7, 0.7) else 0;
+    let k := Math.min(1, 5 * dt);
+    hero.pivot.rotation.x := lerp(hero.pivot.rotation.x, lean, k);
+    hero.pivot.rotation.z := lerp(hero.pivot.rotation.z, bank, k);
+    hero.mixer.update(dt);
+    hero.root.updateMatrixWorld(true);
+    updateSprings(dt, moved));
   null
 
 def updateCamera(dt) := do
   let tx := G.p.x;
-  let ty := G.p.y + 1.7;
   let tz := G.p.z;
   let cp := Math.cos(CAM.pitch);
-  let wx := tx + Math.sin(CAM.yaw) * cp * CAM.dist;
-  let wz := tz + Math.cos(CAM.yaw) * cp * CAM.dist;
-  let wy := Math.max(ty + Math.sin(CAM.pitch) * CAM.dist, Math.max(heightAt(wx, wz), WATER_Y) + 0.8);
+  -- pull back a little when flying fast
+  let dist := CAM.dist + (if G.p.flying then Math.hypot(G.p.vx, G.p.vz) * 0.12 else 0);
+  -- look at her shoulders, or at her face when zoomed right in
+  let ty := G.p.y + lerp(2.0, 1.7, clamp((dist - 2.2) / 3, 0, 1));
+  let wx := tx + Math.sin(CAM.yaw) * cp * dist;
+  let wz := tz + Math.cos(CAM.yaw) * cp * dist;
+  let wy := Math.max(ty + Math.sin(CAM.pitch) * dist, Math.max(heightAt(wx, wz), WATER_Y) + 0.8);
   let k := Math.min(1, 10 * dt);
   CAM.x := lerp(CAM.x, wx, k);
   CAM.y := lerp(CAM.y, wy, k);
@@ -876,7 +998,7 @@ def updateWorld(dt, t) := do
     if c.position.x > 420 then (c.position.x := -420)
   );
   -- wind streaks around the hero while gliding or sprinting
-  if (G.p.gliding || Math.hypot(G.p.vx, G.p.vz) > 11) && Math.random() < dt * 30 then
+  if (G.p.gliding || G.p.flying || Math.hypot(G.p.vx, G.p.vz) > 11) && Math.random() < dt * 30 then
     emit(G.p.x + (Math.random() - 0.5) * 3, G.p.y + Math.random() * 2, G.p.z + (Math.random() - 0.5) * 3,
          -G.p.vx * 0.3, 0.5, -G.p.vz * 0.3, 0.5);
   null
@@ -961,7 +1083,7 @@ def updateHud(dt) := do
   setText(byId("motes"), "" + G.motes + " / " + motes.length);
   setText(byId("skill-cd"), (if G.p.skillCd > 0 then fmt0(Math.ceil(G.p.skillCd)) else ""));
   toggleClass(byId("skill"), "cooling", G.p.skillCd > 0);
-  setText(byId("state"), (if G.p.gliding then "Gliding" else if !G.p.onGround then "Airborne" else if Math.hypot(G.p.vx, G.p.vz) > 11 then "Sprinting" else ""));
+  setText(byId("state"), (if G.p.flying then "Flying" else if G.p.gliding then "Gliding" else if !G.p.onGround then "Airborne" else if Math.hypot(G.p.vx, G.p.vz) > 11 then "Sprinting" else ""));
   if G.toastT > 0 then (
     G.toastT := G.toastT - dt;
     if G.toastT <= 0 then toggleClass(byId("toast"), "show", false));
@@ -989,7 +1111,7 @@ def setupInput() := do
     null);
   listen(canvas, "wheel", fun (e) => do
     e.preventDefault();
-    CAM.dist := clamp(CAM.dist + e.deltaY * 0.01, 4, 22);
+    CAM.dist := clamp(CAM.dist + e.deltaY * 0.01, 2.2, 22);
     null);
   null
 
@@ -1023,6 +1145,7 @@ def frame(ms) := do
   updateHud(dt);
   composer.render();
   win.__breezehollow := {x: G.p.x, y: G.p.y, z: G.p.z, stamina: G.p.stamina, gliding: G.p.gliding,
+                         flying: G.p.flying, heroine: hero.mixer != null,
                          motes: G.motes, fps: clock.fps, attuned: SHRINE.attuned};
   raf(frame)
 
@@ -1050,7 +1173,7 @@ def boot() := do
   resize();
   G.p := { G.p with y := heightAt(G.p.x, G.p.z) + 0.1 };
   clock.last := now();
-  toggleClass(byId("loading"), "hidden", true);
+  loadHeroine();
   raf(frame)
 
 boot()

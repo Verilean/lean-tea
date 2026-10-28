@@ -20,14 +20,14 @@ def flat := {
 def updraft := { flat with lift := fun (x, z, y) => 1 }
 def wall := { flat with push := fun (x, z, y) => [Math.min(x, 3), z] }
 
-def idle := {kx: 0, kz: 0, yaw: 0, sprint: false, jump: false, skill: false}
+def idle := {kx: 0, kz: 0, yaw: 0, pitch: LEVEL_PITCH, sprint: false, jump: false, skill: false, fly: false, rise: 0}
 def forward := { idle with kz := 1 }
 
 -- Run `n` frames holding `inp` (edge keys only on the first frame).
 def hold(p, inp, world, n) := do
   let mut q := p;
   for i in range(0, n) do (
-    q := step(q, (if i == 0 then inp else { inp with jump := false, skill := false }), world, DT).player
+    q := step(q, (if i == 0 then inp else { inp with jump := false, skill := false, fly := false }), world, DT).player
   );
   q
 
@@ -73,6 +73,17 @@ def jumpEvents := do
   );
   evs.join(",")
 
+-- flight: Q, then whatever is held
+def flyIn := { idle with fly := true }
+def takenOff := hold(standing, flyIn, flat, 60)
+def hovering := hold(takenOff, idle, flat, 120)
+def flownFwd := hold(takenOff, forward, flat, 120)
+def risen := hold(takenOff, { idle with rise := 1 }, flat, 60)
+def sunk := hold(takenOff, { idle with rise := -1 }, flat, 300)
+def dived := hold(risen, { forward with pitch := 1.0 }, flat, 20)
+def boosted := hold(takenOff, { forward with sprint := true }, flat, 60)
+def droppedOut := hold(takenOff, flyIn, flat, 180)
+
 def near(a, b, tol) := Math.abs(a - b) <= tol
 
 def check(name, ok, detail) := if ok then "PASS " + name else "FAIL " + name + " " + detail
@@ -94,5 +105,13 @@ def main := [
   check("wind skill is ignored while cooling down", !skillAgain.events.includes("skill"), JSON.stringify(skillAgain.events)),
   check("obstacles stop you", near(blocked.x, 3, 0.001), "" + blocked.x),
   check("a jump emits jump then land once", jumpEvents == "jump,land", jumpEvents),
+  check("Q takes off", takenOff.flying && takenOff.y > 1, JSON.stringify(takenOff)),
+  check("flight holds altitude with no input", hovering.flying && Math.abs(hovering.vy) < 0.2, JSON.stringify(hovering)),
+  check("flying forward reaches FLY", near(Math.hypot(flownFwd.vx, flownFwd.vz), FLY, 0.3), JSON.stringify(flownFwd)),
+  check("Space climbs", risen.y > takenOff.y + 4, "" + risen.y + " vs " + takenOff.y),
+  check("C sinks until she lands", sunk.onGround && !sunk.flying && sunk.y == 0, JSON.stringify(sunk)),
+  check("W with the camera looking down dives", dived.vy < -3, "" + dived.vy),
+  check("boost drains FLY_DRAIN per second", near(boosted.stamina, MAX_STAMINA - FLY_DRAIN, 1.5), "" + boosted.stamina),
+  check("Q again drops out of flight and lands", droppedOut.onGround && !droppedOut.flying, JSON.stringify(droppedOut)),
   check("step does not mutate its input", standing.y == 0 && standing.vy == 0 && standing.onGround, JSON.stringify(standing))
 ].join("\n")
