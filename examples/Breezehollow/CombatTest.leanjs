@@ -1,0 +1,167 @@
+-- examples/Breezehollow/CombatTest.leanjs — property checks for Combat.fight.
+--
+-- Like PhysicsTest.leanjs: `fight` is a pure function, so each check sets
+-- up a heroine and a few monsters on flat ground, runs some frames and
+-- looks at the result. breezehollow_spec compiles this file and runs it
+-- under node; every line of output is `PASS <name>` or `FAIL <name> …`.
+
+include "Physics.leanjs"
+include "Combat.leanjs"
+
+extern js "(a, b) => { const r = []; for (let i = a; i < b; i++) r.push(i); return r; }" range
+
+def DT := 1 / 60
+
+def flat := {
+  ground: fun (x, z, y) => 0,
+  lift: fun (x, z, y) => 0,
+  wade: fun (x, z) => false,
+  push: fun (x, z, y) => [x, z] }
+
+def calm := {attack: false, yaw: 0, pitch: LEVEL_PITCH}
+def press := { calm with attack := true }
+
+-- she stands at the origin facing +z
+def her := { newPlayer(0, 0, 0) with onGround := true, facing: 0 }
+def flyer := { her with y := 10, flying := true, onGround := false }
+
+def setup(foes) := {hero: newHero(), foes: foes, bolts: []}
+
+-- Run `n` frames; `inputs(i)` is the input of frame i. Collects events.
+def run(s, p, inputs, n) := do
+  let mut st := s;
+  let mut evs := [];
+  let mut last := null;
+  for i in range(0, n) do (
+    let r := fight(st, p, inputs(i), [], flat, DT);
+    st := r.state;
+    evs := evs.concat(r.events);
+    last := r
+  );
+  {state: st, events: evs, last: last}
+
+def idleFor(s, p, n) := run(s, p, fun (i) => calm, n)
+def evNames(evs) := evs.map(fun (e) => e.ev)
+def count(evs, name) := evs.filter(fun (e) => e.ev == name).length
+def foe0(r) := r.state.foes[0]
+
+-- a slime that will notice her, and one too far away to
+def near := idleFor(setup([newFoe(1, "slime", 0, 0, 10)]), her, 30)
+def far := idleFor(setup([newFoe(1, "slime", 0, 0, 40)]), her, 30)
+-- a slime right in front of her: it winds up and strikes
+def struck := idleFor(setup([newFoe(1, "slime", 0, 0, 1.5)]), her, 90)
+def struckTwice := idleFor(setup([{ newFoe(1, "slime", 0, 0, 1.5) with state := "windup" }]), her, 50)
+
+-- three presses, each just after the last swing landed
+def comboInputs(i) := if i == 0 || i == 24 || i == 48 then press else calm
+-- (both monsters are kept busy recovering so they don't strike back)
+def busy(f) := { f with state := "recover", t := -99 }
+def combo := run(setup([busy(newFoe(1, "golem", 0, 0, 2)), busy(newFoe(2, "slime", 0, 0, -2.5))]), her, comboInputs, 100)
+def lateInputs(i) := if i == 0 || i == 90 then press else calm
+def late := run(setup([]), her, lateInputs, 100)
+
+-- a swing turns her toward a slime beside her
+def assist := fight(setup([newFoe(1, "slime", 3, 0, 0)]), her, press, [], flat, DT)
+
+-- a slime with 10 hp left: one swing defeats it; it comes back later
+def weak := setup([{ newFoe(1, "slime", 0, 0, 1.5) with hp := 10 }])
+def defeated := run(weak, her, fun (i) => if i == 0 then press else calm, 30)
+def respawned := idleFor(defeated.state, { her with x := 200 }, RESPAWN * 60 + 10)
+
+-- hits interrupt a slime's wind-up but not a golem's
+def windingSlime := { newFoe(1, "slime", 0, 0, 1.8) with state := "windup" }
+def windingGolem := { newFoe(2, "golem", 0, 0, 2.2) with state := "windup" }
+def interrupted := run(setup([windingSlime]), her, fun (i) => if i == 0 then press else calm, 20)
+def armoured := run(setup([windingGolem]), her, fun (i) => if i == 0 then press else calm, 80)
+
+-- the wind skill hurts monsters round her, not ones further off
+def blown := fight(setup([newFoe(1, "slime", 3, 0, 0), newFoe(2, "slime", -2, 0, 2), newFoe(3, "slime", 15, 0, 0)]),
+                   her, calm, ["skill"], flat, DT)
+
+-- in flight a press fires a bolt that finds a wisp ahead (yaw π: camera
+-- behind her, looking toward +z)
+def aimAhead := {attack: false, yaw: Math.PI, pitch: LEVEL_PITCH}
+def bolted := run(setup([{ newFoe(1, "wisp", 0, 11, 12) with state := "recover" }]), flyer,
+                  fun (i) => if i == 0 then { aimAhead with attack := true } else aimAhead, 40)
+
+-- out of HP: down, the monsters lose interest, back on her feet after DOWN_T
+def doomed := { setup([{ newFoe(1, "slime", 0, 0, 1.5) with state := "windup", t := 0.55 }]) with
+                hero := { newHero() with hp := 5 } }
+def downed := idleFor(doomed, her, 20)
+def lonely := idleFor(downed.state, her, 60)
+def revived := idleFor(downed.state, her, DOWN_T * 60 + 5)
+
+-- a chasing slime gives up past its leash and heads home
+def leashed := idleFor(setup([{ newFoe(1, "slime", 0, 0, 0) with x := 30, state := "chase" }]), { her with x := 40 }, 300)
+
+-- HP comes back once nothing has happened for CALM seconds
+def resting := idleFor({ setup([]) with hero := { newHero() with hp := 50, calm := 0 } }, her, (CALM + 2) * 60)
+
+-- two slimes on the same spot are pushed apart; one can't stand inside her
+def crowded := idleFor(setup([busy(newFoe(1, "slime", 5, 0, 5)), busy(newFoe(2, "slime", 5.1, 0, 5))]), { her with x := 40 }, 30)
+def inside := idleFor(setup([busy(newFoe(1, "slime", 0.2, 0, 0.1))]), her, 5)
+
+def frozen := setup([newFoe(1, "slime", 0, 0, 1.5)])
+def afterFrozen := idleFor(frozen, her, 60)
+
+def near1(a, b, tol) := Math.abs(a - b) <= tol
+
+def check(name, ok, detail) := if ok then "PASS " + name else "FAIL " + name + " " + detail
+
+def main := [
+  check("a slime within aggro notices and closes in",
+        foe0(near).state == "chase" && foe0(near).z < 9.5 && count(near.events, "notice") == 1, JSON.stringify(foe0(near))),
+  check("a slime beyond aggro keeps wandering", foe0(far).state == "idle", JSON.stringify(foe0(far))),
+  check("a strike in contact hurts her by the monster's damage",
+        near1(struck.state.hero.hp, HERO_HP - KINDS.slime.dmg, 0.001) && count(struck.events, "hurt") == 1,
+        JSON.stringify(struck.state.hero)),
+  check("she can't be hurt again while guarded",
+        count(struckTwice.events, "hurt") == 1, JSON.stringify(evNames(struckTwice.events))),
+  check("three timed presses chain the combo 0, 1, 2",
+        combo.events.filter(fun (e) => e.ev == "swing").map(fun (e) => e.combo).join(",") == "0,1,2",
+        JSON.stringify(evNames(combo.events))),
+  check("the combo deals 12 + 12 + 24 to the monster in front",
+        near1(foe0(combo).hp, KINDS.golem.hp - 48, 0.001), JSON.stringify(foe0(combo))),
+  check("a swing misses a monster behind her",
+        near1(combo.state.foes[1].hp, KINDS.slime.hp, 0.001),
+        JSON.stringify(combo.state.foes[1])),
+  check("a press after the gap starts the combo over",
+        late.events.filter(fun (e) => e.ev == "swing").map(fun (e) => e.combo).join(",") == "0,0",
+        JSON.stringify(late.events)),
+  check("a swing turns her toward a nearby monster",
+        assist.face != null && near1(assist.face, Math.PI / 2, 0.001), "" + assist.face),
+  check("mid-swing she is rooted", assist.rooted, JSON.stringify(assist.state.hero)),
+  check("a monster at 0 HP is defeated",
+        foe0(defeated).state == "dead" && count(defeated.events, "defeat") == 1, JSON.stringify(foe0(defeated))),
+  check("a defeated monster comes back at home with full HP after RESPAWN",
+        foe0(respawned).state == "idle" && near1(foe0(respawned).hp, KINDS.slime.hp, 0.5)
+        && count(respawned.events, "respawn") == 1, JSON.stringify(foe0(respawned))),
+  check("a hit interrupts a slime's wind-up", count(interrupted.events, "strike") == 0
+        && foe0(interrupted).hp < KINDS.slime.hp, JSON.stringify(evNames(interrupted.events))),
+  check("a golem's armour keeps its wind-up going", count(armoured.events, "strike") == 1,
+        JSON.stringify(evNames(armoured.events))),
+  check("the wind skill hurts monsters within SKILL_R only",
+        blown.state.foes[0].hp == KINDS.slime.hp - SKILL_DMG && blown.state.foes[1].hp == KINDS.slime.hp - SKILL_DMG
+        && blown.state.foes[2].hp == KINDS.slime.hp, JSON.stringify(blown.state.foes)),
+  check("a press in flight fires a bolt that hits a wisp ahead",
+        count(bolted.events, "bolt") == 1 && foe0(bolted).hp == KINDS.wisp.hp - BOLT_DMG,
+        JSON.stringify(evNames(bolted.events))),
+  check("at 0 HP she goes down", downed.state.hero.down > 0 && count(downed.events, "down") == 1,
+        JSON.stringify(downed.state.hero)),
+  check("monsters lose interest while she is down", foe0(lonely).state == "return" || foe0(lonely).state == "idle",
+        JSON.stringify(foe0(lonely))),
+  check("she is back with full HP after DOWN_T",
+        revived.state.hero.down == 0 && revived.state.hero.hp == HERO_HP && count(revived.events, "revive") == 1,
+        JSON.stringify(revived.state.hero)),
+  check("a monster past its leash gives up and walks home",
+        (foe0(leashed).state == "return" || foe0(leashed).state == "idle") && foe0(leashed).x < 20, JSON.stringify(foe0(leashed))),
+  check("HP comes back after CALM seconds of quiet", resting.state.hero.hp > 60, JSON.stringify(resting.state.hero)),
+  check("overlapping monsters are pushed apart",
+        Math.hypot(crowded.state.foes[0].x - crowded.state.foes[1].x, crowded.state.foes[0].z - crowded.state.foes[1].z)
+        >= 2 * KINDS.slime.r - 0.05, JSON.stringify(crowded.state.foes)),
+  check("a monster can't stand inside her",
+        Math.hypot(foe0(inside).x, foe0(inside).z) >= KINDS.slime.r + 0.45 - 0.001, JSON.stringify(foe0(inside))),
+  check("fight does not mutate its input",
+        frozen.foes[0].state == "idle" && frozen.hero.hp == HERO_HP && afterFrozen.state.hero.hp < HERO_HP,
+        JSON.stringify(frozen))
+].join("\n")

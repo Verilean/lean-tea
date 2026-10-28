@@ -22,6 +22,9 @@ $ blender -b --factory-startup --python tools/heroine-vrm/rig.py -- \
     /tmp/hv/heroine.blend examples/Breezehollow/heroine.glb --preview /tmp/hv/rig.png
 ```
 
+`--shots clip:frame:angle,…` picks the preview's poses, e.g.
+`--shots attack_1:6:60,attack_3:8:60,hurt:3:90`.
+
 ## Notes
 
 - **Hair swap:** the hair mesh and its bones move from one avatar to the

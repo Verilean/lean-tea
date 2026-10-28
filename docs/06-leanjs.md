@@ -100,8 +100,9 @@ compiles, and serves the JS at startup (see
 `examples/Breezehollow/World.leanjs` is a whole 3D game client: an
 anime-style open-world vignette with cel-shaded terrain, instanced
 grass with a wind shader, floating islands, a wind shrine,
-collectible motes, updrafts, a heroine who runs, jumps, glides and
-flies, bloom post-processing and a canvas minimap.
+collectible motes, updrafts, a heroine who runs, jumps, glides, flies
+and fights monsters with wind, bloom post-processing and a canvas
+minimap.
 
 ```text
 import * as THREE from "three"
@@ -127,6 +128,9 @@ $ lake exe breezehollow          # http://localhost:8010/
 $ lake exe breezehollow_spec     # offline: compiles, node --check, page ids
 ```
 
+On a slow GPU (or software rendering) open `http://localhost:8010/?low`:
+less grass, no shadows and no bloom.
+
 The movement rules are a separate, pure file, `Physics.leanjs`:
 
 ```text
@@ -137,7 +141,27 @@ def step(p, inp, world, dt) :=
     events: events }
 ```
 
-`World.leanjs` `include`s it and is only the shell: it reads the keys,
+Fighting follows the same pattern in `Combat.leanjs`:
+
+```text
+def fight(s, p, inp, moves, world, dt) := do
+  …
+  { state: {hero: h, foes: moved, bolts: flying}, events: evs, knock: knock, face: face,
+    rooted: h.down > 0 || h.swing >= 0 && h.swing < COMBO[h.combo].dur * 0.8 }
+```
+
+The heroine's HP and combo, the monsters (slimes, wisps and golems that
+wander, notice her, wind up and strike) and her wind bolts are one state
+record. Each frame `fight` takes it with the player `step` just moved
+and the events it returned (the wind skill hurts monsters too), and
+gives back the next state, events for the renderer (`"swing"`,
+`"damage"`, `"defeat"`, `"hurt"` …), a knock to add to her velocity and
+whether she is rooted mid-swing. `World.leanjs` builds the monsters from
+primitives and animates them from their state. `CombatTest.leanjs`
+checks the combo, monster AI, guard time, defeat and respawn under
+node, as `PhysicsTest.leanjs` does for movement.
+
+`World.leanjs` `include`s both and is only the shell: it reads the keys,
 calls `step`, stores the new player and turns the returned events
 (`"jump"`, `"glide"`, `"fly"`, `"skill"`, `"land"`) into particles. Because
 `step` is a plain function, `PhysicsTest.leanjs` checks jump height,
@@ -154,7 +178,8 @@ avatars come from and their licences:
   (silver hair, violet eyes, a white and violet dress).
 - **`rig.py`** gives her the skeleton and clips of
   `tools/blender/heroine.py`, so the bone names, spring chains and the
-  clips `idle`, `run`, `glide`, `hover`, `fly` and `fall` carry over.
+  clips `idle`, `run`, `glide`, `hover`, `fly`, `fall`, `attack_1`–`3`
+  and `hurt` carry over.
   Each vertex keeps the avatar's weights, renamed to the game's bones;
   the avatar's hair and skirt weights go to the hair and coat chains.
 

@@ -33,6 +33,9 @@ spec.loader.exec_module(H)
 argv = sys.argv[sys.argv.index("--") + 1:]
 SRC, OUT = argv[0], argv[1]
 PREVIEW = argv[argv.index("--preview") + 1] if "--preview" in argv else None
+# --shots clip:frame:angle,... picks the preview's poses
+SHOTS = ([(c, int(f), float(a)) for c, f, a in (x.split(":") for x in argv[argv.index("--shots") + 1].split(","))]
+         if "--shots" in argv else [("idle", 6, 0), ("idle", 6, 35), ("run", 4, 90), ("glide", 10, 20), ("idle", 6, 180)])
 
 HEIGHT = 1.80                 # soles .. crown of the head (hair excluded)
 ARM_BONES = ("UpperArm", "LowerArm", "Hand", "Sleeve", "Thumb", "Index", "Middle", "Ring", "Little", "Shoulder")
@@ -320,7 +323,7 @@ def preview(arm, path):
     sc.camera = cam
     for tr in arm.animation_data.nla_tracks:
         tr.mute = True
-    for i, (act, frame, ang) in enumerate([("idle", 6, 0), ("idle", 6, 35), ("run", 4, 90), ("glide", 10, 20), ("idle", 6, 180)]):
+    for i, (act, frame, ang) in enumerate(SHOTS):
         arm.animation_data.action = bpy.data.actions[act]
         sc.frame_set(frame)
         r = math.radians(ang)

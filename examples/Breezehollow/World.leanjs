@@ -1,8 +1,9 @@
 -- examples/Breezehollow/World.leanjs — the whole game client, in LeanJs.
 --
 -- An anime-style open-world vignette on three.js: cel-shaded hills,
--- a lake, floating islands, a wind shrine and collectible motes. You
--- run, sprint, jump, glide on updrafts, fly and use a wind skill.
+-- a lake, floating islands, a wind shrine, collectible motes and
+-- monsters. You run, sprint, jump, glide on updrafts, fly, use a wind
+-- skill and fight with wind.
 --
 -- Served by examples/Breezehollow/Serve.lean, which parses this file
 -- with LeanJs.Parser, checks it (arity / records) and compiles it to an
@@ -11,8 +12,9 @@
 -- glTF model put together in Blender (tools/heroine-vrm/).
 --
 -- Controls: WASD move · Shift sprint · Space jump / glide · Q fly (Space
--- up, C down, Shift boost) · E wind skill · F attune shrine · T return to
--- shrine · mouse look · wheel zoom
+-- up, C down, Shift boost) · click attack (a wind bolt in flight) · E wind
+-- skill · F attune shrine · T return to shrine · mouse look · wheel zoom.
+-- Add `?low` to the URL on a slow GPU.
 
 import * as THREE from "three"
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js"
@@ -92,6 +94,10 @@ def terrainColor(x, y, z) :=
 
 -- ───────────────────────── renderer + scene ─────────────────────────
 
+-- `?low` in the URL: a lighter world for slow GPUs (and software
+-- rendering): less grass, no shadows, no bloom, one pixel per pixel.
+def LOW := win.location.search.includes("low")
+
 def canvas := byId("world")
 def renderer := new THREE.WebGLRenderer({canvas: canvas, antialias: true})
 def scene := new THREE.Scene()
@@ -99,8 +105,8 @@ def camera := new THREE.PerspectiveCamera(55, 1, 0.1, 1200)
 def FOG_COLOR := 0xcde8ff
 
 def setupRenderer() := do
-  renderer.setPixelRatio(Math.min(win.devicePixelRatio, 2));
-  renderer.shadowMap.enabled := true;
+  renderer.setPixelRatio(if LOW then 1 else Math.min(win.devicePixelRatio, 2));
+  renderer.shadowMap.enabled := !LOW;
   renderer.shadowMap.type := THREE.PCFSoftShadowMap;
   scene.fog := new THREE.Fog(FOG_COLOR, 140, 520);
   scene.background := new THREE.Color(FOG_COLOR);
@@ -603,7 +609,7 @@ def updateSparks(dt) := do
 -- (tools/heroine-vrm/) and given tools/blender/heroine.py's skeleton:
 -- examples/Breezehollow/heroine.glb, which the server serves as
 -- /heroine.glb. It is a set of skinned meshes with idle, run, glide,
--- hover, fly and fall clips. Her materials are swapped for the world's
+-- hover, fly and fall clips, and attack_1-3 and hurt played once. Her materials are swapped for the world's
 -- toon ones, each with an outline that follows the skin, and her hair and
 -- skirt are bone chains swung by springs every frame
 -- (`updateSprings`).
@@ -776,13 +782,20 @@ def updateSprings(dt, moved) := do
   null
 
 -- Cross-fade to the clip `name` (no-op if it is already playing).
+-- Attacks and flinches play once and hold their last frame until the
+-- next clip takes over.
 def play(name) := do
-  if hero.current != name then (
+  if hero.current != name && hero.actions[name] then (
     let next := hero.actions[name];
+    let once := name != "idle" && name != "run" && name != "glide" && name != "hover" && name != "fly" && name != "fall";
     next.reset();
-    next.fadeIn(0.25);
+    if once then (
+      next.setLoop(THREE.LoopOnce, 1);
+      next.clampWhenFinished := true);
+    let fade := if once then 0.08 else 0.25;
+    next.fadeIn(fade);
     next.play();
-    if hero.current != "" then hero.actions[hero.current].fadeOut(0.25);
+    if hero.current != "" then hero.actions[hero.current].fadeOut(fade);
     hero.current := name);
   null
 
@@ -817,8 +830,8 @@ def loadHeroine() := do
 
 include "Physics.leanjs"
 
-def G := {p: newPlayer(0, 4, 30), phase: 0, motes: 0, toastT: 0}
-def CAM := {yaw: 0.2, pitch: 0.32, dist: 7.5, x: 0, y: 8, z: 40, dragging: false}
+def G := {p: newPlayer(0, 4, 30), phase: 0, motes: 0, toastT: 0, hurtT: 0}
+def CAM := {yaw: 0.2, pitch: 0.32, dist: 7.5, x: 0, y: 8, z: 40, dragging: false, dragged: 0}
 def keys := {}
 def pressed := {}
 
@@ -896,11 +909,336 @@ def toast(msg) := do
   G.toastT := 2.6;
   null
 
+-- ───────────────────────── monsters ─────────────────────────
+-- The fighting rules live in Combat.leanjs as a pure `fight`; here the
+-- monsters get bodies built from primitives (toon shaded and outlined
+-- like the rest of the world), animated from their state each frame.
+
+include "Combat.leanjs"
+
+-- Where they live: [kind, x, z].
+def SPAWNS := [
+  ["slime", 18, 8], ["slime", 22, 13], ["slime", 14, 14],
+  ["slime", -30, 42], ["slime", -35, 46],
+  ["slime", 40, -10], ["slime", 45, -5], ["slime", 37, -3],
+  ["wisp", -20, -8], ["wisp", -25, -13],
+  ["wisp", 58, 62], ["wisp", 64, 57],
+  ["wisp", 8, -78], ["wisp", 1, -83],
+  ["golem", -55, -45], ["slime", -49, -39], ["slime", -60, -38],
+  ["golem", 112, -6]
+]
+
+def FIGHT := {state: {hero: newHero(), foes: [], bolts: []}, rooted: false, defeated: 0, shake: 0}
+def foeViews := {}
+
+def SLIME_COLORS := [0x86e3ff, 0xa6f0a0, 0xffb3d9]
+
+-- Two dark eyes with a white glint, looking along +z.
+def eyes(parent, x, y, z, size) := do
+  let dark := new THREE.MeshBasicMaterial({color: 0x1d1830});
+  let glint := new THREE.MeshBasicMaterial({color: 0xffffff});
+  for s in [-1, 1] do (
+    let e := new THREE.Mesh(new THREE.SphereGeometry(size, 10, 8), dark);
+    e.scale.set(0.8, 1.2, 0.5);
+    e.position.set(s * x, y, z);
+    parent.add(e);
+    let g := new THREE.Mesh(new THREE.SphereGeometry(size * 0.35, 6, 4), glint);
+    g.position.set(s * x + size * 0.25, y + size * 0.4, z + size * 0.4);
+    parent.add(g)
+  );
+  null
+
+-- Health bar: two sprites at the same point; the fill's anchor moves so
+-- its left end stays on the bar's (see updateMonsters).
+def hpBar(parent, y, w) := do
+  let bg := new THREE.Sprite(new THREE.SpriteMaterial({color: 0x1d1830, depthTest: false, transparent: true, opacity: 0.7}));
+  bg.scale.set(w + 0.08, 0.16, 1);
+  bg.position.y := y;
+  bg.renderOrder := 10;
+  let fill := new THREE.Sprite(new THREE.SpriteMaterial({color: 0xff6b7a, depthTest: false}));
+  fill.scale.set(w, 0.1, 1);
+  fill.position.y := y;
+  fill.renderOrder := 11;
+  parent.add(bg);
+  parent.add(fill);
+  {bg: bg, fill: fill, w: w}
+
+def makeSlime(id) := do
+  let root := new THREE.Group();
+  let body := new THREE.Group();
+  let blob := outlined(new THREE.SphereGeometry(0.62, 20, 14), SLIME_COLORS[id % 3], 1.05);
+  blob.scale.set(1, 0.82, 1);
+  blob.position.y := 0.5;
+  body.add(blob);
+  eyes(body, 0.19, 0.58, 0.58, 0.075);
+  let sprout := outlined(new THREE.ConeGeometry(0.09, 0.3, 6), 0x4fb35a, 1.1);
+  sprout.position.y := 1.08;
+  sprout.rotation.z := 0.3;
+  body.add(sprout);
+  root.add(body);
+  {root: root, body: body, mats: [blob.children[0].material], bar: hpBar(root, 1.55, 0.9), arms: [], rings: [], tele: null}
+
+def makeWisp(id) := do
+  let root := new THREE.Group();
+  let body := new THREE.Group();
+  let core := new THREE.Mesh(new THREE.SphereGeometry(0.34, 16, 12),
+    new THREE.MeshStandardMaterial({color: 0xd9c8ff, emissive: 0xa98bff, emissiveIntensity: 1.6}));
+  body.add(core);
+  eyes(body, 0.11, 0.04, 0.32, 0.05);
+  let tail := new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.8, 10),
+    new THREE.MeshBasicMaterial({color: 0xc9b6ff, transparent: true, opacity: 0.55, depthWrite: false}));
+  tail.rotation.x := PI;
+  tail.position.y := -0.5;
+  body.add(tail);
+  let rings := [];
+  for k in range(0, 2, 1) do (
+    let ring := new THREE.Mesh(new THREE.TorusGeometry(0.56 + k * 0.14, 0.025, 6, 32),
+      new THREE.MeshBasicMaterial({color: 0xf0e8ff, transparent: true, opacity: 0.8,
+                                   blending: THREE.AdditiveBlending, depthWrite: false}));
+    body.add(ring);
+    push(rings, ring)
+  );
+  root.add(body);
+  {root: root, body: body, mats: [core.material], bar: hpBar(root, 1.0, 0.8), arms: [], rings: rings, tele: null}
+
+def makeGolem(id) := do
+  let root := new THREE.Group();
+  let body := new THREE.Group();
+  let torso := outlined(new THREE.DodecahedronGeometry(0.95, 0), 0x9a9488, 1.04);
+  torso.scale.set(1.1, 1.0, 0.85);
+  torso.position.y := 1.45;
+  body.add(torso);
+  let head := outlined(new THREE.BoxGeometry(0.8, 0.6, 0.7), 0xa8a296, 1.05);
+  head.position.y := 2.45;
+  body.add(head);
+  let moss := outlined(new THREE.BoxGeometry(0.86, 0.14, 0.76), 0x6cbf5f, 1.04);
+  moss.position.y := 2.8;
+  body.add(moss);
+  let eye := new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 0.05),
+    new THREE.MeshStandardMaterial({color: 0x8ffcff, emissive: 0x3fe3ff, emissiveIntensity: 2.4}));
+  eye.position.set(0, 2.48, 0.36);
+  body.add(eye);
+  for s in [-1, 1] do (
+    let leg := outlined(new THREE.BoxGeometry(0.42, 0.7, 0.45), 0x8a857a, 1.05);
+    leg.position.set(s * 0.42, 0.35, 0);
+    body.add(leg)
+  );
+  let arms := [];
+  for s in [-1, 1] do (
+    let shoulder := new THREE.Group();
+    shoulder.position.set(s * 1.15, 1.85, 0);
+    let arm := outlined(new THREE.BoxGeometry(0.45, 1.3, 0.5), 0x948e82, 1.05);
+    arm.position.y := -0.6;
+    shoulder.add(arm);
+    let fist := outlined(new THREE.DodecahedronGeometry(0.36, 0), 0x8a857a, 1.05);
+    fist.position.y := -1.3;
+    shoulder.add(fist);
+    body.add(shoulder);
+    push(arms, shoulder)
+  );
+  root.add(body);
+  -- where the slam will land
+  let tele := new THREE.Mesh(new THREE.RingGeometry(KINDS.golem.contact - 0.25, KINDS.golem.contact, 40),
+    new THREE.MeshBasicMaterial({color: 0xff7a6b, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide}));
+  tele.rotation.x := -PI / 2;
+  tele.position.y := 0.08;
+  scene.add(tele);
+  {root: root, body: body, mats: [torso.children[0].material, head.children[0].material], bar: hpBar(root, 3.3, 1.4),
+   arms: arms, rings: [], tele: tele}
+
+def buildMonsters() := do
+  let mut foes := [];
+  let mut id := 1;
+  for s in SPAWNS do (
+    let y := groundAt(s[1], s[2], 99) + (if KINDS[s[0]].fly then 2.6 else 0);
+    push(foes, newFoe(id, s[0], s[1], y, s[2]));
+    let view := if s[0] == "slime" then makeSlime(id) else if s[0] == "wisp" then makeWisp(id) else makeGolem(id);
+    view.root.position.set(s[1], y, s[2]);
+    scene.add(view.root);
+    foeViews[id] := { view with flash: 0, gone: 0, seed: hash2(id, 7) * 10 };
+    id := id + 1
+  );
+  FIGHT.state := { FIGHT.state with foes := foes };
+  null
+
+-- Each monster's body follows its state: hops, wind-ups, flashes when hit.
+def updateMonsters(dt, t) := do
+  for f in FIGHT.state.foes do (
+    let v := foeViews[f.id];
+    let K := KINDS[f.kind];
+    let tt := t + v.seed;
+    v.flash := Math.max(0, v.flash - dt);
+    v.gone := if f.state == "dead" then Math.min(1, v.gone + dt * 4) else Math.max(0, v.gone - dt * 2);
+    v.root.position.set(f.x, f.y, f.z);
+    v.root.rotation.y := f.facing;
+    v.root.scale.setScalar(Math.max(0.001, 1 - v.gone));
+    v.root.visible := v.gone < 1;
+    let wind := if f.state == "windup" then clamp(f.t / K.windup, 0, 1) else 0;
+    -- body language
+    if f.kind == "slime" then (
+      let hop := if f.state == "chase" || f.state == "return" then Math.abs(Math.sin(tt * 9)) * 0.35
+                 else if f.state == "strike" then 0.5 * Math.sin(clamp(f.t / K.strike, 0, 1) * PI) else 0;
+      let sq := if f.state == "windup" then 1 - wind * 0.35 else 1 + Math.sin(tt * 4) * 0.05;
+      v.body.position.y := hop;
+      v.body.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq)))
+    else if f.kind == "wisp" then (
+      v.body.position.y := Math.sin(tt * 2.5) * 0.15;
+      for k in range(0, v.rings.length, 1) do (
+        v.rings[k].rotation.x := tt * (1.5 + k) + k;
+        v.rings[k].rotation.y := tt * (0.9 + k * 0.7));
+      v.body.position.x := if f.state == "windup" then Math.sin(tt * 60) * 0.05 * wind else 0;
+      v.mats[0].emissiveIntensity := 1.6 + wind * 2.5)
+    else (
+      let lift := if f.state == "windup" then wind
+                  else if f.state == "strike" then 1 - clamp(f.t / K.strike, 0, 1) else 0;
+      for a in v.arms do (a.rotation.x := -lift * 2.6);
+      v.body.rotation.z := if f.state == "chase" || f.state == "return" then Math.sin(tt * 5) * 0.06 else 0;
+      v.tele.position.set(f.x + Math.sin(f.facing) * 0.6, f.y + 0.08, f.z + Math.cos(f.facing) * 0.6);
+      v.tele.material.opacity := if f.state == "windup" then 0.25 + wind * 0.55 else 0);
+    -- a white flash when hit (an emissive tint on the toon materials)
+    for m in v.mats do (
+      if f.kind != "wisp" then m.emissive.setScalar(v.flash * 5));
+    -- the health bar shows once hurt
+    let frac := f.hp / K.hp;
+    let shown := f.state != "dead" && frac < 0.999;
+    v.bar.bg.visible := shown;
+    v.bar.fill.visible := shown;
+    v.bar.fill.scale.x := Math.max(0.001, v.bar.w * frac);
+    v.bar.fill.center.x := 0.5 / Math.max(0.001, frac)
+  );
+  null
+
+-- Wind bolts: a glowing ball each, the pool grows as needed.
+def boltMeshes := []
+def BOLT_MAT := new THREE.MeshStandardMaterial({color: 0xd8fff6, emissive: 0x6effe2, emissiveIntensity: 3})
+
+def updateBolts() := do
+  let bs := FIGHT.state.bolts;
+  while boltMeshes.length < bs.length do (
+    let m := new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), BOLT_MAT);
+    scene.add(m);
+    push(boltMeshes, m));
+  for k in range(0, boltMeshes.length, 1) do (
+    let m := boltMeshes[k];
+    m.visible := k < bs.length;
+    if k < bs.length then (
+      m.position.set(bs[k].x, bs[k].y, bs[k].z);
+      emit(bs[k].x, bs[k].y, bs[k].z, 0, 0.3, 0, 0.35))
+  );
+  null
+
+-- Swing arcs: a flat crescent of wind in front of her that widens and fades.
+def ARC_GEO := new THREE.RingGeometry(1.2, 2.4, 32, 1, -PI * 0.45, PI * 0.9)
+def arcs := []
+
+def swingArc(p, facing, big) := do
+  let mut slot := null;
+  for a in arcs do (if a.life <= 0 then slot := a);
+  if slot == null then (
+    let m := new THREE.Mesh(ARC_GEO, new THREE.MeshBasicMaterial({color: 0xbfffee, transparent: true, opacity: 0,
+                            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide}));
+    scene.add(m);
+    slot := {mesh: m, life: 0, big: false};
+    push(arcs, slot));
+  slot.life := 0.28;
+  slot.big := big;
+  slot.mesh.position.set(p.x, p.y + 1.2, p.z);
+  -- ring angles run from +x toward +y; lie it flat and turn it to face `facing`
+  slot.mesh.rotation.set(-PI / 2, 0, facing - PI / 2);
+  slot.mesh.scale.setScalar(if big then 1.3 else 1);
+  null
+
+def updateArcs(dt) := do
+  for a in arcs do (
+    if a.life > 0 then (
+      a.life := a.life - dt;
+      let k := 1 - Math.max(0, a.life) / 0.28;
+      a.mesh.scale.setScalar((if a.big then 1.3 else 1) * (0.7 + k * 0.6));
+      a.mesh.material.opacity := Math.max(0, 0.85 * (1 - k)))
+  );
+  null
+
+-- Floating damage numbers (HTML, placed over the 3D point each frame).
+def numbers := []
+
+def popNumber(x, y, z, text, cls) := do
+  let el := doc.createElement("div");
+  el.className := "num " + cls;
+  el.textContent := text;
+  byId("fx").appendChild(el);
+  push(numbers, {el: el, x: x + (Math.random() - 0.5) * 0.6, y: y, z: z, life: 0.9});
+  null
+
+def updateNumbers(dt) := do
+  let w := win.innerWidth;
+  let h := win.innerHeight;
+  for n in numbers do (
+    n.life := n.life - dt;
+    n.y := n.y + dt * 1.4;
+    let v := new THREE.Vector3(n.x, n.y, n.z).project(camera);
+    let on := n.life > 0 && v.z < 1;
+    setStyle(n.el, "opacity", (if on then "" + Math.min(1, n.life * 3) else "0"));
+    setStyle(n.el, "transform", "translate(" + ((v.x * 0.5 + 0.5) * w) + "px, " + ((0.5 - v.y * 0.5) * h) + "px)");
+    if n.life <= 0 then n.el.remove()
+  );
+  let alive := numbers.filter(fun (n) => n.life > 0);
+  numbers.length := 0;
+  for n in alive do (push(numbers, n));
+  null
+
+-- What a fight event looks like and sounds like on screen.
+def showFightEvent(e) := do
+  if e.ev == "swing" then swingArc(G.p, e.facing, e.combo == 2);
+  if e.ev == "damage" then (
+    popNumber(e.x, e.y, e.z, "" + e.amount, (if e.big then "big" else ""));
+    burst(e.x, e.y - 0.6, e.z, (if e.big then 26 else 12), (if e.big then 6 else 4));
+    let v := foeViews[e.id];
+    v.flash := 0.12);
+  if e.ev == "defeat" then (
+    FIGHT.defeated := FIGHT.defeated + 1;
+    burst(e.x, e.y, e.z, 60, 7);
+    ringBurst(e.x, e.y - 0.4, e.z, 40, 5));
+  if e.ev == "respawn" then (
+    let f := FIGHT.state.foes.filter(fun (g) => g.id == e.id)[0];
+    burst(f.x, f.y + 0.6, f.z, 20, 3));
+  if e.ev == "strike" && e.kind == "golem" then (
+    ringBurst(e.x, e.y, e.z, 70, 8);
+    FIGHT.shake := 0.35);
+  if e.ev == "bolt" then burst(e.x, e.y, e.z, 8, 2);
+  if e.ev == "burst" then burst(e.x, e.y, e.z, 18, 4);
+  if e.ev == "hurt" then (
+    popNumber(e.x, e.y, e.z, "" + e.amount, "hurt");
+    G.hurtT := 0.42;
+    FIGHT.shake := Math.max(FIGHT.shake, 0.2));
+  if e.ev == "down" then toast("Knocked out…");
+  if e.ev == "revive" then (
+    let tx := if SHRINE.attuned then SHRINE.x + 4 else 0;
+    let tz := if SHRINE.attuned then SHRINE.z + 4 else 30;
+    G.p := { G.p with x := tx, z := tz, y := heightAt(tx, tz) + 0.5, vx := 0, vy := 0, vz := 0,
+                      gliding := false, flying := false };
+    burst(tx, G.p.y + 1, tz, 60, 6);
+    toast(if SHRINE.attuned then "Back at the Wind Shrine" else "Back on your feet"));
+  null
+
 -- ───────────────────────── per-frame update ─────────────────────────
 
 def updatePlayer(dt) := do
-  let r := step(G.p, readInput(), WORLD, dt);
+  let inp0 := readInput();
+  let down := FIGHT.state.hero.down > 0;
+  -- mid-swing she stands her ground; knocked out, she does nothing at all
+  let inp := if down then { inp0 with kx := 0, kz := 0, jump := false, skill := false, fly := false, rise := 0 }
+             else if FIGHT.rooted then { inp0 with kx := 0, kz := 0 } else inp0;
+  let r := step(G.p, inp, WORLD, dt);
   G.p := r.player;
+  let f := fight(FIGHT.state, G.p, {attack: consume("attack") && !down, yaw: CAM.yaw, pitch: CAM.pitch}, r.events, WORLD, dt);
+  FIGHT.state := f.state;
+  FIGHT.rooted := f.rooted;
+  let kn := f.knock;
+  G.p := { G.p with vx := G.p.vx + kn.x, vz := G.p.vz + kn.z,
+                    vy := (if kn.y > 0 then Math.max(G.p.vy, kn.y) else G.p.vy),
+                    onGround := G.p.onGround && kn.y <= 0,
+                    facing := (if f.face == null then G.p.facing else f.face) };
+  for e in f.events do (showFightEvent(e));
   let p := G.p;
   for ev in r.events do (
     if ev == "glide" then burst(p.x, p.y + 1.4, p.z, 14, 3);
@@ -942,7 +1280,12 @@ def animateHero(dt, t) := do
   hero.root.rotation.y := p.facing;
   if hero.mixer then (
     let speed := Math.hypot(p.vx, p.vz);
-    play(if p.flying then (if speed > 9 then "fly" else "hover")
+    let fh := FIGHT.state.hero;
+    G.hurtT := Math.max(0, G.hurtT - dt);
+    play(if fh.down > 0 then "hurt"
+         else if fh.swing >= 0 then "attack_" + (fh.combo + 1)
+         else if G.hurtT > 0 && p.onGround then "hurt"
+         else if p.flying then (if speed > 9 then "fly" else "hover")
          else if p.gliding then "glide"
          else if !p.onGround then "fall"
          else if speed > 0.8 then "run" else "idle");
@@ -952,7 +1295,10 @@ def animateHero(dt, t) := do
                 else if p.gliding then 0.9 else 0;
     let bank := if p.flying || p.gliding then clamp(-turnRate * 0.15, -0.7, 0.7) else 0;
     let k := Math.min(1, 5 * dt);
-    hero.pivot.rotation.x := lerp(hero.pivot.rotation.x, lean, k);
+    -- knocked out: she sinks to the ground on her back
+    let downed := fh.down > 0;
+    hero.pivot.position.y := lerp(hero.pivot.position.y, (if downed then 0.3 else HIPS * HERO_SCALE), k);
+    hero.pivot.rotation.x := lerp(hero.pivot.rotation.x, (if downed then -1.45 else lean), k);
     hero.pivot.rotation.z := lerp(hero.pivot.rotation.z, bank, k);
     hero.mixer.update(dt);
     hero.root.updateMatrixWorld(true);
@@ -974,7 +1320,9 @@ def updateCamera(dt) := do
   CAM.x := lerp(CAM.x, wx, k);
   CAM.y := lerp(CAM.y, wy, k);
   CAM.z := lerp(CAM.z, wz, k);
-  camera.position.set(CAM.x, CAM.y, CAM.z);
+  FIGHT.shake := Math.max(0, FIGHT.shake - dt);
+  let sh := FIGHT.shake * 0.6;
+  camera.position.set(CAM.x + (Math.random() - 0.5) * sh, CAM.y + (Math.random() - 0.5) * sh, CAM.z);
   camera.lookAt(tx, ty, tz);
   sun.position.set(tx + SUN_DIR.x * 80, ty + SUN_DIR.y * 80, tz + SUN_DIR.z * 80);
   sun.target.position.set(tx, ty, tz);
@@ -1055,6 +1403,14 @@ def drawMinimap() := do
       ctx.arc(p[0], p[1], 1.6, 0, TAU);
       ctx.fill())
   );
+  for f in FIGHT.state.foes do (
+    if f.state != "dead" then (
+      let q := mapXY(f.x, f.z);
+      ctx.fillStyle := if f.kind == "golem" then "#ff5a4f" else "#ff8a7a";
+      ctx.beginPath();
+      ctx.arc(q[0], q[1], (if f.kind == "golem" then 2.2 else 1.3), 0, TAU);
+      ctx.fill())
+  );
   let sp := mapXY(SHRINE.x, SHRINE.z);
   ctx.fillStyle := if SHRINE.attuned then "#ffd36a" else "#e8f6ff";
   ctx.fillRect(sp[0] - 1.8, sp[1] - 1.8, 3.6, 3.6);
@@ -1081,6 +1437,11 @@ def updateHud(dt) := do
   setStyle(byId("stamina"), "opacity", (if frac < 0.995 then "1" else "0"));
   toggleClass(byId("stamina"), "tired", G.p.exhausted);
   setText(byId("motes"), "" + G.motes + " / " + motes.length);
+  let fh := FIGHT.state.hero;
+  setStyle(byId("hp-fill"), "width", "" + fh.hp / HERO_HP * 100 + "%");
+  setText(byId("hp-text"), fmt0(Math.ceil(fh.hp)) + " / " + HERO_HP);
+  toggleClass(byId("hp"), "low", fh.hp < HERO_HP * 0.3);
+  setText(byId("defeated"), "" + FIGHT.defeated);
   setText(byId("skill-cd"), (if G.p.skillCd > 0 then fmt0(Math.ceil(G.p.skillCd)) else ""));
   toggleClass(byId("skill"), "cooling", G.p.skillCd > 0);
   setText(byId("state"), (if G.p.flying then "Flying" else if G.p.gliding then "Gliding" else if !G.p.onGround then "Airborne" else if Math.hypot(G.p.vx, G.p.vz) > 11 then "Sprinting" else ""));
@@ -1098,13 +1459,21 @@ def setupInput() := do
   listen(win, "blur", fun (e) => do
     for k in Object.keys(keys) do (keys[k] := false);
     null);
+  -- a click attacks: any press while the pointer is locked, otherwise a
+  -- press and release without dragging the view
   listen(canvas, "mousedown", fun (e) => do
+    if e.button == 0 && doc.pointerLockElement == canvas then pressed["attack"] := true;
     CAM.dragging := true;
+    CAM.dragged := 0;
     lockPointer(canvas);
     toggleClass(byId("help"), "hidden", true);
     null);
-  listen(win, "mouseup", fun (e) => (CAM.dragging := false));
+  listen(win, "mouseup", fun (e) => do
+    if e.button == 0 && CAM.dragging && CAM.dragged < 6 && doc.pointerLockElement != canvas then pressed["attack"] := true;
+    CAM.dragging := false;
+    null);
   listen(win, "mousemove", fun (e) => do
+    CAM.dragged := CAM.dragged + Math.abs(e.movementX) + Math.abs(e.movementY);
     if doc.pointerLockElement == canvas || CAM.dragging then (
       CAM.yaw := CAM.yaw - e.movementX * 0.0032;
       CAM.pitch := clamp(CAM.pitch + e.movementY * 0.0026, -0.25, 1.25));
@@ -1138,15 +1507,21 @@ def frame(ms) := do
   clock.fps := lerp(clock.fps, 1 / dt, 0.05);
   updatePlayer(dt);
   animateHero(dt, t);
+  updateMonsters(dt, t);
+  updateBolts();
+  updateArcs(dt);
   updateWorld(dt, t);
   updateUpdrafts(t);
   updateSparks(dt);
   updateCamera(dt);
   updateHud(dt);
   composer.render();
+  updateNumbers(dt);
   win.__breezehollow := {x: G.p.x, y: G.p.y, z: G.p.z, stamina: G.p.stamina, gliding: G.p.gliding,
                          flying: G.p.flying, heroine: hero.mixer != null,
-                         motes: G.motes, fps: clock.fps, attuned: SHRINE.attuned};
+                         motes: G.motes, fps: clock.fps, attuned: SHRINE.attuned,
+                         hp: FIGHT.state.hero.hp, defeated: FIGHT.defeated,
+                         foes: FIGHT.state.foes.map(fun (f) => {kind: f.kind, state: f.state, hp: f.hp, x: f.x, z: f.z})};
   raf(frame)
 
 def boot() := do
@@ -1156,17 +1531,18 @@ def boot() := do
   buildClouds();
   buildTerrain();
   buildWater();
-  buildGrass(70000);
-  buildFlowers(500);
+  buildGrass(if LOW then 6000 else 70000);
+  buildFlowers(if LOW then 120 else 500);
   buildForest();
   buildIslands();
   buildShrine();
   buildMotes();
   buildUpdrafts();
+  buildMonsters();
   buildSparks();
   buildMinimap();
   composer.addPass(new RenderPass(scene, camera));
-  composer.addPass(bloom);
+  if !LOW then composer.addPass(bloom);
   composer.addPass(new OutputPass());
   setupInput();
   listen(win, "resize", fun (e) => resize());
