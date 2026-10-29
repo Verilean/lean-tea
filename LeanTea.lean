@@ -73,6 +73,7 @@ import LeanTea.Crypto.Password
 import LeanTea.Crypto.Jwt
 import LeanTea.Crypto.Native
 import LeanTea.Auth.OAuth2
+import LeanTea.Auth.Proxy
 import LeanTea.Auth.Saml
 import LeanTea.Auth.Security
 import LeanTea.Auth.Passkey

@@ -25,14 +25,34 @@ def libpqLinkArgs : Array String :=
     #["/usr/lib/x86_64-linux-gnu/libpq.so.5"]
 
 /-- Link args for the OpenSSL TLS client (`c/leantea_tls.c`, LEANTEA_TLS=1).
-    macOS: Homebrew's keg-only openssl@3 dylibs; Linux: `-lssl -lcrypto`.
-    Weak, so only exes that actually request TLS pay the link. -/
+    macOS: Homebrew's keg-only openssl@3 dylibs. Linux: the shared objects
+    by absolute path, in pkg-config's `libdir` for openssl (Nix: openssl in
+    buildInputs, pkg-config in nativeBuildInputs), else Debian / Ubuntu's
+    multiarch directory.
+
+    Not `-L<libdir> -lssl`: Lean's bundled linker links against its own
+    glibc, and `-L/usr/lib/x86_64-linux-gnu` would put the system's C
+    runtime ahead of it (undefined `__libc_csu_init`). `libpqLinkArgs` does
+    the same for libpq. A `libdir` outside the system directories (a Nix
+    store path) is also put in the RUNPATH, so the exe finds it at run time.
+
+    `--allow-shlib-undefined`: a distribution's libcrypto refers to newer
+    glibc symbol versions (GLIBC_2.34, 2.38 on Ubuntu 24.04) than the glibc
+    Lean links against; the system glibc provides them when the exe runs. -/
 def sslLinkArgs : Array String :=
   if System.Platform.isOSX then
     #["/opt/homebrew/opt/openssl@3/lib/libssl.dylib",
       "/opt/homebrew/opt/openssl@3/lib/libcrypto.dylib"]
   else
-    #["-lssl", "-lcrypto"]
+    let libdir : String := (run_io do
+      let out ← (IO.Process.output { cmd := "pkg-config", args := #["--variable=libdir", "openssl"] }
+        ).catchExceptions (fun _ => pure { exitCode := 1, stdout := "", stderr := "" })
+      let d := out.stdout.trimAscii.toString
+      return if out.exitCode == 0 && !d.isEmpty then some d else none
+    ).getD "/usr/lib/x86_64-linux-gnu"
+    let system := libdir.startsWith "/usr/" || libdir.startsWith "/lib"
+    #[libdir ++ "/libssl.so", libdir ++ "/libcrypto.so", "-Wl,--allow-shlib-undefined"]
+      ++ (if system then #[] else #["-Wl,-rpath," ++ libdir])
 
 /-- OpenSSL link args, but ONLY when `LEANTEA_TLS=1` — read at lakefile
     load (configure) time. This is what makes every serving exe
@@ -611,6 +631,21 @@ lean_exe persist_spec where
 lean_exe auth_idp_serve where
   srcDir := "examples"
   root := `AuthIdp.Serve
+
+/-- Sign-in proxy (`LeanTea.Auth.Proxy`): OAuth 2.0 login in front of a
+    local HTTP service, forwarding with `X-Forwarded-User`. HTTPS to the
+    provider uses the OpenSSL client, so build it with TLS:
+        LEANTEA_TLS=1 lake build -R auth_proxy
+    That compiles `c/leantea_tls.c` for real and links libssl and libcrypto
+    (`tlsLinkArgs`, package-wide). OpenSSL headers come from pkg-config or
+    the usual Homebrew paths; in a Nix build put `openssl` in buildInputs,
+    `pkg-config` in nativeBuildInputs and set LEANTEA_TLS=1. At run time
+    OpenSSL's default trust store is used (on NixOS /etc/ssl/certs; elsewhere
+    set SSL_CERT_FILE if it is not found). An app that imports
+    `LeanTea.Auth.OAuth2` for its own gate builds the same way. -/
+lean_exe auth_proxy where
+  srcDir := "examples"
+  root := `AuthProxy.Main
 
 /-- Auth integration tests. Spawns `auth_idp_serve` on
     `AUTH_TEST_PORT` (default 18765), polls until /authorize answers,

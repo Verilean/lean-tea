@@ -441,7 +441,7 @@ variables below are set** so local development is unaffected.
 When both `*_ID` and `*_SECRET` are present:
 
 - `GET /auth/google/login` → mints a CSRF state and 302-redirects to Google
-- `GET /auth/google/callback?code=&state=` → posts to Google's `/token` and `/userinfo` via `curl(1)`, mints a session, sets an HttpOnly cookie
+- `GET /auth/google/callback?code=&state=` → posts to Google's `/token` and `/userinfo` over the OpenSSL client (`LeanTea.Net.TlsClient`), mints a session, sets an HttpOnly cookie
 - `GET /auth/logout` → drops the cookie and the DB row
 - `/mcp` and a few static asset paths are on a public allowlist
 - API paths under `/api/*` return 401 when unauthenticated; UI paths 302 to the login page
@@ -466,8 +466,15 @@ When both `*_ID` and `*_SECRET` are present:
 
 ### Implementation notes
 
-- HTTPS calls to Google go through `curl(1)` (the Lean stdlib has no
-  TLS). The runtime image already bundles curl.
+- HTTPS calls to Google go through `LeanTea.Net.TlsClient` (OpenSSL,
+  certificate and host name checked, 10 s timeout). Build with
+  `LEANTEA_TLS=1 lake build -R <exe>`: that compiles `c/leantea_tls.c`
+  and links `-lssl -lcrypto` (needs the OpenSSL headers, e.g.
+  `libssl-dev`, at build time and `libssl3` at run time). Without the
+  flag, sign-in fails with "TLS not enabled".
+- For any provider (GitHub included) use `LeanTea.Auth.OAuth2.gate`, or
+  run the `auth_proxy` executable in front of an existing service; see
+  [docs/03-backend.md](docs/03-backend.md#sign-in-gate-and-proxy).
 - Session tokens are 32 random bytes from `/dev/urandom`, hex-encoded
   (`Auth.randomToken`). **Important**: use `IO.FS.Handle.mk` +
   `read 32` — `IO.FS.readBinFile` reads to EOF, and `/dev/urandom`

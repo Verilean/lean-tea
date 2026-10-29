@@ -21,7 +21,8 @@ open LeanTea.Auth.Idp
 def aliceUser : OAuth2.User := {
   sub := "alice-sub-001", email := "alice@example.com",
   name := "Alice Example",
-  picture := "https://idp.example.com/alice.png"
+  picture := "https://idp.example.com/alice.png",
+  login := "alice"
 }
 
 def aliceClient : OAuth2.Client := {
@@ -34,11 +35,19 @@ def aliceClient : OAuth2.Client := {
   user := aliceUser
 }
 
+/-- The client `auth_spec` runs the `auth_proxy` executable as (it
+    listens on 18768). -/
+def proxyClient : OAuth2.Client := {
+  clientId := "proxy-client", clientSecret := "shh",
+  redirectUri := "http://127.0.0.1:18768/oauth2/callback",
+  user := aliceUser
+}
+
 def main : IO Unit := do
   let port : UInt16 := match (← IO.getEnv "AUTH_TEST_PORT").bind String.toNat? with
     | some n => n.toUInt16
     | none   => 18765
   let codes  ← IO.mkRef ([] : List OAuth2.IssuedCode)
   let tokens ← IO.mkRef ([] : List OAuth2.IssuedToken)
-  let st : OAuth2.State := { cfg := { clients := [aliceClient] }, codes, tokens }
+  let st : OAuth2.State := { cfg := { clients := [aliceClient, proxyClient] }, codes, tokens }
   LeanTea.Net.Server.serve port "127.0.0.1" (OAuth2.handler st)
