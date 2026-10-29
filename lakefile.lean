@@ -34,7 +34,11 @@ def libpqLinkArgs : Array String :=
     glibc, and `-L/usr/lib/x86_64-linux-gnu` would put the system's C
     runtime ahead of it (undefined `__libc_csu_init`). `libpqLinkArgs` does
     the same for libpq. A `libdir` outside the system directories (a Nix
-    store path) is also put in the RUNPATH, so the exe finds it at run time. -/
+    store path) is also put in the RUNPATH, so the exe finds it at run time.
+
+    `--allow-shlib-undefined`: a distribution's libcrypto refers to newer
+    glibc symbol versions (GLIBC_2.34, 2.38 on Ubuntu 24.04) than the glibc
+    Lean links against; the system glibc provides them when the exe runs. -/
 def sslLinkArgs : Array String :=
   if System.Platform.isOSX then
     #["/opt/homebrew/opt/openssl@3/lib/libssl.dylib",
@@ -47,7 +51,7 @@ def sslLinkArgs : Array String :=
       return if out.exitCode == 0 && !d.isEmpty then some d else none
     ).getD "/usr/lib/x86_64-linux-gnu"
     let system := libdir.startsWith "/usr/" || libdir.startsWith "/lib"
-    #[libdir ++ "/libssl.so", libdir ++ "/libcrypto.so"]
+    #[libdir ++ "/libssl.so", libdir ++ "/libcrypto.so", "-Wl,--allow-shlib-undefined"]
       ++ (if system then #[] else #["-Wl,-rpath," ++ libdir])
 
 /-- OpenSSL link args, but ONLY when `LEANTEA_TLS=1` — read at lakefile
