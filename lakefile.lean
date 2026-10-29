@@ -25,28 +25,30 @@ def libpqLinkArgs : Array String :=
     #["/usr/lib/x86_64-linux-gnu/libpq.so.5"]
 
 /-- Link args for the OpenSSL TLS client (`c/leantea_tls.c`, LEANTEA_TLS=1).
-    macOS: Homebrew's keg-only openssl@3 dylibs. Linux: `pkg-config --libs
-    openssl` when pkg-config knows OpenSSL (Nix: openssl in buildInputs and
-    pkg-config in nativeBuildInputs give the `-L` path), else `-lssl -lcrypto`.
-    `-L` + pkg-config's `libdir` always goes first: Lean's bundled linker does
-    not search the system directory (Debian / Ubuntu's
-    /usr/lib/x86_64-linux-gnu), and pkg-config leaves that path out. -/
+    macOS: Homebrew's keg-only openssl@3 dylibs. Linux: the shared objects
+    by absolute path, in pkg-config's `libdir` for openssl (Nix: openssl in
+    buildInputs, pkg-config in nativeBuildInputs), else Debian / Ubuntu's
+    multiarch directory.
+
+    Not `-L<libdir> -lssl`: Lean's bundled linker links against its own
+    glibc, and `-L/usr/lib/x86_64-linux-gnu` would put the system's C
+    runtime ahead of it (undefined `__libc_csu_init`). `libpqLinkArgs` does
+    the same for libpq. A `libdir` outside the system directories (a Nix
+    store path) is also put in the RUNPATH, so the exe finds it at run time. -/
 def sslLinkArgs : Array String :=
   if System.Platform.isOSX then
     #["/opt/homebrew/opt/openssl@3/lib/libssl.dylib",
       "/opt/homebrew/opt/openssl@3/lib/libcrypto.dylib"]
   else
-    let fromPkgConfig : Option (Array String) := run_io do
-      let pc (args : Array String) : IO (Option String) := do
-        let out ← (IO.Process.output { cmd := "pkg-config", args }
-          ).catchExceptions (fun _ => pure { exitCode := 1, stdout := "", stderr := "" })
-        return if out.exitCode == 0 then some out.stdout.trimAscii.toString else none
-      let some libs ← pc #["--libs", "openssl"] | return none
-      let libdir := (← pc #["--variable=libdir", "openssl"]).getD ""
-      let toks := (libs.splitOn " ").filter (!·.isEmpty)
-      if toks.isEmpty then return none
-      return some ((if libdir.isEmpty then #[] else #["-L" ++ libdir]) ++ toks.toArray)
-    fromPkgConfig.getD #["-L/usr/lib/x86_64-linux-gnu", "-lssl", "-lcrypto"]
+    let libdir : String := (run_io do
+      let out ← (IO.Process.output { cmd := "pkg-config", args := #["--variable=libdir", "openssl"] }
+        ).catchExceptions (fun _ => pure { exitCode := 1, stdout := "", stderr := "" })
+      let d := out.stdout.trimAscii.toString
+      return if out.exitCode == 0 && !d.isEmpty then some d else none
+    ).getD "/usr/lib/x86_64-linux-gnu"
+    let system := libdir.startsWith "/usr/" || libdir.startsWith "/lib"
+    #[libdir ++ "/libssl.so", libdir ++ "/libcrypto.so"]
+      ++ (if system then #[] else #["-Wl,-rpath," ++ libdir])
 
 /-- OpenSSL link args, but ONLY when `LEANTEA_TLS=1` — read at lakefile
     load (configure) time. This is what makes every serving exe
@@ -630,7 +632,7 @@ lean_exe auth_idp_serve where
     local HTTP service, forwarding with `X-Forwarded-User`. HTTPS to the
     provider uses the OpenSSL client, so build it with TLS:
         LEANTEA_TLS=1 lake build -R auth_proxy
-    That compiles `c/leantea_tls.c` for real and links `-lssl -lcrypto`
+    That compiles `c/leantea_tls.c` for real and links libssl and libcrypto
     (`tlsLinkArgs`, package-wide). OpenSSL headers come from pkg-config or
     the usual Homebrew paths; in a Nix build put `openssl` in buildInputs,
     `pkg-config` in nativeBuildInputs and set LEANTEA_TLS=1. At run time
