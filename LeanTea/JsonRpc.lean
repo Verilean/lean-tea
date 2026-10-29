@@ -254,10 +254,7 @@ end Server
 Outbound JSON-RPC over HTTP(S). Shells out to `curl(1)` so the same
 implementation handles plain HTTP, HTTPS, redirects, and auth
 headers without needing TLS in the Lean stdlib (which we don't
-have).
-
-The transport is identical to `LeanTea.Auth.curlPost`; we just send
-JSON instead of form data. -/
+have). -/
 
 structure CallError where
   code    : Int

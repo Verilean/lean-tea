@@ -7,7 +7,7 @@
  * and response parse stay in Lean and are shared with the plaintext client.
  *
  * API exposed to Lean (LeanTea.Net.TlsClient):
- *   leantea_tls_connect(host : String, port : UInt16) : IO Conn
+ *   leantea_tls_connect(host : String, port : UInt16, timeoutMs : UInt32) : IO Conn
  *   leantea_tls_send(conn, ByteArray)                 : IO Unit    -- SSL_write all
  *   leantea_tls_recv(conn, max : UInt32)              : IO ByteArray -- one SSL_read; empty = EOF
  *   leantea_tls_close(conn)                           : IO Unit
@@ -22,6 +22,12 @@
  * Certificate verification is ON by default (peer chain via OpenSSL's
  * default trust store + hostname check via SSL_set1_host). Set the env var
  * LEANTEA_TLS_INSECURE=1 to skip it (debugging self-signed endpoints).
+ *
+ * Timeouts: `timeoutMs` bounds the TCP connect (non-blocking connect +
+ * poll) and, through SO_RCVTIMEO / SO_SNDTIMEO, each read and write after
+ * it, the handshake included. A peer that stops answering gives an IO
+ * error ending in "timed out" instead of blocking the caller. Name
+ * resolution (getaddrinfo) is not bounded.
  */
 
 #include <stdio.h>
@@ -33,6 +39,9 @@
 #ifdef LEANTEA_HAVE_TLS
 
 #include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -41,6 +50,40 @@
 #include <openssl/x509v3.h>
 
 typedef struct { SSL_CTX *ctx; SSL *ssl; int fd; } tls_conn;
+
+/* TCP connect that gives up after timeout_ms. 0 on success, else -1 with
+   errno set (ETIMEDOUT when the time ran out). */
+static int connect_within(int fd, const struct sockaddr *addr, socklen_t len,
+                          uint32_t timeout_ms) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return -1;
+  int rc = connect(fd, addr, len);
+  if (rc != 0 && errno == EINPROGRESS) {
+    struct pollfd pfd = { .fd = fd, .events = POLLOUT };
+    int n;
+    do { n = poll(&pfd, 1, (int)timeout_ms); } while (n < 0 && errno == EINTR);
+    if (n == 0) { errno = ETIMEDOUT; return -1; }
+    if (n < 0) return -1;
+    int soerr = 0; socklen_t sl = sizeof soerr;
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &sl) < 0) return -1;
+    if (soerr != 0) { errno = soerr; return -1; }
+    rc = 0;
+  }
+  if (rc != 0) return -1;
+  if (fcntl(fd, F_SETFL, flags) < 0) return -1;
+  /* every later read / write (handshake included) waits at most timeout_ms */
+  struct timeval tv = { .tv_sec = timeout_ms / 1000, .tv_usec = (timeout_ms % 1000) * 1000 };
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+  return 0;
+}
+
+/* Did an SSL call fail because a socket timeout ran out? */
+static int timed_out(SSL *ssl, int ret) {
+  int se = SSL_get_error(ssl, ret);
+  if (se == SSL_ERROR_WANT_READ || se == SSL_ERROR_WANT_WRITE) return 1;
+  return se == SSL_ERROR_SYSCALL && (errno == EAGAIN || errno == EWOULDBLOCK);
+}
 
 /* ---------- external class for tls_conn* ---------- */
 
@@ -82,7 +125,7 @@ static lean_object *ssl_errstr(const char *prefix) {
 /* ---------- connect (TCP + TLS handshake) ---------- */
 
 LEAN_EXPORT lean_obj_res leantea_tls_connect(
-    b_lean_obj_arg host_obj, uint16_t port, lean_obj_arg w) {
+    b_lean_obj_arg host_obj, uint16_t port, uint32_t timeout_ms, lean_obj_arg w) {
   (void)w;
   const char *host = lean_string_cstr(host_obj);
   char portstr[8];
@@ -95,15 +138,18 @@ LEAN_EXPORT lean_obj_res leantea_tls_connect(
   hints.ai_socktype = SOCK_STREAM;
   int gai = getaddrinfo(host, portstr, &hints, &res);
   if (gai != 0) return tls_err2("tls getaddrinfo", gai_strerror(gai));
-  int fd = -1;
+  if (timeout_ms == 0) timeout_ms = 10000;
+  int fd = -1, cerr = 0;
   for (rp = res; rp; rp = rp->ai_next) {
     fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
     if (fd < 0) continue;
-    if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
+    if (connect_within(fd, rp->ai_addr, rp->ai_addrlen, timeout_ms) == 0) break;
+    cerr = errno;
     close(fd); fd = -1;
   }
   freeaddrinfo(res);
-  if (fd < 0) return tls_err2("tls connect", strerror(errno));
+  if (fd < 0)
+    return tls_err2("tls connect", cerr == ETIMEDOUT ? "timed out" : strerror(cerr));
 
   SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
   if (!ctx) { close(fd); return ssl_errstr("SSL_CTX_new"); }
@@ -129,8 +175,10 @@ LEAN_EXPORT lean_obj_res leantea_tls_connect(
     }
   }
 
-  if (SSL_connect(ssl) != 1) {
-    lean_object *e = ssl_errstr("SSL_connect (TLS handshake)");
+  int hs = SSL_connect(ssl);
+  if (hs != 1) {
+    lean_object *e = timed_out(ssl, hs) ? tls_err("SSL_connect (TLS handshake): timed out")
+                                        : ssl_errstr("SSL_connect (TLS handshake)");
     SSL_free(ssl); SSL_CTX_free(ctx); close(fd);
     return e;
   }
@@ -153,7 +201,8 @@ LEAN_EXPORT lean_obj_res leantea_tls_send(
   size_t sent = 0;
   while (sent < total) {
     int n = SSL_write(c->ssl, data + sent, (int)(total - sent));
-    if (n <= 0) return ssl_errstr("SSL_write");
+    if (n <= 0) return timed_out(c->ssl, n) ? tls_err("SSL_write: timed out")
+                                            : ssl_errstr("SSL_write");
     sent += (size_t)n;
   }
   return lean_io_result_mk_ok(lean_box(0));
@@ -171,6 +220,7 @@ LEAN_EXPORT lean_obj_res leantea_tls_recv(
   uint8_t *buf = lean_sarray_cptr(ba);
   int n = SSL_read(c->ssl, buf, (int)max);
   if (n <= 0) {
+    if (timed_out(c->ssl, n)) { lean_dec(ba); return tls_err("SSL_read: timed out"); }
     int se = SSL_get_error(c->ssl, n);
     /* Peer closed the TLS session (or the TCP conn) => end of body. */
     if (se == SSL_ERROR_ZERO_RETURN || se == SSL_ERROR_SYSCALL) {
@@ -202,8 +252,8 @@ static lean_object *tls_disabled(void) {
     "(and link -lssl -lcrypto). HTTPS via TlsClient requires OpenSSL.")));
 }
 
-LEAN_EXPORT lean_obj_res leantea_tls_connect(b_lean_obj_arg h, uint16_t p, lean_obj_arg w) {
-  (void)h; (void)p; (void)w; return tls_disabled();
+LEAN_EXPORT lean_obj_res leantea_tls_connect(b_lean_obj_arg h, uint16_t p, uint32_t t, lean_obj_arg w) {
+  (void)h; (void)p; (void)t; (void)w; return tls_disabled();
 }
 LEAN_EXPORT lean_obj_res leantea_tls_send(b_lean_obj_arg c, b_lean_obj_arg b, lean_obj_arg w) {
   (void)c; (void)b; (void)w; return tls_disabled();

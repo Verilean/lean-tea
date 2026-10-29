@@ -13,7 +13,12 @@ Content-Length-aware drain, and the `HttpClient.Response` type.
 **Build:** the C shim is opt-in via `LEANTEA_TLS=1` and needs
 `-lssl -lcrypto` in the consuming exe's `weakLinkArgs`. Without the flag,
 the externs raise an IO error explaining how to enable it. Certificate
-verification is on by default; set `LEANTEA_TLS_INSECURE=1` to skip it. -/
+verification is on by default; set `LEANTEA_TLS_INSECURE=1` to skip it.
+
+**Timeouts:** `request` gives up after `timeoutMs` (default 10 s): the
+connect and every read and write wait at most that long, and the whole
+request may not take longer either. The error message ends in
+"timed out". Name resolution is not bounded. -/
 
 namespace LeanTea.Net.TlsClient
 
@@ -25,8 +30,10 @@ opaque ConnPointed : NonemptyType
 def Conn : Type := ConnPointed.type
 instance : Nonempty Conn := ConnPointed.property
 
+/-- TCP connect + TLS handshake. `timeoutMs` bounds the connect and each
+    later read / write (0 means the 10 s default). -/
 @[extern "leantea_tls_connect"]
-opaque connect (host : @& String) (port : UInt16) : IO Conn
+opaque connect (host : @& String) (port : UInt16) (timeoutMs : UInt32 := 10000) : IO Conn
 
 @[extern "leantea_tls_send"]
 opaque send (c : @& Conn) (bytes : @& ByteArray) : IO Unit
@@ -37,8 +44,12 @@ opaque recvRaw (c : @& Conn) (max : UInt32) : IO ByteArray
 @[extern "leantea_tls_close"]
 opaque close (c : @& Conn) : IO Unit
 
-/-- `recv` adapted to the drain contract: an empty read means EOF. -/
-private def recvChunk (c : Conn) : IO (Option ByteArray) := do
+/-- `recv` adapted to the drain contract: an empty read means EOF. Past
+    `deadline` (monotonic ms) it fails, so a peer that trickles bytes
+    cannot hold the caller longer than the request's timeout. -/
+private def recvChunk (c : Conn) (deadline : Nat) : IO (Option ByteArray) := do
+  if (← IO.monoMsNow) > deadline then
+    throw <| IO.userError "TlsClient: response timed out"
   let bs ← recvRaw c 65536
   return if bs.size == 0 then none else some bs
 
@@ -67,23 +78,26 @@ def parseUrl (raw : String) : Option Url := do
 /-! ## Request -/
 
 /-- One HTTPS request → parsed `Response` (handshake, `Connection: close`,
-    Content-Length-aware drain, then close). -/
+    Content-Length-aware drain, then close), within `timeoutMs`. -/
 def request (method : String) (url : Url)
     (body : ByteArray := .empty)
-    (headers : Array (String × String) := #[]) : IO Response := do
-  let c ← connect url.host url.port
+    (headers : Array (String × String) := #[])
+    (timeoutMs : Nat := 10000) : IO Response := do
+  let deadline := (← IO.monoMsNow) + timeoutMs
+  let c ← connect url.host url.port timeoutMs.toUInt32
   let hostHdr := if url.port == 443 then url.host else s!"{url.host}:{url.port}"
   send c (buildRequest method hostHdr url.path body headers)
-  let raw ← drainResponse (recvChunk c)
+  let raw ← drainResponse (recvChunk c deadline)
   close c
   return parseResponse raw
 
 def requestUrl (method rawUrl : String)
     (body : ByteArray := .empty)
-    (headers : Array (String × String) := #[]) : IO Response := do
+    (headers : Array (String × String) := #[])
+    (timeoutMs : Nat := 10000) : IO Response := do
   match parseUrl rawUrl with
   | none     => throw <| IO.userError s!"TlsClient: not an https:// URL: {rawUrl}"
-  | some url => request method url body headers
+  | some url => request method url body headers timeoutMs
 
 /-- GET the body as text; throws on status ≥ 400. -/
 def getText (rawUrl : String) (headers : Array (String × String) := #[]) : IO String := do

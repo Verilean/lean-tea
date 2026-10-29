@@ -25,14 +25,21 @@ def libpqLinkArgs : Array String :=
     #["/usr/lib/x86_64-linux-gnu/libpq.so.5"]
 
 /-- Link args for the OpenSSL TLS client (`c/leantea_tls.c`, LEANTEA_TLS=1).
-    macOS: Homebrew's keg-only openssl@3 dylibs; Linux: `-lssl -lcrypto`.
-    Weak, so only exes that actually request TLS pay the link. -/
+    macOS: Homebrew's keg-only openssl@3 dylibs. Linux: `pkg-config --libs
+    openssl` when pkg-config knows OpenSSL (Nix: openssl in buildInputs and
+    pkg-config in nativeBuildInputs give the `-L` path), else `-lssl -lcrypto`. -/
 def sslLinkArgs : Array String :=
   if System.Platform.isOSX then
     #["/opt/homebrew/opt/openssl@3/lib/libssl.dylib",
       "/opt/homebrew/opt/openssl@3/lib/libcrypto.dylib"]
   else
-    #["-lssl", "-lcrypto"]
+    let fromPkgConfig : Option (Array String) := run_io do
+      let out ← (IO.Process.output { cmd := "pkg-config", args := #["--libs", "openssl"] }
+        ).catchExceptions (fun _ => pure { exitCode := 1, stdout := "", stderr := "" })
+      if out.exitCode != 0 then return none
+      let toks := (out.stdout.trimAscii.toString.splitOn " ").filter (!·.isEmpty)
+      return if toks.isEmpty then none else some toks.toArray
+    fromPkgConfig.getD #["-lssl", "-lcrypto"]
 
 /-- OpenSSL link args, but ONLY when `LEANTEA_TLS=1` — read at lakefile
     load (configure) time. This is what makes every serving exe
@@ -611,6 +618,21 @@ lean_exe persist_spec where
 lean_exe auth_idp_serve where
   srcDir := "examples"
   root := `AuthIdp.Serve
+
+/-- Sign-in proxy (`LeanTea.Auth.Proxy`): OAuth 2.0 login in front of a
+    local HTTP service, forwarding with `X-Forwarded-User`. HTTPS to the
+    provider uses the OpenSSL client, so build it with TLS:
+        LEANTEA_TLS=1 lake build -R auth_proxy
+    That compiles `c/leantea_tls.c` for real and links `-lssl -lcrypto`
+    (`tlsLinkArgs`, package-wide). OpenSSL headers come from pkg-config or
+    the usual Homebrew paths; in a Nix build put `openssl` in buildInputs,
+    `pkg-config` in nativeBuildInputs and set LEANTEA_TLS=1. At run time
+    OpenSSL's default trust store is used (on NixOS /etc/ssl/certs; elsewhere
+    set SSL_CERT_FILE if it is not found). An app that imports
+    `LeanTea.Auth.OAuth2` for its own gate builds the same way. -/
+lean_exe auth_proxy where
+  srcDir := "examples"
+  root := `AuthProxy.Main
 
 /-- Auth integration tests. Spawns `auth_idp_serve` on
     `AUTH_TEST_PORT` (default 18765), polls until /authorize answers,

@@ -1,4 +1,6 @@
 import LeanTea.Net.Http
+import LeanTea.Net.HttpClient
+import LeanTea.Net.TlsClient
 import LeanTea.Persist.Sqlite
 import LeanTea.Persist.Store
 import Lean.Data.Json
@@ -6,12 +8,13 @@ import Lean.Data.Json
 /-! # Google OAuth 2.0 + session management
 
 A self-contained auth layer that gates a `Handler` behind Google
-sign-in. HTTPS calls to Google are made by shelling out to `curl(1)`
-— Lean's `Std.Internal.Async.TCP` only speaks plain TCP. -/
+sign-in. HTTPS calls to Google go through `LeanTea.Net.TlsClient`
+(OpenSSL; build with `LEANTEA_TLS=1`, see the lakefile). -/
 
 namespace LeanTea.Auth
 
 open LeanTea.Net.Http
+open LeanTea.Net
 open LeanTea.Persist
 open Lean (Json)
 
@@ -170,43 +173,38 @@ def urlEncode (s : String) : String := Id.run do
         out := out.push hx[lo]!
   return out
 
-/-! ## HTTPS via curl -/
+/-! ## HTTPS to the provider -/
 
 structure HttpsResp where
   status : Nat
   body   : String
 
-/-- Best-effort HTTPS call. Returns the response body and HTTP status.
-    Adds `-sS --max-time 10` so we fail loudly but quickly. -/
-def curlPost (url : String) (form : String)
-    (headers : Array String := #[]) : IO HttpsResp := do
-  let mut args : Array String := #[
-    "-sS", "--max-time", "10",
-    "-X", "POST",
-    "-w", "\n___STATUS:%{http_code}",
-    "-H", "content-type: application/x-www-form-urlencoded",
-    "-d", form, url]
-  for h in headers do args := args ++ #["-H", h]
-  let out ← IO.Process.output { cmd := "curl", args := args }
-  let raw := out.stdout
-  let parts := raw.splitOn "\n___STATUS:"
-  match parts with
-  | [body, codeS] =>
-    return { status := codeS.trimAscii.toString.toNat?.getD 0, body }
-  | _ => return { status := 0, body := raw }
+/-- One request to a provider endpoint. `https://` goes over
+    `TlsClient` (OpenSSL: certificate chain and host name checked, TLS
+    1.2+); `http://` over the plaintext `HttpClient`, meant only for a
+    local test IdP. The whole call is bounded by `timeoutMs`. Transport
+    failures (refused, timed out, bad certificate) come back as status 0
+    with the message as the body.
 
-def curlGet (url : String) (headers : Array String := #[]) : IO HttpsResp := do
-  let mut args : Array String := #[
-    "-sS", "--max-time", "10",
-    "-w", "\n___STATUS:%{http_code}", url]
-  for h in headers do args := args ++ #["-H", h]
-  let out ← IO.Process.output { cmd := "curl", args := args }
-  let raw := out.stdout
-  let parts := raw.splitOn "\n___STATUS:"
-  match parts with
-  | [body, codeS] =>
-    return { status := codeS.trimAscii.toString.toNat?.getD 0, body }
-  | _ => return { status := 0, body := raw }
+    No subprocess is involved, so the client secret, the code, the PKCE
+    verifier and the access token never appear on a command line. -/
+def providerCall (method url : String) (headers : Array (String × String))
+    (body : String := "") (timeoutMs : Nat := 10000) : IO HttpsResp := do
+  try
+    let r ←
+      if url.startsWith "https://" then
+        TlsClient.requestUrl method url body.toUTF8 headers timeoutMs
+      else match HttpClient.parseUrl url with
+        | some u => HttpClient.request method u body.toUTF8 headers
+        | none => throw <| IO.userError s!"unsupported URL: {url}"
+    return { status := r.status, body := r.bodyText }
+  catch e =>
+    return { status := 0, body := toString e }
+
+/-- POST a form (`application/x-www-form-urlencoded`). -/
+def postForm (url form : String) (headers : Array (String × String) := #[]) : IO HttpsResp :=
+  providerCall "POST" url
+    (#[("Content-Type", "application/x-www-form-urlencoded")] ++ headers) form
 
 /-! ## Google OAuth config + flow -/
 
@@ -256,7 +254,7 @@ def exchangeCode (cfg : Config) (code : String) : IO (Except String String) := d
     "&client_secret=" ++ urlEncode cfg.clientSecret ++
     "&redirect_uri=" ++ urlEncode (cfg.baseUrl ++ "/auth/google/callback") ++
     "&grant_type=authorization_code"
-  let resp ← curlPost "https://oauth2.googleapis.com/token" body
+  let resp ← postForm "https://oauth2.googleapis.com/token" body
   if resp.status != 200 then
     return .error s!"google token endpoint returned {resp.status}: {resp.body}"
   match Json.parse resp.body with
@@ -272,8 +270,8 @@ structure UserInfo where
   picture : String
 
 def fetchUserInfo (accessToken : String) : IO (Except String UserInfo) := do
-  let resp ← curlGet "https://www.googleapis.com/oauth2/v3/userinfo"
-    #[s!"Authorization: Bearer {accessToken}"]
+  let resp ← providerCall "GET" "https://www.googleapis.com/oauth2/v3/userinfo"
+    #[("Authorization", s!"Bearer {accessToken}")]
   if resp.status != 200 then
     return .error s!"userinfo returned {resp.status}: {resp.body}"
   match Json.parse resp.body with

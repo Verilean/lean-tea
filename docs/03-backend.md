@@ -96,7 +96,9 @@ For anything that needs to outlive the X-Model round-trip there's
 `LeanTea.Auth`:
 
 - `LeanTea.Auth` — session cookies, CSRF tokens
-- `LeanTea.Auth.OAuth2` — Google / GitHub / Microsoft OAuth flows
+- `LeanTea.Auth.OAuth2` — Google / GitHub / Microsoft OAuth flows, and
+  `gate` (sign-in in front of a handler)
+- `LeanTea.Auth.Proxy` — that gate as a forwarding proxy (`auth_proxy`)
 - `LeanTea.Auth.Saml` — SAML SP, signed-assertion verification
 - `LeanTea.Auth.Passkey` — WebAuthn / FIDO2 registration & assertion
 - `LeanTea.Auth.Security` — constant-time compare, CSP / HSTS headers
@@ -187,6 +189,55 @@ challenge `S256(codeVerifier)` ends up on the authorize URL.
 `exchangeCode` verifies the returned code, swaps for an access token,
 and `fetchUserInfo` reads the user's `{subject, email, name, …}` from
 the provider's userinfo endpoint.
+
+### Sign-in gate and proxy
+
+`OAuth2.gate` does the whole flow above for you, for any provider:
+
+```lean
+let sessions := (← GateStore.attach db).sessions   -- or: ← signedSessions secret
+let g : GateConfig := {
+  client := providers.github.withClient id secret "https://your.app/auth/callback"
+  allowedLogins := ["octo"], cookieSecure := true }
+serve 8080 "0.0.0.0" (gate g sessions fun user => app user)
+```
+
+- Routes: `/auth/login?next=/path`, the path of the redirect URI
+  (callback) and `/auth/logout`.
+- State + PKCE (S256). The state must also match a short cookie set at
+  login, and the login must finish within `stateTtl` (600 s).
+- Session cookie: `HttpOnly; SameSite=Lax; Max-Age=sessionTtl`, plus
+  `Secure` when `cookieSecure`.
+- `allowedLogins` matches `UserInfo.login`, ignoring case: GitHub's
+  `login`, OIDC's `preferred_username`, else the email. It is checked on
+  every request.
+- Without a session: `apiPrefixes` (`/api/`) get 401, `publicPaths`
+  reach `inner` with `none`, and other pages redirect to login.
+- `inner` gets an `OAuth2.User` (`provider`, `login`, `sub`, `email`,
+  `name`, `picture`).
+- Sessions are kept by a `Sessions` value:
+  - `GateStore.sessions`: SQLite rows, logout final across restarts.
+  - `signedSessions secret`: HMAC-signed cookies, no storage.
+
+`auth_proxy` (`examples/AuthProxy/Main.lean`) is the same gate as a
+separate process in front of a local HTTP service:
+
+```sh
+LEANTEA_TLS=1 lake build -R auth_proxy
+auth_proxy --listen 0.0.0.0:2343 --upstream 127.0.0.1:9107 --provider github \
+  --client-id ID --allowed-users octo --redirect-url https://host:2343/oauth2/callback
+```
+
+- Secrets come from files, by default `$CREDENTIALS_DIRECTORY/client-secret`
+  and `cookie-secret` (systemd `LoadCredential`), never from arguments.
+- It forwards method, path, query, body (≤ 1 MiB) and headers, and
+  returns the status, headers and body.
+- Every client `X-Forwarded-*` is dropped first; then the login is set
+  as `X-Forwarded-User`.
+
+Provider calls use `TlsClient` for `https://`, with a 10 s timeout, and
+the plain `HttpClient` for `http://`, which only a local test IdP
+should use.
 
 For SAML SP flows the same shape applies (`LeanTea.Auth.Saml`); for
 Passkey (WebAuthn) registration & assertion see

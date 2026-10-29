@@ -1,6 +1,8 @@
 import LeanTea.Net.Http
 import LeanTea.Net.Server
 import LeanTea.Auth
+import LeanTea.Crypto.Sha256
+import LeanTea.Crypto.Base64
 import Lean.Data.Json
 
 /-! # LeanTea.Auth.Idp — minimal in-process IdP for testing
@@ -15,7 +17,8 @@ deployment.
   * `/userinfo`  — returns a small JSON profile for the bearer token
 
 PKCE is honoured when the caller sends `code_challenge` /
-`code_verifier`. Refresh tokens, scopes, and consent screens are
+`code_verifier`: `S256` is checked against the verifier's hash,
+`plain` (or no method) by equality. Refresh tokens, scopes, and consent screens are
 explicitly **out of scope** — this is for tests, not deployment.
 
 ```lean
@@ -43,6 +46,8 @@ structure User where
   email   : String
   name    : String := ""
   picture : String := ""
+  /-- GitHub-style user name, sent as `login` when non-empty. -/
+  login   : String := ""
   deriving Inhabited, Repr
 
 /-- A single registered client. Multiple clients can share an IdP
@@ -63,6 +68,7 @@ structure IssuedCode where
   clientId     : String
   redirectUri  : String
   codeChallenge: String        -- "" if PKCE not used
+  challengeMethod : String := "plain"
   userSub      : String
   expiresAt    : Nat           -- monotonic seconds
 
@@ -123,6 +129,7 @@ private def handleAuthorize (st : State) (req : Request) : IO Response := do
   let redirectUri := (lookup q "redirect_uri").getD ""
   let state       := (lookup q "state").getD ""
   let challenge   := (lookup q "code_challenge").getD ""
+  let method      := (lookup q "code_challenge_method").getD "plain"
   match st.cfg.clients.find? (·.clientId == clientId) with
   | none =>
     return Response.text 400 s!"unknown client_id `{clientId}`\n"
@@ -133,6 +140,7 @@ private def handleAuthorize (st : State) (req : Request) : IO Response := do
     let now ← nowSec
     st.codes.modify fun xs =>
       { code, clientId, redirectUri, codeChallenge := challenge,
+        challengeMethod := method,
         userSub := client.user.sub, expiresAt := now + 600 } :: xs
     let sep := if redirectUri.contains '?' then "&" else "?"
     let target := s!"{redirectUri}{sep}code={code}&state={state}"
@@ -162,13 +170,15 @@ private def handleToken (st : State) (req : Request) : IO Response := do
       return Response.jsonError 400 "client_id mismatch"
     if c.expiresAt < now then
       return Response.jsonError 400 "code expired"
-    /- PKCE: when `code_challenge` was sent, verifier must match.
-       We do the easy case: `plain` PKCE (challenge == verifier).
-       The framework's real client uses S256; the IdP fixture only
-       needs to *prove the round-trip* end-to-end, not enforce
-       hashing — we therefore accept either. -/
-    if !c.codeChallenge.isEmpty && codeVerifier.isEmpty then
-      return Response.jsonError 400 "code_verifier required"
+    /- PKCE: when `code_challenge` was sent, the verifier must match
+       it — hashed for `S256`, as is for `plain`. -/
+    if !c.codeChallenge.isEmpty then
+      let expected :=
+        if c.challengeMethod == "S256" then
+          LeanTea.Crypto.Base64.encodeUrl (LeanTea.Crypto.Sha256.hashString codeVerifier)
+        else codeVerifier
+      if codeVerifier.isEmpty || expected != c.codeChallenge then
+        return Response.jsonError 400 "code_verifier mismatch"
     /- Burn the code so a replay fails. -/
     st.codes.modify fun xs => xs.filter (·.code != code)
     let access ← randomToken
@@ -199,12 +209,12 @@ private def handleUserInfo (st : State) (req : Request) : IO Response := do
       -- Structured build: every string field goes through Json.str, so
       -- a `"` in u.email / u.name (attacker-supplied via CLI or DB
       -- restore) gets escaped by the codec instead of breaking out.
-      return Response.json 200 <| Lean.Json.mkObj [
+      return Response.json 200 <| Lean.Json.mkObj <| [
         ("sub",     Lean.Json.str u.sub),
         ("email",   Lean.Json.str u.email),
         ("name",    Lean.Json.str u.name),
         ("picture", Lean.Json.str u.picture)
-      ]
+      ] ++ (if u.login.isEmpty then [] else [("login", Lean.Json.str u.login)])
 
 /-- Compose the three endpoints into a single `Handler`. -/
 def handler (st : State) : Handler := fun req =>

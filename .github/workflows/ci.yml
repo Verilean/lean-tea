@@ -82,13 +82,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-lake-
 
-      - name: Install libpq-dev (for the LEANTEA_POSTGRES=1 build)
-        run: sudo apt-get update && sudo apt-get install -y libpq-dev
+      - name: Install libpq-dev and libssl-dev (LEANTEA_POSTGRES=1, LEANTEA_TLS=1 builds)
+        run: sudo apt-get update && sudo apt-get install -y libpq-dev libssl-dev pkg-config
 
       - name: Build CI test binaries
         env:
           LEANTEA_POSTGRES: "1"
-        run: lake build persist_spec security_spec pure_spec auth_spec auth_idp_serve valkey_smoke s3_smoke postgres_smoke webdav_serve webdav_smoke leanjs_spec vision_spec s3_serve s3_serve_spec site_spec gen_site tui_spec tui_mouse breezehollow breezehollow_spec qa_studio
+          LEANTEA_TLS: "1"
+        # -R: the TLS link args are read when the lakefile is configured,
+        # and a restored cache may hold a configuration without them
+        run: lake build -R persist_spec security_spec pure_spec auth_spec auth_idp_serve auth_proxy valkey_smoke s3_smoke postgres_smoke webdav_serve webdav_smoke leanjs_spec vision_spec s3_serve s3_serve_spec site_spec gen_site tui_spec tui_mouse breezehollow breezehollow_spec qa_studio
 
       # ──────────────────────────────────────────────────────────────
       # Self-contained smoke binaries. Each one is an LSpec-shaped
@@ -104,7 +107,7 @@ jobs:
       - name: Pure subsystems (Template + Crypto + JWT + SAML + Auth.Security, ~36 LSpec assertions)
         run: ./.lake/build/bin/pure_spec
 
-      - name: Auth integration (OAuth2 round-trip via in-process IdP subprocess + SAML fixtures, ~17 LSpec assertions)
+      - name: Auth integration (OAuth2 round-trip, OAuth2.gate, auth_proxy, TLS timeout, SAML fixtures, ~95 LSpec assertions)
         run: ./.lake/build/bin/auth_spec
 
       - name: Valkey driver (RESP round-trip against the `services:` valkey container, 8 LSpec assertions)
