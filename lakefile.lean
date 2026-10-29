@@ -27,19 +27,26 @@ def libpqLinkArgs : Array String :=
 /-- Link args for the OpenSSL TLS client (`c/leantea_tls.c`, LEANTEA_TLS=1).
     macOS: Homebrew's keg-only openssl@3 dylibs. Linux: `pkg-config --libs
     openssl` when pkg-config knows OpenSSL (Nix: openssl in buildInputs and
-    pkg-config in nativeBuildInputs give the `-L` path), else `-lssl -lcrypto`. -/
+    pkg-config in nativeBuildInputs give the `-L` path), else `-lssl -lcrypto`.
+    `-L` + pkg-config's `libdir` always goes first: Lean's bundled linker does
+    not search the system directory (Debian / Ubuntu's
+    /usr/lib/x86_64-linux-gnu), and pkg-config leaves that path out. -/
 def sslLinkArgs : Array String :=
   if System.Platform.isOSX then
     #["/opt/homebrew/opt/openssl@3/lib/libssl.dylib",
       "/opt/homebrew/opt/openssl@3/lib/libcrypto.dylib"]
   else
     let fromPkgConfig : Option (Array String) := run_io do
-      let out ← (IO.Process.output { cmd := "pkg-config", args := #["--libs", "openssl"] }
-        ).catchExceptions (fun _ => pure { exitCode := 1, stdout := "", stderr := "" })
-      if out.exitCode != 0 then return none
-      let toks := (out.stdout.trimAscii.toString.splitOn " ").filter (!·.isEmpty)
-      return if toks.isEmpty then none else some toks.toArray
-    fromPkgConfig.getD #["-lssl", "-lcrypto"]
+      let pc (args : Array String) : IO (Option String) := do
+        let out ← (IO.Process.output { cmd := "pkg-config", args }
+          ).catchExceptions (fun _ => pure { exitCode := 1, stdout := "", stderr := "" })
+        return if out.exitCode == 0 then some out.stdout.trimAscii.toString else none
+      let some libs ← pc #["--libs", "openssl"] | return none
+      let libdir := (← pc #["--variable=libdir", "openssl"]).getD ""
+      let toks := (libs.splitOn " ").filter (!·.isEmpty)
+      if toks.isEmpty then return none
+      return some ((if libdir.isEmpty then #[] else #["-L" ++ libdir]) ++ toks.toArray)
+    fromPkgConfig.getD #["-L/usr/lib/x86_64-linux-gnu", "-lssl", "-lcrypto"]
 
 /-- OpenSSL link args, but ONLY when `LEANTEA_TLS=1` — read at lakefile
     load (configure) time. This is what makes every serving exe
