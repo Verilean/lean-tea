@@ -1,4 +1,5 @@
 import LeanTea.Net.Http
+import LeanTea.Net.WebSocketServer
 import Std.Async.TCP
 import Std.Net
 
@@ -115,8 +116,8 @@ connection until the client (or the handler) opts to close it.
 (HTTP pipelining or piggy-backed subsequent request in the same
 segment), so we don't pay an extra `recv?` in the common case. -/
 
-private partial def handleConnLoop (handler : Handler) (client : Socket.Client)
-    (leftover : ByteArray) : IO Unit := do
+private partial def handleConnLoop (handler : Handler) (ws : WebSocketServer.Router)
+    (client : Socket.Client) (leftover : ByteArray) : IO Unit := do
   match ← recvUntilRequest client leftover with
   | none => (client.shutdown).block
   | some ⟨raw, next⟩ =>
@@ -124,7 +125,24 @@ private partial def handleConnLoop (handler : Handler) (client : Socket.Client)
       match baFindSeq raw CRLFCRLF with
       | some h => raw.extract (h + 4) raw.size
       | none   => .empty
-    let (resp, close) ← match parseRequest raw body with
+    let req? := parseRequest raw body
+    -- WebSocket upgrade: the router decides; the session then owns the
+    -- connection until it ends (no more HTTP on this socket).
+    let upgrade? ← match req? with
+      | some req =>
+        if WebSocketServer.isUpgrade req then
+          match ← (try ws req catch e => pure (some (.error (Response.serverError s!"ws router: {e}")))) with
+          | some r => pure (some (req, r))
+          | none => pure none
+        else pure none
+      | none => pure none
+    match upgrade? with
+    | some (req, .ok session) => WebSocketServer.run client req next session
+    | some (_, .error resp) =>
+      (client.send (annotateConnection resp true).toBytes).block
+      (client.shutdown).block
+    | none =>
+    let (resp, close) ← match req? with
       | some req =>
         let c := wantsClose req
         let r ← try handler req
@@ -136,20 +154,21 @@ private partial def handleConnLoop (handler : Handler) (client : Socket.Client)
     if close then
       (client.shutdown).block
     else
-      handleConnLoop handler client next
+      handleConnLoop handler ws client next
 
-private def handleConn (handler : Handler) (client : Socket.Client) : IO Unit := do
+private def handleConn (handler : Handler) (ws : WebSocketServer.Router) (client : Socket.Client) : IO Unit := do
   try
-    handleConnLoop handler client .empty
+    handleConnLoop handler ws client .empty
   catch e =>
     IO.eprintln s!"conn error: {e}"
 
 /-! ## Accept loops -/
 
-partial def serveLoop (server : Socket.Server) (handler : Handler) : IO Unit := do
+partial def serveLoop (server : Socket.Server) (handler : Handler)
+    (ws : WebSocketServer.Router := WebSocketServer.Router.none) : IO Unit := do
   let client ← (server.accept).block
-  handleConn handler client
-  serveLoop server handler
+  handleConn handler ws client
+  serveLoop server handler ws
 
 /-- Concurrent variant: each accepted connection is handled in its
     own `IO.asTask` so a long-running handler doesn't stall the rest
@@ -159,10 +178,10 @@ partial def serveLoop (server : Socket.Server) (handler : Handler) : IO Unit := 
     `serveLoop` above is otherwise preferable — simpler lifetimes,
     no task-spawn overhead. See `docs/BENCHMARKS.md` for numbers. -/
 partial def serveLoopConcurrent (server : Socket.Server) (handler : Handler)
-    : IO Unit := do
+    (ws : WebSocketServer.Router := WebSocketServer.Router.none) : IO Unit := do
   let client ← (server.accept).block
-  let _ ← IO.asTask (handleConn handler client)
-  serveLoopConcurrent server handler
+  let _ ← IO.asTask (handleConn handler ws client)
+  serveLoopConcurrent server handler ws
 
 /-- Parse a dotted IPv4 string ("127.0.0.1") into a `Std.Net.IPv4Addr`.
     Returns `0.0.0.0` if parsing fails. -/
@@ -176,7 +195,7 @@ def parseIPv4 (s : String) : IPv4Addr :=
     concurrent task. Use when a handler can block on a user / external
     event that has to be resolved via another HTTP request. -/
 def serveConcurrent (port : UInt16 := 8001) (host : String := "0.0.0.0")
-    (handler : Handler) : IO Unit := do
+    (handler : Handler) (ws : WebSocketServer.Router := WebSocketServer.Router.none) : IO Unit := do
   let server ← Socket.Server.mk
   let addr : SocketAddress := .v4 {
     addr := parseIPv4 host,
@@ -188,10 +207,12 @@ def serveConcurrent (port : UInt16 := 8001) (host : String := "0.0.0.0")
   try server.noDelay catch _ => pure ()
   server.listen 128
   IO.eprintln s!"serving (concurrent, keep-alive) on http://{host}:{port}/"
-  serveLoopConcurrent server handler
+  serveLoopConcurrent server handler ws
 
+/-- Sequential accept loop. A WebSocket session (`ws`) holds the loop for
+    its whole lifetime, so servers with WebSockets want `serveConcurrent`. -/
 def serve (port : UInt16 := 8001) (host : String := "0.0.0.0")
-    (handler : Handler) : IO Unit := do
+    (handler : Handler) (ws : WebSocketServer.Router := WebSocketServer.Router.none) : IO Unit := do
   let server ← Socket.Server.mk
   let addr : SocketAddress := .v4 {
     addr := parseIPv4 host,
@@ -201,6 +222,6 @@ def serve (port : UInt16 := 8001) (host : String := "0.0.0.0")
   try server.noDelay catch _ => pure ()
   server.listen 128
   IO.eprintln s!"serving (keep-alive) on http://{host}:{port}/"
-  serveLoop server handler
+  serveLoop server handler ws
 
 end LeanTea.Net.Server

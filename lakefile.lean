@@ -647,6 +647,18 @@ lean_exe auth_proxy where
   srcDir := "examples"
   root := `AuthProxy.Main
 
+/-- WebSocket echo server used by `websocket_spec` (spawned as a subprocess). -/
+lean_exe ws_echo_serve where
+  srcDir := "examples"
+  root := `Smoke.WsEcho
+
+/-- RFC 6455: frame codec + handshake (pure) and a live `ws_echo_serve`
+    driven by the `LeanTea.Net.WebSocket` client and hand-built frames.
+    Needs `ws_echo_serve` built first. -/
+lean_exe websocket_spec where
+  srcDir := "examples"
+  root := `Tests.WebSocketSpec
+
 /-- Auth integration tests. Spawns `auth_idp_serve` on
     `AUTH_TEST_PORT` (default 18765), polls until /authorize answers,
     runs the full SP-side round-trip (beginAuth → /authorize →

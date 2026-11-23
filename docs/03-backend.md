@@ -271,7 +271,35 @@ handler that writes it is one function from the route to the response.
 When you need a long-lived bidirectional channel (CDP, real-time data),
 `LeanTea.Net.WebSocket` is a pure-Lean RFC 6455 client (handshake +
 masking + frame encoder). The Chrome-CDP MCP server (Chapter 8) is
-built on it.
+built on it. `connect url headers` adds headers (auth, `Origin`) to the
+upgrade request.
+
+The server side is `LeanTea.Net.WebSocketServer`. Pass a router to
+`serveConcurrent`; it sees each upgrade request and either declines
+(`none`, the request goes to your HTTP handler), refuses
+(`some (.error resp)`, e.g. 401/403 after checking cookies or `Origin`),
+or accepts with a session that owns the connection:
+
+```lean
+open LeanTea.Net.WebSocketServer in
+def ws : Router := fun req => pure <|
+  if req.path == "/echo" then some (.ok fun conn => do
+    repeat
+      match ← conn.recv with
+      | some m => conn.send m      -- .text s / .binary b
+      | none => break)              -- peer closed (or protocol error)
+  else none
+
+serveConcurrent 8080 "127.0.0.1" handler (ws := ws)
+```
+
+`recv` reassembles fragments, answers pings, validates UTF-8 and
+performs the close handshake; `send*` is safe from several tasks (a
+reader loop plus a pusher). The frame codec (`LeanTea.Net.WebSocketFrame`)
+is pure and usable on its own. Use `serveConcurrent`: sessions are
+long-lived. Only the default (libuv) server upgrades; the `fast`/`reactor`
+backends don't. `examples/Smoke/WsEcho.lean` + `websocket_spec` are the
+reference.
 
 For typed RPC between Lean server and Lean (or `.leanjs`) client see
 Chapter 5.
@@ -294,8 +322,8 @@ it; it just doesn't bake it in.
   costs add up; consider a `.leanjs` widget that maintains local state
   and only syncs on submit.
 - **Long-running operations** — handlers are synchronous Lean IO; an
-  LLM call that streams for 20 s blocks one connection. Use SSE or
-  open a separate WebSocket path.
+  LLM call that streams for 20 s blocks one connection. Open a
+  WebSocket path (`LeanTea.Net.WebSocketServer`) for streaming.
 - **Binary protocols** — the X-Model header is a text-encoded blob.
   Useful for small models; not so great if your model is a serialised
   image.
