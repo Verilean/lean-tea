@@ -117,8 +117,8 @@ private def innerText (xml : String) (qual unqual : String) : String :=
     | some afterOpen =>
       -- Drop closing `</…>`.
       match beforeFirst afterOpen "</" with
-      | some inside => inside.trim
-      | none        => afterOpen.trim
+      | some inside => inside.trimAscii.toString
+      | none        => afterOpen.trimAscii.toString
 
 /-- Pluck a single attribute value off the opening tag. -/
 private def attrOf (xml : String) (attr : String) : String :=

@@ -84,7 +84,7 @@ private partial def readOneRequest (fd : UInt32) (acc : ByteArray)
     let lower := headersStr.toLower
     let cl := match lower.splitOn "content-length:" with
       | _ :: rest :: _ =>
-        let v := (rest.takeWhile (· != '\r')).toString.trim
+        let v := (rest.takeWhile (· != '\r')).toString.trimAscii.toString
         v.toNat?.getD 0
       | _ => 0
     let headBytes := headersStr.toUTF8
@@ -110,7 +110,7 @@ private partial def readOneRequest (fd : UInt32) (acc : ByteArray)
 private def wantsClose (req : Request) : Bool :=
   let conn := (req.header? "connection").getD ""
   let l := conn.toLower
-  if l.trim == "close" then true
+  if l.trimAscii.toString == "close" then true
   else if req.version.startsWith "HTTP/1.0" && l != "keep-alive" then true
   else false
 

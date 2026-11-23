@@ -63,7 +63,7 @@ private def wrap (handler : Handler) (raw : ByteArray) : IO ByteArray := do
       let conn := (req.header? "connection").getD ""
       let l := conn.toLower
       let wantsClose :=
-        if l.trim == "close" then true
+        if l.trimAscii.toString == "close" then true
         else if req.version.startsWith "HTTP/1.0" && l != "keep-alive" then true
         else false
       let r ← try handler req

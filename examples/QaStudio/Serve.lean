@@ -332,8 +332,8 @@ def outlineJs : String := "(() => {
   const out = [];
   const vis = (e) => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
     return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
-  const label = (e) => { if (e.id) { const l = document.querySelector('label[for=\"' + e.id + '\"]'); if (l) return l.innerText.trim(); }
-    return (e.getAttribute('aria-label') || e.placeholder || e.name || '').trim(); };
+  const label = (e) => { if (e.id) { const l = document.querySelector('label[for=\"' + e.id + '\"]'); if (l) return l.innerText.trimAscii.toString(); }
+    return (e.getAttribute('aria-label') || e.placeholder || e.name || '').trimAscii.toString(); };
   for (const e of document.querySelectorAll('h1,h2,h3,input,textarea,select,button,a,[role=button],.error,[role=alert],li,p')) {
     if (!vis(e)) continue;
     const t = e.tagName.toLowerCase();
@@ -341,7 +341,7 @@ def outlineJs : String := "(() => {
       const kind = e.type === 'checkbox' ? 'checkbox' + (e.checked ? ' (checked)' : '') : (e.type === 'password' ? 'password field' : 'text field');
       out.push(kind + ' \"' + label(e) + '\"' + (e.type !== 'password' && e.value ? ' containing \"' + e.value + '\"' : '') + (document.activeElement === e ? ' [focused]' : ''));
     } else {
-      const txt = (e.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
+      const txt = (e.innerText || '').trimAscii.toString().replace(/\\s+/g, ' ').slice(0, 80);
       if (!txt) continue;
       out.push((t === 'button' || e.getAttribute('role') === 'button' ? 'button' : t === 'a' ? 'link' : t === 'li' ? 'list item' : /^h[123]$/.test(t) ? 'heading' : 'text') + ' \"' + txt + '\"');
     }
