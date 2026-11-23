@@ -91,7 +91,7 @@ jobs:
           LEANTEA_TLS: "1"
         # -R: the TLS link args are read when the lakefile is configured,
         # and a restored cache may hold a configuration without them
-        run: lake build -R persist_spec security_spec pure_spec auth_spec auth_idp_serve auth_proxy valkey_smoke s3_smoke postgres_smoke webdav_serve webdav_smoke leanjs_spec vision_spec s3_serve s3_serve_spec site_spec gen_site tui_spec tui_mouse breezehollow breezehollow_spec qa_studio
+        run: lake build -R persist_spec security_spec pure_spec auth_spec auth_idp_serve auth_proxy valkey_smoke s3_smoke postgres_smoke webdav_serve webdav_smoke leanjs_spec vision_spec s3_serve s3_serve_spec site_spec gen_site tui_spec tui_mouse ws_echo_serve websocket_spec breezehollow breezehollow_spec qa_studio
 
       # ──────────────────────────────────────────────────────────────
       # Self-contained smoke binaries. Each one is an LSpec-shaped
@@ -147,6 +147,8 @@ jobs:
 
       - name: TUI widget kit (layout, combinators, elements, app loop, raw-mode ANSI, wide chars, input decoding, mouse, repaint; 67 LSpec assertions)
         run: ./.lake/build/bin/tui_spec
+      - name: WebSocket server (RFC 6455 codec + handshake, live echo server: fragments, ping/pong, close codes, concurrency; 29 LSpec assertions)
+        run: ./.lake/build/bin/websocket_spec
 
       - name: Breezehollow three.js demo (World.leanjs compiles + checks, node --check, page ids, Physics.step properties under node; 23 LSpec assertions)
         run: ./.lake/build/bin/breezehollow_spec

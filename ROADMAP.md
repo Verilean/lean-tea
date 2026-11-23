@@ -19,7 +19,7 @@ What's shipped, what's next, and how the next month sequences.
 - **Persist**: SQLite + MySQL backends, `Entity` / `Repo` typeclasses,
   versioned migration runner, JSON-blob columns for big rows.
 - **Net**: pure-Lean HTTP/1.1 server + client, pure-Lean WebSocket
-  (RFC 6455) client.
+  (RFC 6455) client and server (upgrade routing in `Net.Server`).
 - **Rpc** (Servant-style typed endpoints, generated JS client,
   `/api/_endpoints` discovery doc), **JsonRpc** envelope.
 - **Mcp library**: single `Handler` record drives stdio + HTTP
@@ -116,7 +116,8 @@ ICFP) won't move adoption.
 | Gap | Why it's deferred | Notes |
 |---|---|---|
 | **`LeanTea.WebSpec` — typed deterministic E2E** | Wanted to ship; cut to keep v0.1 focused on Secure-by-Construction. Today: `LeanTea.LSpec` (unit) + `examples/UiScript` (LLM-driven E2E). | **v0.2 target**. `do`-notation API over `ChromeCdpMcp`. See [docs/10-testing.md](docs/10-testing.md) for the pitch. |
-| Server-Sent Events / WebSocket server | The pattern works; we lack a typed-Msg streaming primitive | Probably 2 weeks once the v1 ships |
+| Server-Sent Events | WebSocket server now exists (`LeanTea.Net.WebSocketServer`); SSE not needed for current apps | Revisit on demand |
+| Typed-Msg streaming over WebSocket | The transport exists; no TEA-level `Sub` for it yet | Next step after the server |
 | HTTPS / TLS client | curl handles it for now; OpenSSL FFI is a project | `LeanTea.Net.HttpClient` stays HTTP-only |
 | `lake exe leantea init` boilerplate generator | `lake new` + the [Quickstart](docs/00-quickstart.md) template covers it | Reassess after the launch reaction |
 | State Machine Proof primitive | Domain-shaped, not framework-shaped | See `SECURITY.md` §"Primitive 4" |

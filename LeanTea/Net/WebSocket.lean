@@ -96,8 +96,9 @@ private partial def readHead (s : Socket.Client) (acc : ByteArray)
     | some chunk => readHead s (acc ++ chunk)
 
 /-- Open a `ws://host:port/path` connection. Performs the RFC 6455
-    upgrade handshake and returns a usable `Conn`. -/
-def connect (rawUrl : String) : IO Conn := do
+    upgrade handshake and returns a usable `Conn`. `headers` are added to
+    the upgrade request (e.g. `Authorization`, `Origin`). -/
+def connect (rawUrl : String) (headers : Array (String × String) := #[]) : IO Conn := do
   let trimmed :=
     if rawUrl.startsWith "ws://" then rawUrl.drop 5 |>.toString
     else rawUrl
@@ -125,7 +126,8 @@ def connect (rawUrl : String) : IO Conn := do
     "Upgrade: websocket\r\n" ++
     "Connection: Upgrade\r\n" ++
     s!"Sec-WebSocket-Key: {key}\r\n" ++
-    "Sec-WebSocket-Version: 13\r\n\r\n"
+    "Sec-WebSocket-Version: 13\r\n" ++
+    String.join (headers.toList.map fun (k, v) => s!"{k}: {v}\r\n") ++ "\r\n"
   (socket.send req.toUTF8).block
   let (head, extra) ← readHead socket .empty
   expectStatus101 head
