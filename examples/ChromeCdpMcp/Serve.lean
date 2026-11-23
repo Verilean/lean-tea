@@ -344,7 +344,7 @@ private def chromeScrollCollect (base targetId containerSel itemSel direction : 
     "  if (!s) return JSON.stringify({err: 'no container'});\n" ++
     "  const itemSel = " ++ jsString itemSel ++ ";\n" ++
     "  const seen = new Set();\n" ++
-    "  const collapse = t => t.replace(/\\s+/g, ' ').trim();\n" ++
+    "  const collapse = t => t.replace(/\\s+/g, ' ').trimAscii.toString();\n" ++
     "  let stable = 0, lastH = 0;\n" ++
     "  for (let i = 0; i < " ++ toString maxScrolls ++ "; i++) {\n" ++
     "    document.querySelectorAll(itemSel).forEach(e => {\n" ++

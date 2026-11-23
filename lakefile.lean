@@ -175,7 +175,7 @@ target leantea_mysql_o pkg : FilePath := do
     let cf ← IO.Process.output {
       cmd := "mysql_config", args := #["--cflags"] }
     if cf.exitCode == 0 then
-      for tok in cf.stdout.trim.splitOn " " do
+      for tok in cf.stdout.trimAscii.toString.splitOn " " do
         if !tok.isEmpty then weakArgs := weakArgs.push tok
     traceArgs := traceArgs.push "-DLEANTEA_HAVE_MYSQL"
   buildO oFile srcJob weakArgs traceArgs "cc"
@@ -246,8 +246,8 @@ target leantea_crypto_o pkg : FilePath := do
     let cf ← (IO.Process.output {
       cmd := "pkg-config", args := #["--cflags", "openssl"] }
         ).catchExceptions (fun _ => pure { exitCode := 1, stdout := "", stderr := "" })
-    if cf.exitCode == 0 && !cf.stdout.trim.isEmpty then
-      for tok in cf.stdout.trim.splitOn " " do
+    if cf.exitCode == 0 && !cf.stdout.trimAscii.toString.isEmpty then
+      for tok in cf.stdout.trimAscii.toString.splitOn " " do
         if !tok.isEmpty then weakArgs := weakArgs.push tok
       foundHeader := true
     if !foundHeader then
@@ -333,8 +333,8 @@ target leantea_tls_o pkg : FilePath := do
     let cf ← (IO.Process.output {
       cmd := "pkg-config", args := #["--cflags", "openssl"] }
         ).catchExceptions (fun _ => pure { exitCode := 1, stdout := "", stderr := "" })
-    if cf.exitCode == 0 && !cf.stdout.trim.isEmpty then
-      for tok in cf.stdout.trim.splitOn " " do
+    if cf.exitCode == 0 && !cf.stdout.trimAscii.toString.isEmpty then
+      for tok in cf.stdout.trimAscii.toString.splitOn " " do
         if !tok.isEmpty then weakArgs := weakArgs.push tok
       foundHeader := true
     if !foundHeader then

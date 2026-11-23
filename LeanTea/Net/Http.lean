@@ -257,7 +257,7 @@ private def parseHeaderLine (line : String) : Option (String × String) :=
   match line.splitOn ":" with
   | [] | [_] => none
   | k :: rest =>
-    let v := (String.intercalate ":" rest).trim
+    let v := (String.intercalate ":" rest).trimAscii.toString
     some (k.toLower, v)
 
 /-- Parse the complete request given the raw bytes that include both

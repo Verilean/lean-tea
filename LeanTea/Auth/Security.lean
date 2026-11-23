@@ -65,7 +65,7 @@ open LeanTea
 
     Relative paths (`/foo`, `./img.png`, `?q=1`) pass through. -/
 def safeUrl (raw : String) : Option String :=
-  let lower := raw.trim.toLower
+  let lower := raw.trimAscii.toString.toLower
   let allow := ["http://", "https://", "mailto:", "tel:", "ftp:"]
   if allow.any (fun pfx => lower.startsWith pfx) then some raw
   else if lower.isEmpty then none

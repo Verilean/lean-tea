@@ -79,7 +79,7 @@ def serve (b : Backend) (port : UInt16) (host : String) (handler : Handler)
     `reactor:N` runs N SO_REUSEPORT loops. Unknown strings return
     `none` so callers can fall back to a default or fail loudly. -/
 def parse? (s : String) : Option Backend :=
-  match s.trim.toLower with
+  match s.trimAscii.toString.toLower with
   | "libuv"   => some .libuv
   | "reactor" => some (.reactor 1)
   | "fast"    => some (.fast 8)

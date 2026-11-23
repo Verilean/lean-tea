@@ -45,7 +45,7 @@ def main (args : List String) : IO UInt32 := do
     | .ok _ =>
       let js := LeanJs.Codegen.compileToString prog
       let outPath :=
-        if path.endsWith ".leanjs" then path.dropRight 7 ++ ".js"
+        if path.endsWith ".leanjs" then (path.dropEnd 7).toString ++ ".js"
         else path ++ ".js"
       IO.FS.writeFile outPath js
       let out ← IO.Process.output { cmd := "node", args := #[outPath] }

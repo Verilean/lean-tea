@@ -427,7 +427,7 @@ async function attachFiles(files) {
 }
 
 async function sendMessage() {
-  const text = input.value.trim();
+  const text = input.value.trimAscii.toString();
   if (!text && !pendingImages.length) return;
   if (!activeSessionId) {
     await newSession();

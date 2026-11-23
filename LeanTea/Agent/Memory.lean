@@ -67,7 +67,7 @@ private def writeMapRaw (j : Json) : IO Unit := do
 
 /-- Look up one key. Returns `Json.null` when the key is missing so
     the LLM can detect "not learned yet" without exception handling. -/
-def recall (key : String) : IO Json := do
+def «recall» (key : String) : IO Json := do
   let m ← readMapRaw
   return (m.getObjVal? key).toOption.getD Json.null
 

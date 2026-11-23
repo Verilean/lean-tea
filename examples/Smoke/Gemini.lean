@@ -33,7 +33,7 @@ def main : IO Unit := do
     IO.println "── ask ──────────────────────────────────────────"
     let r1 ← ask cfg "Reply with the single word OK."
       { temperature := some 0.0, maxOutputTokens := some 16 }
-    IO.println s!"text=`{r1.text.trim}`  finish={r1.finishReason}  \
+    IO.println s!"text=`{r1.text.trimAscii.toString}`  finish={r1.finishReason}  \
 tokens in={r1.usage.input} out={r1.usage.output}"
     if r1.text.isEmpty then
       throw <| IO.userError "gemini_smoke: ask returned empty text"

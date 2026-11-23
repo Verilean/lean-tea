@@ -34,7 +34,7 @@ private def compiledMatches (src : String) (expected : String) : LSpec :=
     let js := LeanTea.Js.renderStmt stmt
     -- We tolerate the trailing semicolon `S.doE` adds.
     let rendered :=
-      if js.endsWith ";" then js.dropRight 1 else js
+      if js.endsWith ";" then (js.dropEnd 1).toString else js
     if rendered == expected then
       it s!"{src} → {expected}" true
     else
@@ -85,7 +85,7 @@ def runNodeCase (c : NodeCase) : IO LSpec := do
     let out ← IO.Process.output { cmd := "node", args := #[path] }
     if out.exitCode != 0 then
       return it c.label false s!"node exit {out.exitCode}: {out.stderr}"
-    let nodeOut := out.stdout.trimRight
+    let nodeOut := out.stdout.trimAsciiEnd.toString
     if nodeOut != c.expected then
       return it c.label false s!"node: expected `{c.expected}`, got `{nodeOut}`"
     if c.jsOnly then
@@ -450,7 +450,7 @@ def runLeanCase (c : LeanRunCase) : IO LSpec := do
         cmd := "lean", args := #["--run", path] }
       if out.exitCode != 0 then
         return it c.label false s!"lean --run exit {out.exitCode}: {out.stderr}"
-      let leanOut := out.stdout.trimRight
+      let leanOut := out.stdout.trimAsciiEnd.toString
       if leanOut == c.expected then
         return it s!"{c.label} ✓ lean --run = {leanOut}" true
       else
