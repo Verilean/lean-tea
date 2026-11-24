@@ -549,6 +549,79 @@ namespace SamlGroup
 open LeanTea.Auth.Idp.Saml
 open LeanTea.Auth.Saml (parseResponse)
 
+/-- The XMLDSig template xmlsec1 fills in: an enveloped RSA-SHA256
+    signature over the assertion `id`. -/
+def sigTemplate (id : String) : String :=
+  "<ds:Signature xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"><ds:SignedInfo>" ++
+  "<ds:CanonicalizationMethod Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/>" ++
+  "<ds:SignatureMethod Algorithm=\"http://www.w3.org/2001/04/xmldsig-more#rsa-sha256\"/>" ++
+  s!"<ds:Reference URI=\"#{id}\"><ds:Transforms>" ++
+  "<ds:Transform Algorithm=\"http://www.w3.org/2000/09/xmldsig#enveloped-signature\"/>" ++
+  "<ds:Transform Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/></ds:Transforms>" ++
+  "<ds:DigestMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#sha256\"/><ds:DigestValue/>" ++
+  "</ds:Reference></ds:SignedInfo><ds:SignatureValue/></ds:Signature>"
+
+def hasTool (cmd : String) : IO Bool := do
+  try
+    let out ← IO.Process.output { cmd, args := #["version"] }
+    let _ := out
+    pure true
+  catch _ => pure false
+
+/-- Sign `xml` (with a template inside) with xmlsec1 using `key`/`cert`. -/
+def xmlsecSign (dir : System.FilePath) (key cert xml : String) : IO String := do
+  let lax := (← LeanTea.Auth.Saml.xmlsecVerifyArgs).contains "--lax-key-search"
+  IO.FS.writeFile (dir / "tmpl.xml") xml
+  let out ← IO.Process.output { cmd := "xmlsec1", args :=
+    #["--sign"] ++ (if lax then #["--lax-key-search"] else #[]) ++
+    #["--privkey-pem", s!"{key},{cert}", "--id-attr:ID", "Assertion",
+      "--output", (dir / "signed.xml").toString, (dir / "tmpl.xml").toString] }
+  if out.exitCode != 0 then throw <| IO.userError s!"xmlsec1 --sign: {out.stderr}"
+  IO.FS.readFile (dir / "signed.xml")
+
+/-- `Saml.validate` end to end on responses really signed by xmlsec1
+    with a throwaway IdP key. Skipped when xmlsec1 or openssl is missing
+    (CI installs both). -/
+def xmlsecE2E : IO LSpec := do
+  unless (← hasTool "xmlsec1") && (← hasTool "openssl") do
+    return group "validate with xmlsec1 (skipped: xmlsec1 or openssl not installed)" []
+  IO.FS.withTempDir fun dir => do
+    for who in ["idp", "evil"] do
+      let out ← IO.Process.output { cmd := "openssl", args := #["req", "-x509", "-newkey", "rsa:2048",
+        "-nodes", "-days", "1", "-subj", s!"/CN={who}",
+        "-keyout", (dir / s!"{who}.key").toString, "-out", (dir / s!"{who}.pem").toString] }
+      if out.exitCode != 0 then throw <| IO.userError s!"openssl: {out.stderr}"
+    let withSig := fun (f : Fixture) =>
+      (buildResponse f).replace "</saml:Issuer>" ("</saml:Issuer>" ++ sigTemplate f.assertionId)
+    let sign := fun (who : String) (f : Fixture) =>
+      xmlsecSign dir (dir / s!"{who}.key").toString (dir / s!"{who}.pem").toString (withSig f)
+    let cfg : LeanTea.Auth.Saml.Config := {
+      spEntityId := "https://sp.example.com", idpCertPemPath := (dir / "idp.pem").toString,
+      acsUrl := "https://sp.example.com/saml/acs", idpEntityId := "https://idp.example.com" }
+    let b64 := fun (s : String) => LeanTea.Crypto.Base64.encode s.toUTF8
+    let cache ← LeanTea.Auth.Saml.ReplayCache.new
+    let good ← sign "idp" { assertionId := "_e2e1" }
+    let first ← LeanTea.Auth.Saml.validate cfg (b64 good) (replay := cache)
+    let replayed ← LeanTea.Auth.Saml.validate cfg (b64 good) (replay := cache)
+    let evil ← sign "evil" { assertionId := "_e2e2", subjectEmail := "mallory@example.com" }
+    let evilR ← LeanTea.Auth.Saml.validate cfg (b64 evil) (replay := cache)
+    let tampered := good.replace "alice@example.com" "mallory@example.com"
+    let tamperedR ← LeanTea.Auth.Saml.validate cfg (b64 tampered) (replay := cache)
+    let expired ← sign "idp" { assertionId := "_e2e3", notOnOrAfter := "2020-01-01T00:00:00Z" }
+    let expiredR ← LeanTea.Auth.Saml.validate cfg (b64 expired) (replay := cache)
+    let isOk := fun (r : Except String LeanTea.Auth.Saml.Assertion) => match r with
+      | .ok a => a.nameId == "alice@example.com" | .error _ => false
+    let isErr := fun (r : Except String LeanTea.Auth.Saml.Assertion) => match r with
+      | .ok _ => false | .error _ => true
+    let detail := fun (r : Except String LeanTea.Auth.Saml.Assertion) => match r with
+      | .ok a => s!"ok {a.nameId}" | .error e => e
+    return group "validate with xmlsec1 (really signed responses)" [
+      it "a response signed by the IdP is accepted" (isOk first) (detail first),
+      it "the same response a second time is refused (replay)" (isErr replayed) (detail replayed),
+      it "a response signed by another key is refused" (isErr evilR) (detail evilR),
+      it "a signed response edited afterwards is refused" (isErr tamperedR) (detail tamperedR),
+      it "a signed but expired response is refused" (isErr expiredR) (detail expiredR)]
+
 def run : IO LSpec := do
   /- 1. Plain happy path: default fixture. -/
   let xmlOk := buildResponse {}
@@ -597,12 +670,81 @@ def run : IO LSpec := do
       "</saml:Assertion>" (sigFor "_other" ++ "</saml:Assertion>")
   -- Unsigned single assertion → reject (no <Signature>).
   let unsigned := buildResponse { assertionId := "_a1" }
+  /- 5. Validity window, bearer confirmation, recipient, InResponseTo,
+     issuer — `checkAssertion` at a fixed clock (2030-01-01T00:00:00Z). -/
+  let signed := fun (f : Fixture) =>
+    (buildResponse f).replace "</saml:Assertion>" (sigFor f.assertionId ++ "</saml:Assertion>")
+  let cfg : LeanTea.Auth.Saml.Config := {
+    spEntityId := "https://sp.example.com", idpCertPemPath := "",
+    acsUrl := "https://sp.example.com/saml/acs", idpEntityId := "https://idp.example.com" }
+  let now : Int := 1893456000
+  let accepts := fun (f : Fixture) (irt : Option String) =>
+    match LeanTea.Auth.Saml.checkAssertion cfg now (signed f) irt with
+    | .ok _ => true | .error _ => false
+  let ok := fun (f : Fixture) => accepts f none
+  let cache ← LeanTea.Auth.Saml.ReplayCache.new
+  let first ← cache.claim "_r1" (now + 300) now
+  let again ← cache.claim "_r1" (now + 300) now
+  let later ← cache.claim "_r1" (now + 900) (now + 301)
+  /- 6. Markup the signature check never sees: comments, DOCTYPE, CDATA,
+     and a forged assertion under another prefix. -/
+  let forgedIn := "<saml:Assertion ID=\"_a1\"><saml:Issuer>https://idp.example.com</saml:Issuer>" ++
+    "<saml:Subject><saml:NameID>mallory@example.com</saml:NameID></saml:Subject></saml:Assertion>"
+  let commented := (signed {}).replace "<samlp:Response xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\">"
+    ("<samlp:Response xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\"><!--" ++ forgedIn ++ "-->")
+  let commentedR := LeanTea.Auth.Saml.checkAssertion cfg now commented
+  let saml2 := ((signed {}).replace "<saml:" "<saml2:").replace "</saml:" "</saml2:"
+  let prefixed := saml2.replace "<samlp:Response xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\">"
+    ("<samlp:Response xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\">" ++ forgedIn)
+  let refusedRaw := fun (xml : String) =>
+    match LeanTea.Auth.Saml.checkAssertion cfg now xml with | .ok _ => false | .error _ => true
+  let e2e ← xmlsecE2E
   let guard := fun (xml : String) =>
     match parseResponse xml with
     | .ok a => match LeanTea.Auth.Saml.checkNoWrapping xml a with
                | .ok _ => true | .error _ => false
     | .error _ => false
   return group "SAML 2.0 fixture round-trip" [
+    group "validity window and confirmation (checkAssertion at a fixed clock)" [
+      it "a current assertion for this SP is accepted" (ok {}),
+      it "NotOnOrAfter two minutes ago is refused"
+        (!ok { notOnOrAfter := "2029-12-31T23:58:00Z" }),
+      it "NotOnOrAfter 30 s ago is within the 60 s leeway"
+        (ok { notOnOrAfter := "2029-12-31T23:59:30Z" }),
+      it "NotBefore five minutes ahead is refused"
+        (!ok { notBefore := "2030-01-01T00:05:00Z" }),
+      it "a missing NotOnOrAfter is refused" (!ok { notOnOrAfter := "" }),
+      it "an unreadable NotOnOrAfter is refused" (!ok { notOnOrAfter := "tomorrow" }),
+      it "a time without a zone is refused" (!ok { notOnOrAfter := "2099-06-17T01:00:00" }),
+      it "no bearer SubjectConfirmation is refused" (!ok { bearer := false }),
+      it "an expired SubjectConfirmationData is refused"
+        (!ok { confirmNotOnOrAfter := "2029-12-31T23:50:00Z" }),
+      it "a Recipient other than this SP's ACS URL is refused"
+        (!ok { recipient := "https://other-sp.example.com/acs" }),
+      it "InResponseTo must match the request the SP sent"
+        (accepts { inResponseTo := "_req1" } (some "_req1") &&
+          !accepts { inResponseTo := "_req1" } (some "_req2") &&
+          !accepts {} (some "_req1")),
+      it "another issuer is refused" (!ok { issuer := "https://evil.example.com" }),
+      it "another audience is refused" (!ok { audience := "https://other-sp.example.com" }),
+      it "parseInstant: epoch, offsets and fractions"
+        (LeanTea.Auth.Saml.parseInstant "1970-01-01T00:00:00Z" == some 0 &&
+          LeanTea.Auth.Saml.parseInstant "2030-01-01T09:00:00+09:00" == some now &&
+          LeanTea.Auth.Saml.parseInstant "2030-01-01T00:00:00.123Z" == some now &&
+          LeanTea.Auth.Saml.parseInstant "2030-13-01T00:00:00Z" == none),
+      it "ReplayCache accepts an ID once until it expires" (first && !again && later)
+    ],
+    group "markup the signature check never sees" [
+      it "a forged assertion inside a comment is ignored, the real one is read"
+        (match commentedR with | .ok (a, _) => a.nameId == "alice@example.com" | .error _ => false),
+      it "a forged saml: assertion beside a real saml2: one is refused"
+        (LeanTea.Auth.Saml.assertionCount prefixed == 2 && refusedRaw prefixed),
+      it "DOCTYPE, ENTITY, CDATA and unterminated comments are refused"
+        (refusedRaw ("<!DOCTYPE r [<!ENTITY x \"y\">]>" ++ signed {}) &&
+          refusedRaw ((signed {}).replace "alice@example.com" "<![CDATA[alice@example.com]]>") &&
+          refusedRaw ((signed {}) ++ "<!-- open"))
+    ],
+    e2e,
     group "signature-wrapping (XSW) guard" [
       it "single signed self-referencing assertion is accepted"
         (guard signedOk),
