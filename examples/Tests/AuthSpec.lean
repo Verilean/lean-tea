@@ -409,7 +409,8 @@ def spoofed : Array (String × String) :=
 /-- The proxy handler, in-process. -/
 def inProcess : IO LSpec := do
   let cfg ← GateGroup.idpConfig
-  let g : GateConfig := { client := cfg, allowedLogins := ["alice"], publicPaths := ["/health"] }
+  let g : GateConfig := { client := cfg, allowedLogins := ["alice"], publicPaths := ["/health"],
+                          publicPrefixes := ["/static/"] }
   let sessions ← signedSessions "proxy-test-secret-0123456789abcdef".toUTF8
   let up : LeanTea.Auth.Proxy.Upstream := { port := upstreamPort, maxBody := 64 }
   let h := LeanTea.Auth.Proxy.handler up g sessions
@@ -421,6 +422,13 @@ def inProcess : IO LSpec := do
   let big ← h (request "/api/items" "" [("session", s)] "POST" #[] (String.ofList (List.replicate 65 'x')).toUTF8)
   let anon ← h (request "/api/items" (headers := spoofed))
   let pub ← h (request "/health" (headers := spoofed))
+  let underscore : Array (String × String) := #[("X-Forwarded_User", "mallory"), ("X_Real_IP", "10.0.0.66")]
+  let pubUnderscore ← h (request "/health" (headers := underscore))
+  let getUnderscore ← h (request "/api/items" "" [("session", s)] (headers := underscore))
+  let static ← h (request "/static/app.css")
+  let tricks ← ["/static/../api/items", "/static/%2e%2e/api/items", "/static/%2E%2e/api/items",
+                "/static/..%2fapi/items", "/static//../api/items", "/static/.%2e/api/items",
+                "/static\\..\\api/items"].mapM fun p => h (request p)
   let down ← LeanTea.Auth.Proxy.handler { port := 1 } g sessions
     (request "/api/items" "" [("session", s)])
   return group "proxy handler (in-process)" [
@@ -446,7 +454,23 @@ def inProcess : IO LSpec := do
       (anon.status == 401 && seen anon "method" == none),
     it "a public path is forwarded with no X-Forwarded-User at all"
       (pub.status == 200 && seen pub "headers.x-forwarded-user" == none),
-    it "an unreachable upstream is 502" (down.status == 502)
+    it "an unreachable upstream is 502" (down.status == 502),
+    it "underscore spellings of identity headers are dropped (public path)"
+      (pubUnderscore.status == 200 && seen pubUnderscore "headers.x-forwarded_user" == none
+        && seen pubUnderscore "headers.x_real_ip" == none),
+    it "underscore spellings of identity headers are dropped (signed in)"
+      (seen getUnderscore "headers.x-forwarded_user" == none
+        && seen getUnderscore "headers.x-forwarded-user" == some "alice"),
+    it "a path under a public prefix is forwarded without a session"
+      (static.status == 200 && seen static "path" == some "/static/app.css"),
+    it "dot segments, encoded dots and slashes never make a path public"
+      (tricks.all fun r => r.status != 200 && seen r "method" == none),
+    it "canonicalPath? decodes plain escapes and refuses tricks"
+      (canonicalPath? "/static/%61pp.css" == some "/static/app.css" &&
+        canonicalPath? "/static/" == some "/static/" && canonicalPath? "/" == some "/" &&
+        canonicalPath? "/static/../x" == none && canonicalPath? "/a%2fb" == none &&
+        canonicalPath? "/a%zz" == none && canonicalPath? "a/b" == none &&
+        canonicalPath? "/a//b" == none && canonicalPath? "/a%00" == none)
   ]
 
 private def httpGet (path : String) (cookies : List (String × String) := [])

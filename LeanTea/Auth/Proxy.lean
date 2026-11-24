@@ -39,9 +39,12 @@ private def hopByHop : List String :=
   ["connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
    "te", "trailer", "transfer-encoding", "upgrade"]
 
-/-- A client header the proxy does not pass on. -/
+/-- A client header the proxy does not pass on. Names are compared with
+    `_` read as `-`: CGI-style upstreams turn both `X-Forwarded-User`
+    and `X-Forwarded_User` into `HTTP_X_FORWARDED_USER`, so the
+    underscore spelling would otherwise smuggle an identity through. -/
 def dropsRequestHeader (name : String) : Bool :=
-  let n := name.toLower
+  let n := name.toLower.map fun c => if c == '_' then '-' else c
   hopByHop.contains n || n == "host" || n == "content-length" || n == "cookie"
     || n.startsWith "x-forwarded-" || n == "forwarded" || n == "x-real-ip"
 

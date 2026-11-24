@@ -484,8 +484,49 @@ def GateConfig.callbackPath (g : GateConfig) : String :=
 def GateConfig.allows (g : GateConfig) (login : String) : Bool :=
   !login.isEmpty && (g.allowAnyone || g.allowedLogins.any (·.toLower == login.toLower))
 
+private def hexVal? (b : UInt8) : Option UInt8 :=
+  if 48 ≤ b && b ≤ 57 then some (b - 48)
+  else if 65 ≤ b && b ≤ 70 then some (b - 55)
+  else if 97 ≤ b && b ≤ 102 then some (b - 87)
+  else none
+
+/-- `path` percent-decoded, provided it is already canonical: it starts
+    with `/` and has no `.` or `..` segment, no empty segment except a
+    trailing one, no backslash, no encoded `/` or `\`, no control
+    character and no malformed escape. `none` otherwise.
+
+    The gate decides "public or not" on this, because the service
+    behind it may normalise the path before routing: `/static/../admin`
+    or `/static/%2e%2e/admin` must not count as under `/static/`. -/
+def canonicalPath? (path : String) : Option String := do
+  let raw := path.toUTF8
+  let mut out : ByteArray := .empty
+  let mut i := 0
+  while i < raw.size do
+    let b := raw[i]!
+    if b == 37 then  -- '%'
+      let hi ← raw[i+1]? >>= hexVal?
+      let lo ← raw[i+2]? >>= hexVal?
+      let v := hi * 16 + lo
+      if v == 47 || v == 92 || v < 32 || v == 127 then none  -- / \ controls
+      out := out.push v
+      i := i + 3
+    else
+      if b == 92 || b < 32 || b == 127 then none
+      out := out.push b
+      i := i + 1
+  let decoded ← String.fromUTF8? out
+  guard (decoded.startsWith "/")
+  let segs := (decoded.splitOn "/").drop 1
+  let inner := segs.dropLast
+  guard (!segs.any (fun s => s == "." || s == ".."))
+  guard (!inner.any (·.isEmpty))
+  return decoded
+
 def GateConfig.isPublic (g : GateConfig) (path : String) : Bool :=
-  g.publicPaths.contains path || g.publicPrefixes.any (path.startsWith ·)
+  match canonicalPath? path with
+  | some p => g.publicPaths.contains p || g.publicPrefixes.any (p.startsWith ·)
+  | none => false
 
 private def GateConfig.stateCookie (g : GateConfig) : String := g.cookieName ++ "_login"
 
