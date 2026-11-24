@@ -53,7 +53,7 @@ def main : IO Unit := do
   let h : LeanTea.Mcp.Handler := {
     initializeResult, toolsList, callTool
   }
-  h.serveStdio   -- or h.serveHttp 8000 "0.0.0.0"
+  h.serveStdio   -- or h.serveHttp 8000 (loopback only by default)
 ```
 
 That's a complete MCP server. Drop it into `.mcp.json` and the LLM
@@ -70,6 +70,24 @@ sees one tool.
   `handleMcp`, `httpHandler`
 - A shared `dispatchOnce` that handles `initialize`, `tools/list`,
   `tools/call`, and `notifications/*`
+
+### Who can call the HTTP transport
+
+Tools run commands, drive browsers and read files, so an open HTTP
+endpoint is remote code execution. `serveHttp` therefore:
+
+- listens on `127.0.0.1` unless told otherwise, and refuses to listen
+  anywhere else without a bearer token (`LEANTEA_MCP_TOKEN`, or a file
+  named by `LEANTEA_MCP_TOKEN_FILE`; clients send
+  `Authorization: Bearer <token>`);
+- refuses requests with an `Origin` header (a browser page), unless the
+  origin is in `Access.allowedOrigins`;
+- requires `Content-Type: application/json` on `POST`, which a page
+  cannot send cross-site without a CORS preflight;
+- on loopback, requires a loopback `Host` header, which defeats DNS
+  rebinding.
+
+The example servers' `--host` flags default to `127.0.0.1` as well.
 
 The five top-level servers + Sheet all share the same dispatch — before
 extraction they each duplicated ~80 lines of boilerplate.

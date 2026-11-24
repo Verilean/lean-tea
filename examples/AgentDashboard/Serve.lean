@@ -532,7 +532,7 @@ private def handler (ctx : Ctx) : Handler := fun req => do
 
 private structure Args where
   port       : UInt16 := 8040
-  host       : String := "0.0.0.0"
+  host       : String := "127.0.0.1"
   configPath : String := ""
   storeDir   : String := ""
 

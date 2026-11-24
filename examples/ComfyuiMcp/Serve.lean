@@ -523,7 +523,7 @@ def callTool (cfg : ComfyConfig) (name : String) (args : Json) : IO Json := do
 private structure Args where
   mode  : String := "stdio"
   port  : UInt16 := 8011
-  host  : String := "0.0.0.0"
+  host  : String := "127.0.0.1"
   comfy : Option String := none
 
 private partial def parseArgs (xs : List String) (a : Args) : Args :=

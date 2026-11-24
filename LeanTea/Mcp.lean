@@ -1,6 +1,7 @@
 import Lean.Data.Json
 import LeanTea.Net.Http
 import LeanTea.Net.Server
+import LeanTea.Crypto.Password
 
 /-! # LeanTea.Mcp — common surface for our MCP servers
 
@@ -151,9 +152,59 @@ def handleMcp (h : Handler) (req : Request) : IO Response := do
         body := result.compress.toUTF8
       }
 
-def httpHandler (h : Handler) : HttpHandler := fun req => do
+/-- Who may call the HTTP transport. MCP tools often run commands or
+    drive a browser, so an open endpoint is remote code execution:
+
+    * `token`: when set, every request needs `Authorization: Bearer
+      <token>` (compared in constant time).
+    * Requests carrying an `Origin` header (browsers always send one on
+      cross-site `fetch`) are refused unless the origin is in
+      `allowedOrigins`. MCP clients are not browsers and send none.
+    * A `POST` must be `Content-Type: application/json`, which a page
+      cannot send cross-site without a CORS preflight we never answer.
+    * When `loopbackOnly`, the `Host` header must name the loopback
+      interface, so a DNS-rebinding page that resolves its own name to
+      127.0.0.1 is refused. -/
+structure Access where
+  token          : Option String := none
+  allowedOrigins : List String := []
+  loopbackOnly   : Bool := true
+  deriving Inhabited
+
+private def isLoopbackHost (h : String) : Bool :=
+  let name :=
+    if h.startsWith "[" then ((h.drop 1).takeWhile (· != ']')).toString
+    else ((h.splitOn ":").head?.getD "")
+  let name := name.toLower
+  name == "localhost" || name == "127.0.0.1" || name == "::1"
+
+/-- `none` when `req` may reach the MCP handler, else the refusal. Public
+    for testing. -/
+def Access.check (a : Access) (req : Request) : Option Response :=
+  let deny (status : Nat) (msg : String) := some (Response.text status (msg ++ "\n"))
+  if a.loopbackOnly && !isLoopbackHost ((req.header? "host").getD "") then
+    deny 403 "mcp: Host must be localhost"
+  else if let some o := req.header? "origin" then
+    if a.allowedOrigins.contains o then none
+    else deny 403 "mcp: cross-origin requests are not accepted"
+  else if let some t := a.token then
+    let want := ("Bearer " ++ t).toUTF8
+    let got := ((req.header? "authorization").getD "").toUTF8
+    if want.size == got.size && LeanTea.Crypto.Password.constantTimeEq want got then none
+    else deny 401 "mcp: missing or wrong bearer token"
+  else none
+
+/-- `Access.check` ran first: refuse, or require JSON on `POST`. -/
+private def jsonPost? (req : Request) : Bool :=
+  let ct := ((req.header? "content-type").getD "").toLower
+  ((ct.splitOn ";").head?.getD "").trimAscii.toString == "application/json"
+
+def httpHandler (h : Handler) (access : Access := {}) : HttpHandler := fun req => do
+  if let some refusal := access.check req then return refusal
   match req.path, req.method with
-  | "/mcp", "POST" => handleMcp h req
+  | "/mcp", "POST" =>
+    if jsonPost? req then handleMcp h req
+    else return Response.text 415 "mcp: Content-Type must be application/json\n"
   | "/mcp", "GET"  => return Response.html 200 "<h1>mcp</h1>"
   | _, _           => return Response.notFound
 
@@ -180,8 +231,31 @@ partial def stdioLoop (h : Handler) : IO Unit := do
 
 /-! ## Top-level launcher conveniences. -/
 
-def Handler.serveHttp (h : Handler) (port : UInt16 := 8000) (host : String := "0.0.0.0") : IO Unit := do
-  serve port host (httpHandler h)
+/-- The bearer token from `LEANTEA_MCP_TOKEN`, or from the file named by
+    `LEANTEA_MCP_TOKEN_FILE` (trailing whitespace dropped). -/
+def tokenFromEnv : IO (Option String) := do
+  if let some t := (← IO.getEnv "LEANTEA_MCP_TOKEN").filter (!·.isEmpty) then return some t
+  match (← IO.getEnv "LEANTEA_MCP_TOKEN_FILE").filter (!·.isEmpty) with
+  | some path =>
+    let t := (← IO.FS.readFile path).trimAsciiEnd.toString
+    if t.isEmpty then throw <| IO.userError s!"mcp: {path} is empty"
+    return some t
+  | none => return none
+
+/-- Serve the HTTP transport on `host:port` (default loopback only).
+    The token comes from `LEANTEA_MCP_TOKEN` / `LEANTEA_MCP_TOKEN_FILE`
+    unless `access` sets one. Listening on anything but loopback without
+    a token is refused: anyone who can reach the port could call every
+    tool. -/
+def Handler.serveHttp (h : Handler) (port : UInt16 := 8000) (host : String := "127.0.0.1")
+    (access : Access := {}) : IO Unit := do
+  let token ← match access.token with
+    | some t => pure (some t)
+    | none => tokenFromEnv
+  let loopback := host == "127.0.0.1" || host == "localhost" || host == "::1"
+  if !loopback && token.isNone then
+    throw <| IO.userError s!"mcp: refusing to listen on {host} without a token; set LEANTEA_MCP_TOKEN or LEANTEA_MCP_TOKEN_FILE (or listen on 127.0.0.1)"
+  serve port host (httpHandler h { access with token, loopbackOnly := access.loopbackOnly && loopback })
 
 def Handler.serveStdio (h : Handler) : IO Unit := stdioLoop h
 

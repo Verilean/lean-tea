@@ -317,7 +317,7 @@ def callTool (ref : SessionRef) (name : String) (args : Json) : IO Json := do
 private structure Args where
   mode : String := "stdio"     -- "stdio" (default, for MCP clients) | "http"
   port : UInt16 := 8009
-  host : String := "0.0.0.0"
+  host : String := "127.0.0.1"
 
 private partial def parseArgs (xs : List String) (a : Args) : Args :=
   match xs with
