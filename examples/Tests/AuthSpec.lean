@@ -428,7 +428,8 @@ def inProcess : IO LSpec := do
   let static ← h (request "/static/app.css")
   let tricks ← ["/static/../api/items", "/static/%2e%2e/api/items", "/static/%2E%2e/api/items",
                 "/static/..%2fapi/items", "/static//../api/items", "/static/.%2e/api/items",
-                "/static\\..\\api/items"].mapM fun p => h (request p)
+                "/static\\..\\api/items", "/static/..;/api/items", "/static/..%3B/api/items",
+                "/static/%252e%252e/api/items", "/static/a;x=1/../../api/items"].mapM fun p => h (request p)
   -- WebSocket upgrades behind the same sign-in.
   let wsInner : User → LeanTea.Net.WebSocketServer.Router := fun u _ =>
     pure (some (.error (Response.text 200 s!"ws for {u.login}")))
@@ -440,6 +441,16 @@ def inProcess : IO LSpec := do
   let wsAnon ← wsr (request "/ws" (headers := wsHost))
   let wsCross ← wsr (request "/ws" "" [("session", s)]
     (headers := #[("host", "app.test"), ("origin", "https://evil.test")]))
+  let wsSecure := gateRouter { g with cookieSecure := true } sessions wsInner
+  let wsHttpOnSecure ← wsSecure (request "/ws" "" [("session", s)]
+    (headers := #[("host", "app.test"), ("origin", "http://app.test")]))
+  let wsHttpsOnSecure ← wsSecure (request "/ws" "" [("session", s)]
+    (headers := #[("host", "app.test"), ("origin", "https://app.test")]))
+  let wsProxied := gateRouter g sessions wsInner (origins := some ["https://app.test"])
+  let wsBehindProxy ← wsProxied (request "/ws" "" [("session", s)]
+    (headers := #[("host", "127.0.0.1:9107"), ("origin", "https://app.test")]))
+  let wsProxiedHttp ← wsProxied (request "/ws" "" [("session", s)]
+    (headers := #[("host", "127.0.0.1:9107"), ("origin", "http://app.test")]))
   let down ← LeanTea.Auth.Proxy.handler { port := 1 } g sessions
     (request "/api/items" "" [("session", s)])
   return group "proxy handler (in-process)" [
@@ -481,11 +492,16 @@ def inProcess : IO LSpec := do
         canonicalPath? "/static/" == some "/static/" && canonicalPath? "/" == some "/" &&
         canonicalPath? "/static/../x" == none && canonicalPath? "/a%2fb" == none &&
         canonicalPath? "/a%zz" == none && canonicalPath? "a/b" == none &&
-        canonicalPath? "/a//b" == none && canonicalPath? "/a%00" == none),
+        canonicalPath? "/a//b" == none && canonicalPath? "/a%00" == none &&
+        canonicalPath? "/static/..;/x" == none && canonicalPath? "/static/%2525" == none),
     it "gateRouter: a signed-in same-origin upgrade reaches inner with the user"
       (wsOutcome wsOk == 200),
     it "gateRouter: an upgrade without a session is 401" (wsOutcome wsAnon == 401),
-    it "gateRouter: a cross-origin upgrade with the user's cookie is 403" (wsOutcome wsCross == 403)
+    it "gateRouter: a cross-origin upgrade with the user's cookie is 403" (wsOutcome wsCross == 403),
+    it "gateRouter: with cookieSecure, an http:// origin on the same host is 403"
+      (wsOutcome wsHttpOnSecure == 403 && wsOutcome wsHttpsOnSecure == 200),
+    it "gateRouter: an origin list works behind a proxy that rewrites Host, scheme included"
+      (wsOutcome wsBehindProxy == 200 && wsOutcome wsProxiedHttp == 403)
   ]
 
 private def httpGet (path : String) (cookies : List (String × String) := [])
