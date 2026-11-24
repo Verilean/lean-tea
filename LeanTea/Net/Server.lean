@@ -207,6 +207,26 @@ partial def serveLoopConcurrent (server : Socket.Server) (handler : Handler)
   let _ ← IO.asTask (handleConn handler ws client requestTimeoutMs)
   serveLoopConcurrent server handler ws requestTimeoutMs
 
+/-- A dotted IPv4 address (four decimal octets, each 0–255), or
+    `localhost` as 127.0.0.1. `none` for anything else — the caller must
+    not guess, since falling back to 0.0.0.0 listens on every interface. -/
+def parseIPv4? (s : String) : Option IPv4Addr :=
+  if s == "localhost" then some ⟨#v[127, 0, 0, 1]⟩ else
+  match s.splitOn "." with
+  | [a, b, c, d] =>
+    let oct := fun (t : String) => if !t.isEmpty && t.length ≤ 3 && t.all Char.isDigit then
+        t.toNat?.bind (fun n => if n ≤ 255 then some n.toUInt8 else none) else none
+    match oct a, oct b, oct c, oct d with
+    | some a, some b, some c, some d => some ⟨#v[a, b, c, d]⟩
+    | _, _, _, _ => none
+  | _ => none
+
+/-- `parseIPv4?`, or an error naming the host. -/
+def listenAddress (host : String) : IO IPv4Addr :=
+  match parseIPv4? host with
+  | some a => pure a
+  | none => throw <| IO.userError s!"serve: {host} is not an IPv4 address (use e.g. 127.0.0.1, 0.0.0.0 or localhost)"
+
 /-- Parse a dotted IPv4 string ("127.0.0.1") into a `Std.Net.IPv4Addr`.
     Returns `0.0.0.0` if parsing fails. -/
 def parseIPv4 (s : String) : IPv4Addr :=
@@ -223,7 +243,7 @@ def serveConcurrent (port : UInt16 := 8001) (host : String := "0.0.0.0")
     (requestTimeoutMs : Nat := 30000) : IO Unit := do
   let server ← Socket.Server.mk
   let addr : SocketAddress := .v4 {
-    addr := parseIPv4 host,
+    addr := (← listenAddress host),
     port := port
   }
   server.bind addr
@@ -247,7 +267,7 @@ def serve (port : UInt16 := 8001) (host : String := "0.0.0.0")
     (requestTimeoutMs : Nat := 30000) : IO Unit := do
   let server ← Socket.Server.mk
   let addr : SocketAddress := .v4 {
-    addr := parseIPv4 host,
+    addr := (← listenAddress host),
     port := port
   }
   server.bind addr
