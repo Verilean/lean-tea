@@ -40,16 +40,16 @@ namespace SafeAttr
 private def nameAllowList : List String := [
   -- structure / identity
   "id", "class", "title", "lang", "dir", "tabindex", "role", "slot",
-  -- linking / sources
-  "href", "src", "srcset", "rel", "target", "download", "type",
+  -- linking (URL-valued names go through `SafeAttr.url`, never here)
+  "rel", "target", "download", "type",
   -- forms
   "name", "value", "placeholder", "for", "autocomplete", "autofocus",
   "checked", "disabled", "readonly", "required", "multiple",
   "min", "max", "step", "pattern", "minlength", "maxlength",
   "rows", "cols", "size", "wrap",
-  "action", "method", "enctype", "novalidate", "form", "formaction",
+  "method", "enctype", "novalidate", "form",
   -- media
-  "alt", "controls", "autoplay", "loop", "muted", "poster",
+  "alt", "controls", "autoplay", "loop", "muted",
   -- SVG geometry
   "width", "height", "viewBox", "preserveAspectRatio", "transform",
   "x", "y", "x1", "x2", "y1", "y2", "cx", "cy", "r", "rx", "ry",
@@ -60,6 +60,11 @@ private def nameAllowList : List String := [
   "data-msg"
 ]
 
+/-- Attributes whose value is a URL. `SafeAttr.text` refuses them, so a
+    `javascript:` URL cannot slip in as "plain text". -/
+private def urlAttrs : List String :=
+  ["href", "src", "srcset", "action", "formaction", "poster", "data-msg"]
+
 private def isEventHandlerName (s : String) : Bool := s.startsWith "on"
 
 private def nameAllowed (s : String) : Bool :=
@@ -68,15 +73,20 @@ private def nameAllowed (s : String) : Bool :=
     || s.startsWith "data-"
     || s.startsWith "aria-"
 
-/-- URL schemes that we forbid in `href` / `src` / `action`. We don't
-    enumerate the allowed list — anything not on the rejected list
-    plus relative paths (`/`, `#`, `?`, no `:` at all) is allowed.
-    This matches Yesod / Lucid behaviour. -/
+/-- Whether a URL value is refused. Browsers drop tab and newline
+    anywhere in a URL and ignore leading spaces and C0 controls, so
+    `java\tscript:` and `\x01javascript:` are both `javascript:`. The
+    check therefore strips those first, then allows only relative URLs
+    (no scheme before the first `/`, `?` or `#`) and the schemes
+    `http`, `https`, `mailto` and `tel`. -/
 private def isSchemeRejected (url : String) : Bool :=
-  let lower := url.trimAscii.toString.toLower
-  lower.startsWith "javascript:"
-    || lower.startsWith "data:text/html"
-    || lower.startsWith "vbscript:"
+  let cleaned := String.ofList (url.toList.filter fun c => c.toNat > 0x20 && c.toNat != 0x7f)
+  let lower := cleaned.toLower
+  let head := (lower.takeWhile fun c => c != '/' && c != '?' && c != '#').toString
+  match head.splitOn ":" with
+  | [_] => false  -- no scheme: relative
+  | scheme :: _ => !["http", "https", "mailto", "tel"].contains scheme
+  | [] => false
 
 /-! ## Smart constructors. -/
 
@@ -86,6 +96,8 @@ private def isSchemeRejected (url : String) : Bool :=
 def text (name value : String) : Except String SafeAttr :=
   if isEventHandlerName name then
     .error s!"SafeAttr.text: event-handler name rejected ({name})"
+  else if urlAttrs.contains name && name != "data-msg" then
+    .error s!"SafeAttr.text: {name} holds a URL; use SafeAttr.url"
   else if !nameAllowed name then
     .error s!"SafeAttr.text: name not on allow-list ({name})"
   else
@@ -96,7 +108,6 @@ def text (name value : String) : Except String SafeAttr :=
     else (http(s), mailto, tel, relative paths, fragments) is allowed
     and escaped at render. -/
 def url (name urlV : String) : Except String SafeAttr :=
-  let urlAttrs : List String := ["href", "src", "action", "formaction", "data-msg"]
   if !urlAttrs.contains name then
     .error s!"SafeAttr.url: URL attribute must be one of {urlAttrs}; got '{name}'"
   else if isSchemeRejected urlV then
