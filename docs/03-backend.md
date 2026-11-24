@@ -86,6 +86,23 @@ def serveMain (args : List String) : IO Unit := do
 TLS story, no HTTP/2 — sit it behind a reverse proxy if you need that.
 For local dev and small production it just works.
 
+All four server loops (`serve`, `serveConcurrent`, `FastServer.serve`,
+`ReactorServer.serve`) frame requests the same strict way: a body is
+read only by a single, plain-digit `Content-Length` header line. A
+request with a `Transfer-Encoding` gets 501, and one with a repeated or
+malformed `Content-Length`, or a malformed header line, gets 400. Either
+way the connection is then closed, so a front proxy and the server
+cannot disagree about where the next request starts. Headers are capped
+at 64 KB (431) and requests at 8 MB (413).
+
+Each loop also takes `requestTimeoutMs` (default 30 s). Under it, a
+client that has not sent a whole request in that time, or sits idle on
+a keep-alive connection, is closed. Trickling bytes does not extend it.
+The sequential `serve` handles one connection at a time, so a slow
+client still holds the others for up to that long. Prefer
+`serveConcurrent` (or the FFI backends) for anything reachable from
+untrusted clients. `http_framing_spec` checks all four.
+
 The matching client is `LeanTea.Net.HttpClient` — pure Lean HTTP/1.1
 with `Content-Length` honouring (no curl shell-out, no node bridge).
 Used by every MCP server and the LLM streaming client.

@@ -659,6 +659,20 @@ lean_exe websocket_spec where
   srcDir := "examples"
   root := `Tests.WebSocketSpec
 
+/-- One HTTP backend (`--backend server|concurrent|fast|reactor`) for
+    `http_framing_spec` (spawned as a subprocess). -/
+lean_exe http_framing_serve where
+  srcDir := "examples"
+  root := `Smoke.HttpFramingServe
+
+/-- Request framing (smuggling attempts refused, pipelining and
+    `Connection: close` kept) and request deadlines on all four server
+    backends, driven with raw bytes. Needs `http_framing_serve` built
+    first. -/
+lean_exe http_framing_spec where
+  srcDir := "examples"
+  root := `Tests.HttpFramingSpec
+
 /-- Auth integration tests. Spawns `auth_idp_serve` on
     `AUTH_TEST_PORT` (default 18765), polls until /authorize answers,
     runs the full SP-side round-trip (beginAuth → /authorize →
