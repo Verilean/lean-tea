@@ -200,9 +200,11 @@ partial def parseBlock (st : St) : Block × St :=
           else break
         return (.table header rows, s)
     else
-    /- Default — paragraph. Consume consecutive non-blank lines that
+    /- Default — paragraph. The current line always belongs to it (a
+       `| … |` line with no separator row below is text, and the parse
+       must move on); then consume consecutive non-blank lines that
        don't start a different block. -/
-    let (paraLines, s) := takeWhile st fun l =>
+    let (more, s) := takeWhile (advance st) fun l =>
       let l := stripTrailingCR l
       !isBlank l
         && !isHRule l
@@ -212,7 +214,7 @@ partial def parseBlock (st : St) : Block × St :=
         && (isOrdered l).isNone
         && (isBlockquote l).isNone
         && !isTablePipeRow l
-    let body := String.intercalate " " paraLines.toList
+    let body := String.intercalate " " (line :: more.toList)
     (.paragraph (Inline.parse body), s)
 
 /-- Parse the entire document. -/

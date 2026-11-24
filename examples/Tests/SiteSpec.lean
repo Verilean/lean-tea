@@ -71,7 +71,17 @@ def run : IO LSpec := do
   let css2 ← (out2 / "site.css").pathExists
   let css1 ← (out / "site.css").pathExists
   IO.FS.removeDirAll tmp
+  -- A `| … |` line with no separator row below is paragraph text. The
+  -- parser used to loop forever on it, so a hang here is the failure.
+  let md (src : String) := Html.render (Markdown.renderHtml src)
+  let pipeAfterTable := md "| a | b |\n|---|---|\n| 1 | 2 |\nnote\n| 3 | 4 |\n"
+  let pipeAlone := md "| just a pipe line |"
   return group "LeanTea.Site" [
+    group "markdown" [
+      it "pipe line with no separator row is a paragraph" (has pipeAlone "<p>| just a pipe line |</p>"),
+      it "table, then paragraph, then a stray pipe line"
+        (has pipeAfterTable "<table>" && has pipeAfterTable "<p>note</p>" && has pipeAfterTable "<p>| 3 | 4 |</p>")
+    ],
     group "pages" [
       it "page count: 8 source (draft excluded) + 1 from Lean" (r.pages.length == 9),
       it "draft not written" (!(has index "Draft")),
