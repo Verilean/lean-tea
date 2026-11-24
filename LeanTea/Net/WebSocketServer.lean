@@ -91,11 +91,18 @@ def Router.allowOrigins (origins : List String) (r : Router) : Router := fun req
   | none => r req
 
 /-- Like `allowOrigins`, with "the page's own origin" as the list: the
-    `Origin` host must equal the request's `Host`. -/
-def Router.sameOrigin (r : Router) : Router := fun req =>
+    `Origin` host must equal the request's `Host`.
+
+    With `requireHttps`, the origin must also be `https://`: otherwise
+    a network attacker could serve a page on `http://` the same host and
+    open the socket with the user's cookies. Behind a proxy that rewrites
+    `Host`, use `allowOrigins` with the public origin instead. -/
+def Router.sameOrigin (r : Router) (requireHttps : Bool := false) : Router := fun req =>
   match req.header? "origin" with
   | some o =>
-    if originAuthority o == ((req.header? "host").getD "").toLower && !(originAuthority o).isEmpty then r req
+    let schemeOk := !requireHttps || o.toLower.startsWith "https://"
+    if schemeOk && originAuthority o == ((req.header? "host").getD "").toLower &&
+        !(originAuthority o).isEmpty then r req
     else pure (some (.error (Response.text 403 "websocket: cross-origin upgrade refused\n")))
   | none => r req
 

@@ -492,7 +492,8 @@ private def hexVal? (b : UInt8) : Option UInt8 :=
   else none
 
 /-- `path` percent-decoded, provided it is already canonical: it starts
-    with `/` and has no `.` or `..` segment, no empty segment except a
+    with `/` and has no `.` or `..` segment, no `;` path parameter, no
+    `%` left after decoding (double encoding), no empty segment except a
     trailing one, no backslash, no encoded `/` or `\`, no control
     character and no malformed escape. `none` otherwise.
 
@@ -518,6 +519,11 @@ def canonicalPath? (path : String) : Option String := do
       i := i + 1
   let decoded ← String.fromUTF8? out
   guard (decoded.startsWith "/")
+  -- `;` starts path parameters, which some servers strip before routing
+  -- (`/static/..;/admin` is `/static/../admin` to them), and a `%` left
+  -- after one decoding pass means a double-encoded path that a server
+  -- decoding twice would read differently. Neither is ever public.
+  guard (!decoded.contains ';' && !decoded.contains '%')
   let segs := (decoded.splitOn "/").drop 1
   let inner := segs.dropLast
   guard (!segs.any (fun s => s == "." || s == ".."))
@@ -637,14 +643,21 @@ def gate (g : GateConfig) (sessions : Sessions) (inner : Option User → Handler
 
 /-- Put WebSocket upgrades behind the same sign-in as `gate`. The HTTP
     gate does not see upgrades (the server asks the router first), so a
-    socket needs this too. Refuses a cross-origin upgrade (`sameOrigin`)
-    and one without a live session (401), then hands the user to
-    `inner`. -/
+    socket needs this too. Refuses a cross-origin upgrade and one without
+    a live session (401), then hands the user to `inner`.
+
+    The origin check is `allowOrigins origins` when given (exact match,
+    scheme included — use it behind a proxy that rewrites `Host`), else
+    `sameOrigin`, which also requires `https://` when `g.cookieSecure`. -/
 def gateRouter (g : GateConfig) (sessions : Sessions)
-    (inner : User → LeanTea.Net.WebSocketServer.Router) : LeanTea.Net.WebSocketServer.Router :=
-  LeanTea.Net.WebSocketServer.Router.sameOrigin fun req => do
+    (inner : User → LeanTea.Net.WebSocketServer.Router)
+    (origins : Option (List String) := none) : LeanTea.Net.WebSocketServer.Router :=
+  let signedIn : LeanTea.Net.WebSocketServer.Router := fun req => do
     match ← currentUser g sessions req with
     | some u => inner u req
     | none => pure (some (.error (Response.text 401 "login required\n")))
+  match origins with
+  | some os => LeanTea.Net.WebSocketServer.Router.allowOrigins os signedIn
+  | none => LeanTea.Net.WebSocketServer.Router.sameOrigin signedIn (requireHttps := g.cookieSecure)
 
 end LeanTea.Auth.OAuth2
