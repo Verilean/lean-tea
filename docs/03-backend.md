@@ -269,6 +269,15 @@ Passkey (WebAuthn) registration & assertion see
 > `LeanTea/Auth/Proof.lean`; the worked demo is
 > `examples/Smoke/AuthProof.lean`.
 
+WebSocket upgrades do not pass through `gate`: the server asks the
+WebSocket router before the HTTP handler. Wrap the router as well:
+`OAuth2.gateRouter g sessions (fun user => router)` requires a session
+and refuses upgrades from another origin (browsers attach cookies to a
+socket that any site opens, so without the origin check a page
+elsewhere could use the user's session). For sockets without sign-in,
+`WebSocketServer.Router.sameOrigin` or `.allowOrigins` gives the origin
+check alone.
+
 ## Side-channel state
 
 Beyond the Elm-style model, two side-channels are common:

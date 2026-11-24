@@ -71,6 +71,34 @@ abbrev Router := Request → IO (Option (Except Response Session))
 /-- A router that never upgrades. -/
 def Router.none : Router := fun _ => pure Option.none
 
+/-- The host part (`host[:port]`) of an `Origin` such as
+    `https://app.example:8443`, lowercased. -/
+def originAuthority (origin : String) : String :=
+  match origin.splitOn "://" with
+  | [_, rest] => ((rest.splitOn "/").head?.getD "").toLower
+  | _ => ""
+
+/-- Refuse (403) an upgrade whose `Origin` is not in `origins`. Browsers
+    always send `Origin` on a WebSocket handshake and attach the user's
+    cookies even when another site opens the socket, so without this a
+    page anywhere can talk to the socket as the signed-in user
+    (cross-site WebSocket hijacking). Requests without `Origin` (not a
+    browser) pass. -/
+def Router.allowOrigins (origins : List String) (r : Router) : Router := fun req =>
+  match req.header? "origin" with
+  | some o => if origins.contains o then r req
+              else pure (some (.error (Response.text 403 "websocket: origin not allowed\n")))
+  | none => r req
+
+/-- Like `allowOrigins`, with "the page's own origin" as the list: the
+    `Origin` host must equal the request's `Host`. -/
+def Router.sameOrigin (r : Router) : Router := fun req =>
+  match req.header? "origin" with
+  | some o =>
+    if originAuthority o == ((req.header? "host").getD "").toLower && !(originAuthority o).isEmpty then r req
+    else pure (some (.error (Response.text 403 "websocket: cross-origin upgrade refused\n")))
+  | none => r req
+
 namespace Conn
 
 private def sendFrame (c : Conn) (opcode : UInt8) (payload : ByteArray) : IO Unit :=

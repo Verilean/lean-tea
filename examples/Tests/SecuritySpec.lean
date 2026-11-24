@@ -367,6 +367,34 @@ def mcpAccessSpec : IO LSpec := do
     it "listening on 0.0.0.0 without a token is refused" remote
   ]
 
+/-! ## WebSocket origin checks -/
+
+def wsOriginSpec : IO LSpec := do
+  let inner : LeanTea.Net.WebSocketServer.Router := fun _ =>
+    pure (some (.error (LeanTea.Net.Http.Response.text 200 "inner")))
+  let req := fun (hs : List (String × String)) =>
+    ({ method := "GET", path := "/ws", query := "", body := .empty, headers := hs.toArray } : LeanTea.Net.Http.Request)
+  let status := fun (r : Option (Except LeanTea.Net.Http.Response LeanTea.Net.WebSocketServer.Session)) =>
+    match r with | some (.error resp) => resp.status | _ => 0
+  let same := LeanTea.Net.WebSocketServer.Router.sameOrigin inner
+  let listed := LeanTea.Net.WebSocketServer.Router.allowOrigins ["https://ui.example"] inner
+  let s1 ← same (req [("host", "app.example:8443"), ("origin", "https://app.example:8443")])
+  let s2 ← same (req [("host", "app.example"), ("origin", "https://evil.example")])
+  let s3 ← same (req [("host", "app.example")])
+  let s4 ← same (req [("host", "app.example"), ("origin", "null")])
+  let l1 ← listed (req [("origin", "https://ui.example")])
+  let l2 ← listed (req [("origin", "https://evil.example")])
+  let csrfOn : LeanTea.Form.Csrf.Config := { secure := true }
+  let csrfOff : LeanTea.Form.Csrf.Config := {}
+  return group "WebSocket origin + CSRF cookie" [
+    it "sameOrigin passes the page's own origin" (status s1 == 200),
+    it "sameOrigin refuses another origin" (status s2 == 403),
+    it "sameOrigin passes a client without Origin (not a browser)" (status s3 == 200),
+    it "sameOrigin refuses an opaque origin (null)" (status s4 == 403),
+    it "allowOrigins passes a listed origin and refuses others" (status l1 == 200 && status l2 == 403),
+    it "a secure CSRF config uses the __Host- cookie" (csrfOn.cookie == "__Host-csrf" && csrfOff.cookie == "csrf")
+  ]
+
 /-! ## Aggregate tree + entry point -/
 
 def allSpecs : LSpec := group "LeanTEA construction-time security" [
@@ -382,5 +410,6 @@ def allSpecs : LSpec := group "LeanTEA construction-time security" [
 
 def main : IO Unit := do
   let mcp ← mcpAccessSpec
-  let code ← lspecIO (group "LeanTEA security" [allSpecs, mcp])
+  let ws ← wsOriginSpec
+  let code ← lspecIO (group "LeanTEA security" [allSpecs, mcp, ws])
   if code != 0 then IO.Process.exit code.toUInt8

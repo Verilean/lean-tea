@@ -39,15 +39,23 @@ structure Config where
       so existing tooling works unchanged. -/
   fieldName  : String := "_csrf"
   /-- Set the `Secure` flag on the cookie. Mirror your `COOKIE_SECURE`
-      env var. -/
+      env var. With it, the default cookie is named `__Host-csrf`, which
+      browsers accept only from this exact host over HTTPS (Path=/, no
+      Domain). A sibling subdomain or a plain-HTTP attacker therefore
+      cannot plant a known token. -/
   secure     : Bool := false
   deriving Inhabited, Repr
+
+/-- The cookie actually used: `__Host-` prefixed for the default name
+    when `secure`. -/
+def Config.cookie (cfg : Config) : String :=
+  if cfg.secure && cfg.cookieName == "csrf" then "__Host-csrf" else cfg.cookieName
 
 /-! ## Token minting + cookie roundtrip -/
 
 /-- Pull the token from the request cookie. -/
 def Config.tokenInRequest (cfg : Config) (req : Request) : Option String :=
-  req.cookie? cfg.cookieName
+  req.cookie? cfg.cookie
 
 /-- Get the current token, or mint a new one. Returns the token AND
     the (possibly-updated) response — when the request didn't carry
@@ -61,7 +69,7 @@ def Config.ensure (cfg : Config) (req : Request) (r : Response)
     let t ← randomToken
     let cookieVal :=
       let sec := if cfg.secure then "; Secure" else ""
-      s!"{cfg.cookieName}={t}; Path=/; HttpOnly; SameSite=Strict{sec}"
+      s!"{cfg.cookie}={t}; Path=/; HttpOnly; SameSite=Strict{sec}"
     return (t, r.setHeader! "set-cookie" cookieVal)
 
 /-! ## Hidden-input helper
