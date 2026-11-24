@@ -124,29 +124,20 @@ def hex (ba : ByteArray) : String := Id.run do
     s := s.push digits[(b.toNat % 16)]!
   return s
 
-/-- 32 bytes of randomness from `/dev/urandom`, hex-encoded.
-    **Important**: `/dev/urandom` is infinite; we must `open + read 32`
-    instead of `readBinFile` (which reads until EOF and never
-    returns). -/
-def randomToken : IO String := do
-  let result : IO ByteArray := do
-    let h ← IO.FS.Handle.mk "/dev/urandom" .read
-    h.read 32
-  let bytes ← result.catchExceptions (fun _ => pure .empty)
-  if bytes.size == 32 then
-    return hex bytes
-  -- Fallback to IO.rand if /dev/urandom isn't available.
-  -- 16 × 4-byte chunks → 64-char hex.
-  let mut s := ""
-  for _ in [:16] do
-    let n ← IO.rand 0 0xffffffff
-    let mut b : ByteArray := .empty
-    b := b.push ((n / 0x1000000).toUInt8)
-    b := b.push (((n / 0x10000) % 0x100).toUInt8)
-    b := b.push (((n / 0x100) % 0x100).toUInt8)
-    b := b.push ((n % 0x100).toUInt8)
-    s := s ++ hex b
-  return s
+/-- `n` bytes from the operating system's cryptographic random source
+    (`IO.getRandomBytes`). Throws when the OS cannot supply them: a
+    guessable session token, OAuth state, PKCE verifier or salt is worse
+    than a failed request, so there is deliberately no fallback. -/
+def secureRandomBytes (n : Nat) : IO ByteArray := do
+  let bytes ← IO.getRandomBytes n.toUSize
+  if bytes.size != n then
+    throw <| IO.userError s!"secureRandomBytes: got {bytes.size} of {n} bytes from the OS"
+  return bytes
+
+/-- 32 bytes from `secureRandomBytes`, hex-encoded (64 characters).
+    Used for session tokens, CSRF tokens, OAuth state and PKCE. -/
+def randomToken : IO String :=
+  return hex (← secureRandomBytes 32)
 
 /-- Unix seconds. -/
 def nowSec : IO Nat := do
