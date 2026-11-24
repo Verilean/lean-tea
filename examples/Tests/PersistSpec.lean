@@ -357,6 +357,10 @@ def run : IO LSpec := do
   let otherCookie ← h (req "/auth/google/callback" s!"code=x&state={state}" (some s!"{loginStateCookie}=deadbeef"))
   -- The refused attempts must not have used up the state.
   let stillThere ← store.takeState state
+  let secureLogin ← gate { cfg with cookieSecure := true } store [] (fun _ _ => pure (Response.text 200 "ok"))
+    (req "/auth/google/login" "" none)
+  let secureCookie := (secureLogin.headers.toList.find? fun (k, v) =>
+    k.toLower == "set-cookie" && v.startsWith "__Host-google_login=").isSome
   let now ← nowSec
   return group "Google login (Auth.gate)" [
     it "nowSec is Unix time, not time since boot" (now > 1_700_000_000),
@@ -366,7 +370,8 @@ def run : IO LSpec := do
     it "a callback without this browser's state cookie is refused (login CSRF)"
       (noCookie.status == 400),
     it "a callback whose state cookie differs is refused" (otherCookie.status == 400),
-    it "refused callbacks do not use up the state" stillThere
+    it "refused callbacks do not use up the state" stillThere,
+    it "with Secure cookies the login state cookie is __Host- prefixed" secureCookie
   ]
 
 end GoogleLoginGroup

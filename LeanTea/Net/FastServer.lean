@@ -139,7 +139,8 @@ private def annotateConnection (resp : Response) (close : Bool) : Response :=
 
 private partial def handleConnLoop (handler : Handler) (fd : UInt32)
     (leftover : ByteArray) (requestTimeoutMs : Nat) : IO Unit := do
-  let deadline := (← IO.monoMsNow) + requestTimeoutMs
+  -- 0 means the default, as in `ReactorServer` (not "close at once").
+  let deadline := (← IO.monoMsNow) + (if requestTimeoutMs == 0 then 30000 else requestTimeoutMs)
   match ← readOneRequest fd leftover deadline with
   | .closed => shutdownFd fd
   | .refuse status =>
@@ -196,7 +197,7 @@ private partial def acceptLoop (listener : UInt32) (handler : Handler) (requestT
     diminishing returns as the kernel-level accept queue is already
     saturated.
 
-    `requestTimeoutMs` (positive) bounds how long one request may take to
+    `requestTimeoutMs` (0 = the default 30 s) bounds how long one request may take to
     arrive, counted from when the worker starts waiting for it; trickling
     bytes does not extend it. -/
 def serve (port : UInt16 := 8001) (workers : Nat := 1) (handler : Handler)

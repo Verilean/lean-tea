@@ -63,6 +63,11 @@ def safeHtmlSpec : LSpec := group "SafeHtml (Primitive 4)" [
         isOk (SafeAttr.url "href" "mailto:a@example.com") &&
         isOk (SafeAttr.url "href" "tel:+81-3") && isOk (SafeAttr.url "href" "/x?y=a:b") &&
         isOk (SafeAttr.url "href" "#top") && isOk (SafeAttr.url "href" "page.html")),
+    it "data-msg is a message, not a URL (colons allowed via text)"
+      (isOk (SafeAttr.text "data-msg" "select:A1") && isError (SafeAttr.url "data-msg" "x")),
+    it "srcset checks every candidate"
+      (isOk (SafeAttr.url "srcset" "a.png 1x, https://cdn.example/b.png 2x") &&
+        isError (SafeAttr.url "srcset" "a.png 1x, javascript:alert(1) 2x")),
     it "URL attributes refused as plain text"
       (isError (SafeAttr.text "href" "javascript:alert(1)") &&
         isError (SafeAttr.text "src" "x") && isError (SafeAttr.text "formaction" "x") &&

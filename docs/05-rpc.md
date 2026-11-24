@@ -54,7 +54,7 @@ Client JS, generated from the same endpoint:
 ```lean
 let rpcClient := LeanTea.Js.renderBlock [setCell.clientFn]
 -- async function apiSetCell(req){ … JSON.stringify(req) … r.json() }
--- splice into page.html via {{rpcClient}}
+-- splice into page.html via {{{rpcClient}}} (raw: it is JavaScript)
 ```
 
 ## Both sides, one type — enforced

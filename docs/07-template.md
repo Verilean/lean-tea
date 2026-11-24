@@ -11,6 +11,12 @@ you'd rather edit a real `.html` file in your editor.
 |---|---|
 | `{{name}}` | substitution from a `Bindings` map, HTML-escaped (`& < > " '`) |
 | `{{{name}}}` | substitution as is, for HTML you built or escaped yourself; never for untrusted text |
+
+`{{name}}` escaping makes a value safe as text and inside a *quoted*
+attribute. It does not make it safe inside `<script>` or `<style>`, in
+an unquoted attribute, or as a URL (`href="{{u}}"` still accepts
+`javascript:`): build those with the typed `Html` DSL (`SafeAttr.url`)
+or JSON-encode the value yourself.
 | `{{#each xs}}…{{/each}}` | loop over a list value |
 | `{{#if cond}}…{{else}}…{{/if}}` | branch on truthiness |
 | `{{#include "path"}}` | splice another file as a partial |

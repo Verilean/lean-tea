@@ -121,15 +121,17 @@ private partial def readLiteral (st : ParseState) : ParseState × String := Id.r
 
 /-- Inside `{{…}}` — consume up to the closing `}}` (not included).
     Returns the raw text between the braces, trimmed of whitespace. -/
-private partial def readTag (st : ParseState) : ParseState × String := Id.run do
+private partial def readTag (st : ParseState) : Option (ParseState × String) := Id.run do
   -- Skip past `{{`.
   let mut p := st.pos + 2
   let start := p
   while p + 1 < st.size && !(atDelim { st with pos := p } '}' '}') do
     p := p + 1
+  -- No `}}`: not a tag (the caller keeps the rest as text).
+  if p + 1 ≥ st.size then return none
   let raw := String.fromUTF8! (st.bs.extract start p)
   let trimmed : String := raw.trimAscii.toString
-  return ({ st with pos := p + 2 }, trimmed)
+  return some ({ st with pos := p + 2 }, trimmed)
 
 /-- Closers accepted by `parseNodes` when recursing. `none` = top
     level (no closer expected). For `{{#if}}` the closer is a *set*
@@ -151,26 +153,37 @@ private structure ParseResult where
   deriving Inhabited
 
 /-- Inside `{{{…}}}` — consume up to the closing `}}}`. -/
-private partial def readRawTag (st : ParseState) : ParseState × String := Id.run do
+private partial def readRawTag (st : ParseState) : Option (ParseState × String) := Id.run do
   let mut p := st.pos + 3
   let start := p
   while p + 2 < st.size && !(atDelim { st with pos := p } '}' '}' && st.bs[p + 2]! == '}'.toNat.toUInt8) do
     p := p + 1
+  if p + 2 ≥ st.size then return none
   let raw := String.fromUTF8! (st.bs.extract start p)
-  return ({ st with pos := p + 3 }, raw.trimAscii.toString)
+  return some ({ st with pos := p + 3 }, raw.trimAscii.toString)
 
 /-- Recursive descent. -/
 private partial def parseNodes (st : ParseState) (closer : Closer)
     : ParseResult := Id.run do
   let mut s := st
   let mut acc : List Node := []
+  -- An opener with no closer: everything from it on is plain text.
+  let restAsText := fun (st : ParseState) =>
+    String.fromUTF8? (st.bs.extract st.pos st.size) |>.getD ""
   while s.pos < s.size do
     if isOpen s && s.pos + 2 < s.size && s.bs[s.pos + 2]! == '{'.toNat.toUInt8 then
-      let (s', key) := readRawTag s
-      s := s'
-      acc := .raw key :: acc
+      match readRawTag s with
+      | some (s', key) =>
+        s := s'
+        acc := .raw key :: acc
+      | none =>
+        acc := .text (restAsText s) :: acc
+        s := { s with pos := s.size }
     else if isOpen s then
-      let (s', tag) := readTag s
+      let some (s', tag) := readTag s
+        | acc := .text (restAsText s) :: acc
+          s := { s with pos := s.size }
+          continue
       s := s'
       -- Closer match?
       let stop :=

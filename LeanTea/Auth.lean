@@ -280,6 +280,11 @@ def fetchUserInfo (accessToken : String) : IO (Except String UserInfo) := do
 /-- Cookie that ties a login's `state` to the browser that started it. -/
 def loginStateCookie : String := "google_login"
 
+/-- The login-state cookie's name for `cfg`: `__Host-` prefixed when the
+    cookies are Secure, so a sibling subdomain cannot plant it. -/
+def Config.loginCookie (cfg : Config) : String :=
+  if cfg.cookieSecure then "__Host-" ++ loginStateCookie else loginStateCookie
+
 private def sameString (a b : String) : Bool :=
   let x := a.toUTF8
   let y := b.toUTF8
@@ -292,7 +297,7 @@ def loginHandler (cfg : Config) (store : AuthStore) : IO Response := do
   -- The callback accepts `state` only from the browser holding this
   -- cookie; otherwise an attacker could finish a login of their own and
   -- send the victim the callback link (login CSRF).
-  return (Response.redirect (authorizeUrl cfg state)).withCookie loginStateCookie state
+  return (Response.redirect (authorizeUrl cfg state)).withCookie cfg.loginCookie state
     (maxAgeSec := 600) (secure := cfg.cookieSecure)
 
 def callbackHandler (cfg : Config) (store : AuthStore) (req : Request) : IO Response := do
@@ -310,14 +315,14 @@ def callbackHandler (cfg : Config) (store : AuthStore) (req : Request) : IO Resp
     let code := codeEnc  -- code is opaque, no need to decode
     let state := stateEnc
     -- CSRF state check: the state must be this browser's, and unused.
-    let mine := match req.cookie? loginStateCookie with
+    let mine := match req.cookie? cfg.loginCookie with
       | some c => sameString c state
       | none => false
     if !mine then
-      return (Response.text 400 "invalid state\n").clearCookie loginStateCookie (secure := cfg.cookieSecure)
+      return (Response.text 400 "invalid state\n").clearCookie cfg.loginCookie (secure := cfg.cookieSecure)
     let ok ← store.takeState state
     if !ok then
-      return (Response.text 400 "invalid state\n").clearCookie loginStateCookie (secure := cfg.cookieSecure)
+      return (Response.text 400 "invalid state\n").clearCookie cfg.loginCookie (secure := cfg.cookieSecure)
     match ← exchangeCode cfg code with
     | .error e => return Response.text 502 s!"token exchange failed: {e}\n"
     | .ok tok =>
@@ -333,7 +338,7 @@ def callbackHandler (cfg : Config) (store : AuthStore) (req : Request) : IO Resp
           token := token, email := ui.email, name := ui.name, picture := ui.picture,
           createdAt := now, expiresAt := now + 86400 * 7
         }
-        let resp := (Response.redirect "/").clearCookie loginStateCookie (secure := cfg.cookieSecure)
+        let resp := (Response.redirect "/").clearCookie cfg.loginCookie (secure := cfg.cookieSecure)
         return resp.withCookie "session" token (secure := cfg.cookieSecure)
 
 def logoutHandler (store : AuthStore) (req : Request) (cookieSecure : Bool) : IO Response := do

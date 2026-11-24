@@ -55,34 +55,17 @@ private def defaultBaseUrl : IO String := do
 
 private def defaultWorkspace : IO String := do
   match (← IO.getEnv "CHROME_CDP_WORKSPACE") with
-  | some w => return w
+  | some w => return (← IO.FS.realPath w).toString
   | none   => return (← IO.currentDir).toString
-
-/-- Normalise an absolute path: split on `/`, drop `.` segments, pop
-    on `..`. Returns the normalised form. -/
-private def normalisePath (raw : String) : String :=
-  let parts := raw.splitOn "/"
-  let walk (acc : List String) (seg : String) : List String :=
-    if seg == "" || seg == "." then acc
-    else if seg == ".." then
-      match acc with
-      | _ :: rest => rest
-      | []        => []
-    else seg :: acc
-  let stack := parts.foldl walk []
-  "/" ++ String.intercalate "/" stack.reverse
 
 /-- Reject any path that resolves outside `workspace`. Relative paths
     are resolved against `workspace`. Symlinks aren't followed — best
     effort; if you symlink `/etc/passwd` into the workspace, that's
     on you. -/
 private def validatePath (workspace path : String) : Except String String :=
-  let abs := if path.startsWith "/" then path else workspace ++ "/" ++ path
-  let norm := normalisePath abs
-  let wsNorm := normalisePath workspace
-  /- `wsNorm ++ "/"` so `/foo/bar/baz` doesn't slip past `/foo/ba`. -/
-  if norm == wsNorm || norm.startsWith (wsNorm ++ "/") then .ok norm
-  else .error s!"path {path} escapes workspace {wsNorm}"
+  -- `SafePath.under` also refuses a relative workspace, which this
+  -- check's normalisation would have turned into "/" (everything).
+  (LeanTea.Net.SafePath.under workspace path).map (·.value)
 
 /-! ## Low-level CDP wrappers -/
 
@@ -698,7 +681,7 @@ def serveMain (args : List String) : IO Unit := do
     | some u => pure u
     | none   => defaultBaseUrl
   let ws ← match a.workspace with
-    | some w => pure w
+    | some w => pure (← IO.FS.realPath w).toString
     | none   => defaultWorkspace
   let cfg ← IO.mkRef ({ baseUrl := base, workspace := ws } : CdpConfigData)
   let mcpHandler : LeanTea.Mcp.Handler := {
