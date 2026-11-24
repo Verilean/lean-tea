@@ -33,6 +33,7 @@ namespace TemplateGroup
 open LeanTea.Template
 
 def flatSrc    : String := "Hello, {{name}}! You have {{count}} new messages."
+def escapeSrc  : String := "<p title=\"{{v}}\">{{v}}</p>{{{html}}}"
 def listSrc    : String := "<ul>{{#each fruits}}<li>{{this}}</li>{{/each}}</ul>"
 def dictSrc    : String :=
   "<ul>{{#each users}}<li>{{name}} ({{age}})</li>{{/each}}</ul>"
@@ -43,6 +44,8 @@ def includeSrc : String :=
 
 def run : IO LSpec := do
   let flat    ← (parse flatSrc).renderFlat [("name", "Junji"), ("count", "3")]
+  let escaped ← (parse escapeSrc).renderFlat
+    [("v", "<script>alert('x')</script>\" onmouseover=\"x & y"), ("html", "<b>ok</b>")]
   let listOut ← (parse listSrc).render
     [("fruits", .list [.str "apple", .str "banana", .str "cherry"])]
   let dictOut ← (parse dictSrc).render
@@ -58,6 +61,9 @@ def run : IO LSpec := do
   return group "Template engine" [
     it "flat substitution"
       (flat == "Hello, Junji! You have 3 new messages."),
+    it "{{v}} is HTML-escaped in text and attributes; {{{v}}} is inserted as is"
+      (escaped == "<p title=\"&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;&quot; onmouseover=&quot;x &amp; y\">" ++
+        "&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;&quot; onmouseover=&quot;x &amp; y</p><b>ok</b>"),
     it "#each over string list" (listOut.endsWith "</ul>" && listOut.startsWith "<ul>"
                                   && (listOut.splitOn "<li>").length == 4),
     it "#each over dict list — Alice"  ((dictOut.splitOn "Alice (30)").length == 2),

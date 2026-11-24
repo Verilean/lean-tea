@@ -24,8 +24,8 @@ def fixture : List (String × String) := [
   ("_layouts/default.html",
    "<html><head><link href=\"{{root}}s.css\"></head><body data-root=\"{{root}}\">" ++
    "<nav>{{#each nav}}<a class=\"{{current}}\" href=\"{{root}}{{url}}\">{{title}}</a>{{/each}}</nav>" ++
-   "<h1 class=\"t\">{{title}}</h1><main>{{content}}</main>{{#include \"_includes/foot.html\"}}</body></html>"),
-  ("_layouts/bare.html", "BARE[{{content}}]"),
+   "<h1 class=\"t\">{{title}}</h1><main>{{{content}}}</main>{{#include \"_includes/foot.html\"}}</body></html>"),
+  ("_layouts/bare.html", "BARE[{{{content}}}]"),
   ("_includes/foot.html", "<footer>FOOT</footer>"),
   ("index.html", "---\ntitle: Home\nnav: true\norder: 0\n---\n<ul>{{#each posts}}<li>{{date}}|{{title}}|{{url}}</li>{{/each}}</ul><p>{{site_title}}</p>"),
   ("about.md", "---\norder: 1\n---\n# About *us*\n\nSee [post](posts/b.md#top) and [ext](https://x.dev/a.md)."),

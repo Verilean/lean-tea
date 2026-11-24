@@ -5,11 +5,12 @@ The typed `LeanTea.Html` DSL (Chapter 2) is the right tool when HTML is
 HTML that's mostly static framing around a `<canvas>` or a `<script>`,
 you'd rather edit a real `.html` file in your editor.
 
-`LeanTea.Template` is that path. Four constructs:
+`LeanTea.Template` is that path. Five constructs:
 
 | Construct | Behaviour |
 |---|---|
-| `{{name}}` | direct substitution from a `Bindings` map |
+| `{{name}}` | substitution from a `Bindings` map, HTML-escaped (`& < > " '`) |
+| `{{{name}}}` | substitution as is, for HTML you built or escaped yourself; never for untrusted text |
 | `{{#each xs}}…{{/each}}` | loop over a list value |
 | `{{#if cond}}…{{else}}…{{/if}}` | branch on truthiness |
 | `{{#include "path"}}` | splice another file as a partial |
