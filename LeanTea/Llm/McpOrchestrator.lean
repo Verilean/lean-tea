@@ -1,6 +1,7 @@
 import LeanTea.Llm.Openai
 import LeanTea.Llm.Policy
 import LeanTea.Net.HttpClient
+import LeanTea.Mcp
 import Lean.Data.Json
 
 /-! # LeanTea.Llm.McpOrchestrator — chat-loop driver over N MCP servers
@@ -125,7 +126,11 @@ private def Mcp.sendReq (m : Mcp) (method : String) (params : Json) : IO Json :=
         throw <| IO.userError s!"mcp: server closed mid-request (method={method})"
       pure line
     | .http url =>
-      LeanTea.Net.HttpClient.postJsonText url req.compress
+      -- An HTTP MCP server off loopback requires a bearer token.
+      let auth := match ← LeanTea.Mcp.tokenFromEnv with
+        | some t => #[("Authorization", s!"Bearer {t}")]
+        | none => #[]
+      LeanTea.Net.HttpClient.postJsonText url req.compress auth
   match Json.parse raw with
   | .error e => throw <| IO.userError s!"mcp: bad JSON: {e}\n{raw}"
   | .ok j    => return j

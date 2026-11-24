@@ -184,15 +184,23 @@ def Access.check (a : Access) (req : Request) : Option Response :=
   let deny (status : Nat) (msg : String) := some (Response.text status (msg ++ "\n"))
   if a.loopbackOnly && !isLoopbackHost ((req.header? "host").getD "") then
     deny 403 "mcp: Host must be localhost"
-  else if let some o := req.header? "origin" then
-    if a.allowedOrigins.contains o then none
-    else deny 403 "mcp: cross-origin requests are not accepted"
-  else if let some t := a.token then
-    let want := ("Bearer " ++ t).toUTF8
-    let got := ((req.header? "authorization").getD "").toUTF8
-    if want.size == got.size && LeanTea.Crypto.Password.constantTimeEq want got then none
-    else deny 401 "mcp: missing or wrong bearer token"
-  else none
+  -- The Origin check only refuses: an allowed origin still needs the
+  -- token, since any non-browser client can send any Origin.
+  else if (req.header? "origin").any (!a.allowedOrigins.contains ·) then
+    deny 403 "mcp: cross-origin requests are not accepted"
+  else match a.token with
+    | some t =>
+      let auth := (req.header? "authorization").getD ""
+      -- RFC 7235: the scheme is case-insensitive.
+      let (scheme, cred) := match auth.splitOn " " with
+        | s :: rest => (s.toLower, (" ".intercalate rest).trimAscii.toString)
+        | [] => ("", "")
+      let want := t.toUTF8
+      let got := cred.toUTF8
+      if !t.isEmpty && scheme == "bearer" && want.size == got.size &&
+          LeanTea.Crypto.Password.constantTimeEq want got then none
+      else deny 401 "mcp: missing or wrong bearer token"
+    | none => none
 
 /-- `Access.check` ran first: refuse, or require JSON on `POST`. -/
 private def jsonPost? (req : Request) : Bool :=
@@ -234,13 +242,29 @@ partial def stdioLoop (h : Handler) : IO Unit := do
 /-- The bearer token from `LEANTEA_MCP_TOKEN`, or from the file named by
     `LEANTEA_MCP_TOKEN_FILE` (trailing whitespace dropped). -/
 def tokenFromEnv : IO (Option String) := do
-  if let some t := (← IO.getEnv "LEANTEA_MCP_TOKEN").filter (!·.isEmpty) then return some t
+  if let some t := (← IO.getEnv "LEANTEA_MCP_TOKEN").map (·.trimAscii.toString) |>.filter (!·.isEmpty) then
+    return some t
   match (← IO.getEnv "LEANTEA_MCP_TOKEN_FILE").filter (!·.isEmpty) with
   | some path =>
-    let t := (← IO.FS.readFile path).trimAsciiEnd.toString
+    let t := (← IO.FS.readFile path).trimAscii.toString
     if t.isEmpty then throw <| IO.userError s!"mcp: {path} is empty"
     return some t
   | none => return none
+
+/-- Where `serveHttp` will listen and with what access, or why it
+    refuses: a host that is not an IPv4 address (the server would
+    otherwise fall back to every interface), or a non-loopback address
+    without a token. Public for testing. -/
+def listenPlan (host : String) (access : Access) (token : Option String)
+    : Except String (String × Access) := do
+  let some ip := LeanTea.Net.Server.parseIPv4? host
+    | throw s!"mcp: {host} is not an IPv4 address; use 127.0.0.1 (or 0.0.0.0 with a token)"
+  let loopback := ip.octets[0] == 127
+  if token.any (·.isEmpty) then throw "mcp: the token is empty"
+  if !loopback && token.isNone then
+    throw s!"mcp: refusing to listen on {host} without a token; set LEANTEA_MCP_TOKEN or LEANTEA_MCP_TOKEN_FILE (or listen on 127.0.0.1)"
+  let addr := if host == "localhost" then "127.0.0.1" else host
+  return (addr, { access with token, loopbackOnly := access.loopbackOnly && loopback })
 
 /-- Serve the HTTP transport on `host:port` (default loopback only).
     The token comes from `LEANTEA_MCP_TOKEN` / `LEANTEA_MCP_TOKEN_FILE`
@@ -252,10 +276,8 @@ def Handler.serveHttp (h : Handler) (port : UInt16 := 8000) (host : String := "1
   let token ← match access.token with
     | some t => pure (some t)
     | none => tokenFromEnv
-  let loopback := host == "127.0.0.1" || host == "localhost" || host == "::1"
-  if !loopback && token.isNone then
-    throw <| IO.userError s!"mcp: refusing to listen on {host} without a token; set LEANTEA_MCP_TOKEN or LEANTEA_MCP_TOKEN_FILE (or listen on 127.0.0.1)"
-  serve port host (httpHandler h { access with token, loopbackOnly := access.loopbackOnly && loopback })
+  let (addr, access) ← IO.ofExcept (listenPlan host access token)
+  serve port addr (httpHandler h access)
 
 def Handler.serveStdio (h : Handler) : IO Unit := stdioLoop h
 

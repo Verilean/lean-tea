@@ -350,10 +350,14 @@ def mcpAccessSpec : IO LSpec := do
   let noTok ← tok (mcpReq [json, local_])
   let badTok ← tok (mcpReq [json, local_, ("authorization", "Bearer s3cret-tokeN")])
   let goodTok ← tok (mcpReq [json, local_, ("authorization", "Bearer s3cret-token")])
-  let remote ← try
-      LeanTea.Mcp.Handler.serveHttp h 18799 "0.0.0.0"
-      pure false
-    catch _ => pure true
+  let originTok ← LeanTea.Mcp.httpHandler h
+      { token := some "s3cret-token", allowedOrigins := ["https://ui.example"], loopbackOnly := false }
+      (mcpReq [json, ("origin", "https://ui.example")])
+  let lowerBearer ← tok (mcpReq [json, local_, ("authorization", "bearer s3cret-token")])
+  let plan := fun (host : String) (token : Option String) =>
+    LeanTea.Mcp.listenPlan host {} token
+  let planAddr := fun (r : Except String (String × LeanTea.Mcp.Access)) =>
+    match r with | .ok (a, acc) => s!"{a} loopbackOnly={acc.loopbackOnly}" | .error _ => "refused"
   return group "MCP HTTP transport access" [
     it "a JSON POST to a loopback Host is served" (status ok == 200 && status localhost == 200),
     it "a non-JSON POST (a page's simple request) is refused with 415"
@@ -364,7 +368,21 @@ def mcpAccessSpec : IO LSpec := do
     it "with a token, a missing or wrong bearer token is 401"
       (status noTok == 401 && status badTok == 401),
     it "with a token, the right bearer token is served" (status goodTok == 200),
-    it "listening on 0.0.0.0 without a token is refused" remote
+    it "listening on 0.0.0.0 without a token is refused" (planAddr (plan "0.0.0.0" none) == "refused"),
+    it "localhost listens on 127.0.0.1 (not every interface)"
+      (planAddr (plan "localhost" none) == "127.0.0.1 loopbackOnly=true"),
+    it "a host that is not an IPv4 address is refused (no fallback to 0.0.0.0)"
+      (planAddr (plan "::1" none) == "refused" && planAddr (plan "256.0.0.1" none) == "refused" &&
+        planAddr (plan "my-host" (some "t")) == "refused"),
+    it "an empty token is refused" (planAddr (plan "0.0.0.0" (some "")) == "refused"),
+    it "0.0.0.0 with a token listens without the loopback Host rule"
+      (planAddr (plan "0.0.0.0" (some "t")) == "0.0.0.0 loopbackOnly=false"),
+    it "an allowed Origin still needs the token" (status originTok == 401),
+    it "the Bearer scheme is case-insensitive" (status lowerBearer == 200),
+    it "serve refuses a host that is not an IPv4 address"
+      (LeanTea.Net.Server.parseIPv4? "localhost" == some ⟨#v[127, 0, 0, 1]⟩ &&
+        LeanTea.Net.Server.parseIPv4? "1.2.3" == none && LeanTea.Net.Server.parseIPv4? "1.2.3.300" == none &&
+        LeanTea.Net.Server.parseIPv4? "example.com" == none)
   ]
 
 /-! ## WebSocket origin checks -/
