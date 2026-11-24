@@ -82,8 +82,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-lake-
 
-      - name: Install libpq-dev and libssl-dev (LEANTEA_POSTGRES=1, LEANTEA_TLS=1 builds)
-        run: sudo apt-get update && sudo apt-get install -y libpq-dev libssl-dev pkg-config
+      - name: Install libpq-dev, libssl-dev (LEANTEA_POSTGRES=1, LEANTEA_TLS=1 builds) and xmlsec1 (SAML signature tests)
+        run: sudo apt-get update && sudo apt-get install -y libpq-dev libssl-dev pkg-config xmlsec1
 
       - name: Build CI test binaries
         env:

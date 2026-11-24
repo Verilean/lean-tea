@@ -261,6 +261,23 @@ def parseInstant (s : String) : Option Int := do
 
 /-! ## Signature verification via xmlsec1 -/
 
+/-- `--verify` plus the options that pin it to the configured
+    certificate: keys only from `--pubkey-cert-pem` (never a `KeyValue`
+    or certificate carried in the document) and references only within
+    the document (no external URIs fetched). xmlsec1 1.3 also needs
+    `--lax-key-search` to use a key given without a name; 1.2 does not
+    know that option, so it is added by version. -/
+def xmlsecVerifyArgs : IO (Array String) := do
+  let out ← IO.Process.output { cmd := "xmlsec1", args := #["--version"] }
+  -- "xmlsec1 1.3.7 (openssl)"
+  let ver := (out.stdout.splitOn " ")[1]? |>.getD ""
+  let nums := (ver.splitOn ".").map (·.toNat?.getD 0)
+  let atLeast13 := match nums with
+    | major :: minor :: _ => major > 1 || (major == 1 && minor ≥ 3)
+    | _ => false
+  return #["--verify"] ++ (if atLeast13 then #["--lax-key-search"] else #[]) ++
+    #["--enabled-key-data", "raw-x509-cert", "--enabled-reference-uris", "empty,same-doc"]
+
 /-- Verify the assertion signature using xmlsec1. `idpCertPemPath` is
     a PEM file of the IdP's signing certificate. Requires `xmlsec1`
     to be on `PATH` (apt: `xmlsec1`; brew: `xmlsec1`). -/
@@ -275,7 +292,7 @@ def verifySignature (xml : String) (idpCertPemPath : String)
     IO.FS.writeFile xmlPath xml
     let out ← IO.Process.output {
       cmd := "xmlsec1"
-      args := #["--verify", "--id-attr:ID", "Assertion",
+      args := (← xmlsecVerifyArgs) ++ #["--id-attr:ID", "Assertion",
                 "--pubkey-cert-pem", idpCertPemPath, xmlPath.toString]
     }
     if out.exitCode == 0 then return .ok ()
@@ -374,8 +391,34 @@ private def occurrences (hay needle : String) : Nat :=
     so the real opener is `<…Assertion ` (space); we also count the
     bare `<…Assertion>` form for safety. Public for testing. -/
 def assertionCount (xml : String) : Nat :=
-  occurrences xml "<saml:Assertion " + occurrences xml "<saml:Assertion>"
-    + occurrences xml "<Assertion " + occurrences xml "<Assertion>"
+  -- Every start tag whose local name is `Assertion`, whatever its prefix
+  -- (`saml:`, `saml2:`, none …): an IdP that writes `saml2:` must not let
+  -- a forged `<saml:Assertion>` go uncounted.
+  (xml.splitOn "<").drop 1 |>.countP fun tag =>
+    let name := (tag.takeWhile fun c => !(c == ' ' || c == '>' || c == '/' ||
+                                          c == '\t' || c == '\n' || c == '\r')).toString
+    name == "Assertion" || name.endsWith ":Assertion"
+
+/-- `xml` without `<!-- … -->` comments, or an error when it has an
+    unterminated comment, a DOCTYPE / entity declaration or a CDATA
+    section. Signature verification ignores comments and reads CDATA as
+    text, while the string parser here would see markup in both, so a
+    forged `<Assertion>` could hide there. SAML responses need none of
+    them. -/
+def stripComments (xml : String) : Except String String := do
+  if (xml.splitOn "<!DOCTYPE").length > 1 || (xml.splitOn "<!ENTITY").length > 1 then
+    throw "SAML: DOCTYPE / ENTITY declarations are not accepted"
+  if (xml.splitOn "<![CDATA[").length > 1 then
+    throw "SAML: CDATA sections are not accepted"
+  match xml.splitOn "<!--" with
+  | [] => return xml
+  | first :: rest =>
+    let mut out := first
+    for part in rest do
+      match part.splitOn "-->" with
+      | _ :: after :: more => out := out ++ String.intercalate "-->" (after :: more)
+      | _ => throw "SAML: unterminated comment"
+    return out
 
 /-- Enforce the XSW invariants described above against the raw document
     and the parsed assertion. Public so it can be unit-tested against
@@ -411,6 +454,7 @@ def checkNoWrapping (xml : String) (a : Assertion) : Except String Unit := do
     accepted again. Pure, so it can be tested at fixed clocks. -/
 def checkAssertion (cfg : Config) (now : Int) (xml : String)
     (inResponseTo : Option String := none) : Except String (Assertion × Int) := do
+  let xml ← stripComments xml
   let a ← parseResponse xml
   checkNoWrapping xml a
   if !cfg.idpEntityId.isEmpty && a.issuer != cfg.idpEntityId then
