@@ -27,13 +27,14 @@ site/
 * **Titles** come from `title:`, else the first `# Heading`, else the
   file name.
 * **Layouts** are `_layouts/<layout>.html` templates (default
-  `default`). Bindings: `{{content}}` (raw HTML), `{{title}}`,
+  `default`). Bindings: `{{{content}}}` (the page's HTML, inserted
+  as is), `{{title}}`,
   `{{site_title}}`, `{{root}}` (`""` or `"../"`… — prefix it to links
   so the site works from any sub-path or `file://`), `{{url}}`,
   front-matter keys, `{{#each nav}}` (`title`, `url`, `current`),
   `{{#each pages}}`, and one list per top-level directory
-  (`{{#each posts}}`, newest `date` first). Values are inserted
-  unescaped; `title`/`description` are pre-escaped. Without a layout
+  (`{{#each posts}}`, newest `date` first). `{{key}}` inserts a value
+  HTML-escaped, `{{{key}}}` as is (only `content` needs that). Without a layout
   file the built-in sidebar layout (the one the lean-tea book uses)
   is applied.
 * **HTML page bodies** are templates too, so an `index.html` can
@@ -165,9 +166,9 @@ def loadItem (cfg : Config) (rel : String) : IO (Option Item) := do
 
 def pageValue (p : Page) (current : String) : Value :=
   let base : List (String × Value) := [
-    ("title", .str (escape p.title)), ("url", .str p.url),
+    ("title", .str p.title), ("url", .str p.url),
     ("current", .str (if p.url == current then "current" else "")),
-    ("date", .str p.date), ("description", .str (escape ((p.get? "description").getD "")))]
+    ("date", .str p.date), ("description", .str ((p.get? "description").getD ""))]
   let extra : List (String × Value) :=
     (p.params.filter (fun (k, _) => k != "title" && k != "description")).map (fun (k, v) => (k, .str v))
   .dict (base ++ extra)
@@ -185,9 +186,9 @@ def bindings (cfg : Config) (all : List Page) (p : Page) : List (String × Value
     let ps := all.filter (·.url.startsWith (d ++ "/"))
     let ps := ps.mergeSort (fun a b => a.date > b.date || (a.date == b.date && a.url ≤ b.url))
     (d, Value.list (ps.map (pageValue · p.url)))
-  [("title", Value.str (escape p.title)), ("site_title", .str (escape cfg.siteTitle)),
-   ("tagline", .str (escape cfg.tagline)), ("root", .str (rootOf p.url)), ("url", .str p.url),
-   ("description", .str (escape ((p.get? "description").getD ""))),
+  [("title", Value.str p.title), ("site_title", .str cfg.siteTitle),
+   ("tagline", .str cfg.tagline), ("root", .str (rootOf p.url)), ("url", .str p.url),
+   ("description", .str ((p.get? "description").getD "")),
    ("nav", .list (navPages.map (pageValue · p.url))),
    ("pages", .list ((sortPages all).map (pageValue · p.url)))] ++
   (p.params.filter (fun (k, _) => k != "title" && k != "description") |>.map (fun (k, v) => (k, Value.str v))) ++

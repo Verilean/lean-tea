@@ -33,8 +33,8 @@ Front matter is `key: value` lines between `---` fences:
 
 | binding | value |
 |---|---|
-| `{{content}}` | the page's HTML |
-| `{{title}}`, `{{description}}`, `{{site_title}}` | pre-escaped |
+| `{{{content}}}` | the page's HTML, inserted as is (triple braces) |
+| `{{title}}`, `{{description}}`, `{{site_title}}` | escaped by `{{…}}` like every value |
 | `{{root}}` | `""` / `"../"` … — prefix links with it, so the site works under any sub-path or `file://` |
 | `{{url}}` | the page's own URL |
 | `{{#each nav}}` | `title`, `url`, `current` |

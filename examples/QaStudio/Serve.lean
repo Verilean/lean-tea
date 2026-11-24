@@ -592,8 +592,8 @@ def handler (s : Studio) (page : Template.Provider) (demos : List (String × Str
   match req.method, req.path with
   | "GET", "/" =>
     let st ← s.state.get
-    let quoteAttr := fun (v : String) => v.replace "&" "&amp;" |>.replace "\"" "&quot;" |>.replace "<" "&lt;"
-    return Response.html 200 (← (← page).renderFlat [("model", quoteAttr s.vlm.model), ("url", quoteAttr st.startUrl)])
+    -- `{{model}}` / `{{url}}` are HTML-escaped by the template.
+    return Response.html 200 (← (← page).renderFlat [("model", s.vlm.model), ("url", st.startUrl)])
   | "GET", "/live.png" =>
     let st ← s.state.get
     -- borrow the browser only when no job runs and nobody else holds it;

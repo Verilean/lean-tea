@@ -6,7 +6,9 @@ board view, anything with heavy logic.
 
 This module covers the other end of the spectrum: a `.html` file
 shell with `{{key}}` placeholders and `{{#each xs}}…{{/each}}`
-blocks for repeated chunks. The page is real HTML the editor
+blocks for repeated chunks. `{{key}}` HTML-escapes its value, so
+data from users cannot add markup; `{{{key}}}` inserts HTML the
+caller built (or escaped) itself. The page is real HTML the editor
 highlights and a designer can hand-edit.
 
 ```html
@@ -63,8 +65,12 @@ abbrev Bindings := List (String × Value)
 inductive Node where
   /-- Literal text. -/
   | text  (s : String) : Node
-  /-- `{{key}}` — direct substitution. -/
+  /-- `{{key}}` — substitution, HTML-escaped (`& < > " '`), so a value
+      cannot open a tag or leave an attribute. -/
   | var   (key : String) : Node
+  /-- `{{{key}}}` — substitution as is, for HTML the caller built or
+      already escaped. Never pass untrusted text this way. -/
+  | raw   (key : String) : Node
   /-- `{{#each key}}…{{/each}}`. -/
   | each  (key : String) (body : List Node) : Node
   /-- `{{#if key}}…{{else}}…{{/if}}`. Truthiness rule for the lookup
@@ -144,13 +150,26 @@ private structure ParseResult where
   stopTag  : String := ""
   deriving Inhabited
 
+/-- Inside `{{{…}}}` — consume up to the closing `}}}`. -/
+private partial def readRawTag (st : ParseState) : ParseState × String := Id.run do
+  let mut p := st.pos + 3
+  let start := p
+  while p + 2 < st.size && !(atDelim { st with pos := p } '}' '}' && st.bs[p + 2]! == '}'.toNat.toUInt8) do
+    p := p + 1
+  let raw := String.fromUTF8! (st.bs.extract start p)
+  return ({ st with pos := p + 3 }, raw.trimAscii.toString)
+
 /-- Recursive descent. -/
 private partial def parseNodes (st : ParseState) (closer : Closer)
     : ParseResult := Id.run do
   let mut s := st
   let mut acc : List Node := []
   while s.pos < s.size do
-    if isOpen s then
+    if isOpen s && s.pos + 2 < s.size && s.bs[s.pos + 2]! == '{'.toNat.toUInt8 then
+      let (s', key) := readRawTag s
+      s := s'
+      acc := .raw key :: acc
+    else if isOpen s then
       let (s', tag) := readTag s
       s := s'
       -- Closer match?
@@ -229,6 +248,12 @@ def loadFile (rel : String) : IO Template := do
 private def Bindings.lookup (b : Bindings) (key : String) : Option Value :=
   b.find? (·.fst == key) |>.map (·.snd)
 
+/-- HTML-escape for text and (quoted) attribute values. -/
+def escapeHtml (s : String) : String :=
+  s.foldl (fun acc c => acc ++ match c with
+    | '&' => "&amp;" | '<' => "&lt;" | '>' => "&gt;"
+    | '"' => "&quot;" | '\'' => "&#39;" | c => c.toString) ""
+
 /-- Render a value as a string. For lists / dicts we fall back to a
     debug-ish form — but anywhere the template uses `{{key}}` the
     target is expected to be a `Value.str`. -/
@@ -246,6 +271,10 @@ private partial def renderNodes (b : Bindings) : List Node → IO String
     let tail ← renderNodes b rest
     return s ++ tail
   | .var key :: rest => do
+    let v := (b.lookup key).map Value.toText |>.getD ""
+    let tail ← renderNodes b rest
+    return escapeHtml v ++ tail
+  | .raw key :: rest => do
     let v := (b.lookup key).map Value.toText |>.getD ""
     let tail ← renderNodes b rest
     return v ++ tail
