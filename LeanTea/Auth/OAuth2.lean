@@ -1,4 +1,5 @@
 import LeanTea.Auth
+import LeanTea.Net.WebSocketServer
 import LeanTea.Persist.Store
 import LeanTea.Crypto.Sha256
 import LeanTea.Crypto.Base64
@@ -633,5 +634,17 @@ def gate (g : GateConfig) (sessions : Sessions) (inner : Option User → Handler
       else
         let next := if req.query.isEmpty then req.path else req.path ++ "?" ++ req.query
         return Response.redirect (g.loginPath ++ "?next=" ++ urlEncode next)
+
+/-- Put WebSocket upgrades behind the same sign-in as `gate`. The HTTP
+    gate does not see upgrades (the server asks the router first), so a
+    socket needs this too. Refuses a cross-origin upgrade (`sameOrigin`)
+    and one without a live session (401), then hands the user to
+    `inner`. -/
+def gateRouter (g : GateConfig) (sessions : Sessions)
+    (inner : User → LeanTea.Net.WebSocketServer.Router) : LeanTea.Net.WebSocketServer.Router :=
+  LeanTea.Net.WebSocketServer.Router.sameOrigin fun req => do
+    match ← currentUser g sessions req with
+    | some u => inner u req
+    | none => pure (some (.error (Response.text 401 "login required\n")))
 
 end LeanTea.Auth.OAuth2

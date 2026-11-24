@@ -429,6 +429,17 @@ def inProcess : IO LSpec := do
   let tricks ← ["/static/../api/items", "/static/%2e%2e/api/items", "/static/%2E%2e/api/items",
                 "/static/..%2fapi/items", "/static//../api/items", "/static/.%2e/api/items",
                 "/static\\..\\api/items"].mapM fun p => h (request p)
+  -- WebSocket upgrades behind the same sign-in.
+  let wsInner : User → LeanTea.Net.WebSocketServer.Router := fun u _ =>
+    pure (some (.error (Response.text 200 s!"ws for {u.login}")))
+  let wsr := gateRouter g sessions wsInner
+  let wsOutcome := fun (r : Option (Except Response LeanTea.Net.WebSocketServer.Session)) =>
+    match r with | some (.error resp) => resp.status | some (.ok _) => 101 | none => 0
+  let wsHost : Array (String × String) := #[("host", "app.test"), ("origin", "https://app.test")]
+  let wsOk ← wsr (request "/ws" "" [("session", s)] (headers := wsHost))
+  let wsAnon ← wsr (request "/ws" (headers := wsHost))
+  let wsCross ← wsr (request "/ws" "" [("session", s)]
+    (headers := #[("host", "app.test"), ("origin", "https://evil.test")]))
   let down ← LeanTea.Auth.Proxy.handler { port := 1 } g sessions
     (request "/api/items" "" [("session", s)])
   return group "proxy handler (in-process)" [
@@ -470,7 +481,11 @@ def inProcess : IO LSpec := do
         canonicalPath? "/static/" == some "/static/" && canonicalPath? "/" == some "/" &&
         canonicalPath? "/static/../x" == none && canonicalPath? "/a%2fb" == none &&
         canonicalPath? "/a%zz" == none && canonicalPath? "a/b" == none &&
-        canonicalPath? "/a//b" == none && canonicalPath? "/a%00" == none)
+        canonicalPath? "/a//b" == none && canonicalPath? "/a%00" == none),
+    it "gateRouter: a signed-in same-origin upgrade reaches inner with the user"
+      (wsOutcome wsOk == 200),
+    it "gateRouter: an upgrade without a session is 401" (wsOutcome wsAnon == 401),
+    it "gateRouter: a cross-origin upgrade with the user's cookie is 403" (wsOutcome wsCross == 403)
   ]
 
 private def httpGet (path : String) (cookies : List (String × String) := [])
