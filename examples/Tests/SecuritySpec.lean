@@ -48,7 +48,25 @@ def safeHtmlSpec : LSpec := group "SafeHtml (Primitive 4)" [
     it "javascript: rejected"              (isError (SafeAttr.url  "href" "javascript:alert(1)")),
     it "data:text/html rejected"           (isError (SafeAttr.url  "href" "data:text/html,1")),
     it "case-insensitive javascript:"      (isError (SafeAttr.url  "href" "JaVaScRiPt:1")),
-    it "vbscript: rejected"                (isError (SafeAttr.url  "href" "vbscript:msgbox()"))
+    it "vbscript: rejected"                (isError (SafeAttr.url  "href" "vbscript:msgbox()")),
+    it "tab / newline inside the scheme rejected"
+      (isError (SafeAttr.url "href" "java\tscript:alert(1)") &&
+        isError (SafeAttr.url "href" "java\nscript:alert(1)")),
+    it "leading control characters and spaces rejected"
+      (isError (SafeAttr.url "href" "\x01javascript:alert(1)") &&
+        isError (SafeAttr.url "href" "  javascript:alert(1)")),
+    it "schemes outside http/https/mailto/tel rejected"
+      (isError (SafeAttr.url "href" "data:image/svg+xml,<svg/>") &&
+        isError (SafeAttr.url "src" "file:///etc/passwd")),
+    it "http(s), mailto, tel and relative URLs accepted"
+      (isOk (SafeAttr.url "href" "https://example.com/a?b=c:d") &&
+        isOk (SafeAttr.url "href" "mailto:a@example.com") &&
+        isOk (SafeAttr.url "href" "tel:+81-3") && isOk (SafeAttr.url "href" "/x?y=a:b") &&
+        isOk (SafeAttr.url "href" "#top") && isOk (SafeAttr.url "href" "page.html")),
+    it "URL attributes refused as plain text"
+      (isError (SafeAttr.text "href" "javascript:alert(1)") &&
+        isError (SafeAttr.text "src" "x") && isError (SafeAttr.text "formaction" "x") &&
+        isError (SafeAttr.text "poster" "x") && isError (SafeAttr.text "srcset" "x"))
   ],
   group "accepted (allow-list)" [
     it "class accepted"                    (isOk    (SafeAttr.text "class" "btn")),
@@ -164,7 +182,12 @@ def safeRedirectSpec : LSpec :=
     ],
     group "rejected protocol-relative" [
       it "//evil.example"      (isError (SafeRedirect.to trusted "//evil.example/x")),
-      it "/\\\\evil.example"   (isError (SafeRedirect.to trusted "/\\evil.example/x"))
+      it "/\\\\evil.example"   (isError (SafeRedirect.to trusted "/\\evil.example/x")),
+      it "tab that browsers drop (/\\t/evil.example)" (isError (SafeRedirect.to trusted "/\t/evil.example")),
+      it "other control characters and backslashes anywhere"
+        (isError (SafeRedirect.to trusted "/\x0b/evil.example") &&
+          isError (SafeRedirect.to trusted "/a\\..\\..\\evil.example") &&
+          isError (SafeRedirect.to trusted "/x\x7f"))
     ],
     group "rejected dangerous schemes" [
       it "javascript:"             (isError (SafeRedirect.to trusted "javascript:alert(1)")),

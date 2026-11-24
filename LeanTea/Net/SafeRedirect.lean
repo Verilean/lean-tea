@@ -38,10 +38,13 @@ structure SafeRedirect where
 
 namespace SafeRedirect
 
-/-- Strip CR/LF/NUL up front; those would smuggle a second header
-    line via `Location:`. -/
+/-- Any control character or backslash. CR/LF/NUL would smuggle a
+    second header line via `Location:`. Browsers silently drop tab and
+    newline inside URLs and read `\` as `/`, so `/\t/evil.example` or
+    `/\evil.example` would become a protocol-relative URL after the
+    checks below. -/
 private def hasCtlInjection (s : String) : Bool :=
-  s.contains '\r' || s.contains '\n' || s.contains '\u0000'
+  s.any fun c => c.toNat < 0x20 || c.toNat == 0x7f || c == '\\'
 
 /-- A *relative* path: starts with `/`, but neither `//foo`
     (protocol-relative — browser sends to attacker host) nor `/\foo`
@@ -76,7 +79,7 @@ private def normaliseOrigin (o : String) : String :=
       `"javascript:alert(1)"`        → error (scheme not allowed) -/
 def to (trustedOrigins : List String) (loc : String) : Except String SafeRedirect :=
   if hasCtlInjection loc then
-    .error "SafeRedirect.to: CR/LF/NUL in location"
+    .error "SafeRedirect.to: control character or backslash in location"
   else if isSafeRelative loc then
     .ok ⟨loc⟩
   else
