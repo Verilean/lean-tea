@@ -41,6 +41,7 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <time.h>
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
   #define LEANTEA_HAVE_KQUEUE 1
@@ -92,6 +93,16 @@ static void buf_free(buf_t *b) {
    uploads (and add streaming so you don't buffer them whole). */
 #define LEANTEA_MAX_HEADER  (64u * 1024u)          /* 64 KB of headers   */
 #define LEANTEA_MAX_REQUEST (8u * 1024u * 1024u)   /* 8 MB total request */
+/* A connection is closed when it makes no progress for this long: no
+   whole request read since the last response went out (or since accept),
+   and no bytes of a pending response taken by the reader. */
+#define LEANTEA_REQUEST_TIMEOUT_MS 30000u
+
+static uint64_t monotonic_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
 
 typedef struct conn_s {
     int fd;
@@ -101,6 +112,8 @@ typedef struct conn_s {
     bool want_close;    /* set once we've decided this is the last request */
     bool writing;       /* whether we're currently mid-write on this fd    */
     bool closing;       /* marked by conn_close; freed at end of the batch */
+    uint64_t deadline;
+    struct conn_s *prev, *next, *dead_next;
 } conn_t;
 
 static conn_t *conn_new(int fd) {
@@ -135,9 +148,9 @@ typedef struct reactor_s {
        use-after-free. Instead conn_close() marks the conn `closing` and
        parks it here; reactor_reap() frees the list once per batch, after
        every event has been dispatched. */
-    conn_t     **dead;
-    size_t       dead_len;
-    size_t       dead_cap;
+    conn_t      *dead;
+    conn_t      *active;
+    uint32_t     timeout_ms;
 } reactor_t;
 
 /* Forward decls */
@@ -161,15 +174,22 @@ static int set_nonblocking(int fd) {
 /* ------------------------------------------------------------ */
 
 #ifdef LEANTEA_HAVE_KQUEUE
+/* A connection waits for one direction at a time, as with epoll below:
+   reading is off while a response drains (backpressure, and no
+   level-triggered wake-ups for data we will not read yet), and writing
+   is off once it has drained (otherwise an always-writable socket wakes
+   the loop forever). The listener (udata NULL) only ever reads. */
 static void reactor_watch_read(reactor_t *r, int fd, void *udata) {
-    struct kevent ev;
-    EV_SET(&ev, fd, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, udata);
-    kevent(r->poll_fd, &ev, 1, NULL, 0, NULL);
+    struct kevent ev[2];
+    EV_SET(&ev[0], fd, EVFILT_READ,  EV_ADD | EV_ENABLE,  0, 0, udata);
+    EV_SET(&ev[1], fd, EVFILT_WRITE, EV_ADD | EV_DISABLE, 0, 0, udata);
+    kevent(r->poll_fd, ev, udata ? 2 : 1, NULL, 0, NULL);
 }
 static void reactor_watch_write(reactor_t *r, int fd, void *udata) {
-    struct kevent ev;
-    EV_SET(&ev, fd, EVFILT_WRITE, EV_ADD | EV_ENABLE, 0, 0, udata);
-    kevent(r->poll_fd, &ev, 1, NULL, 0, NULL);
+    struct kevent ev[2];
+    EV_SET(&ev[0], fd, EVFILT_READ,  EV_ADD | EV_DISABLE, 0, 0, udata);
+    EV_SET(&ev[1], fd, EVFILT_WRITE, EV_ADD | EV_ENABLE,  0, 0, udata);
+    kevent(r->poll_fd, ev, 2, NULL, 0, NULL);
 }
 static void reactor_unwatch(reactor_t *r, int fd) {
     struct kevent ev[2];
@@ -217,33 +237,61 @@ static ssize_t find_header_end(const uint8_t *buf, size_t len) {
     return -1;
 }
 
-/* Scan headers for "content-length:" — case-insensitive.
-   Returns -1 if absent, else the parsed non-negative integer. */
+static bool header_name_is(const uint8_t *p, size_t n, const char *name) {
+    if (strlen(name) != n) return false;
+    for (size_t i = 0; i < n; i++) {
+        uint8_t c = p[i];
+        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        if (c != (uint8_t)name[i]) return false;
+    }
+    return true;
+}
+
+static bool token_char(uint8_t c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || (c != 0 && strchr("!#$%&'*+-.^_`|~", c) != NULL);
+}
+
+/* The body length from the header block [0, hdr_len): 0 when there is no
+   Content-Length, -1 when the request cannot be framed safely (malformed
+   header line, repeated or non-digit Content-Length), -2 when it has a
+   Transfer-Encoding. Only whole header lines count, never text inside the
+   request target or another header's value. The request line itself is
+   checked by the Lean side. Keep these rules aligned with
+   Http.requestBodyLength (LeanTea/Net/Http.lean). */
 static long parse_content_length(const uint8_t *buf, size_t hdr_len) {
-    static const char key[] = "content-length:";
-    size_t klen = sizeof(key) - 1;
-    for (size_t i = 0; i + klen < hdr_len; i++) {
-        bool match = true;
-        for (size_t j = 0; j < klen; j++) {
-            char c = (char)buf[i + j];
-            if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
-            if (c != key[j]) { match = false; break; }
+    size_t pos = 0;
+    while (pos + 1 < hdr_len && !(buf[pos] == '\r' && buf[pos+1] == '\n')) pos++;
+    if (pos + 1 >= hdr_len) return -1;
+    pos += 2;
+    bool seen = false;
+    long length = 0;
+    while (pos + 1 < hdr_len) {
+        if (buf[pos] == '\r' && buf[pos+1] == '\n') return length;
+        size_t start = pos;
+        while (pos < hdr_len && token_char(buf[pos])) pos++;
+        if (pos == start || pos >= hdr_len || buf[pos] != ':') return -1;
+        size_t name_len = pos - start;
+        size_t value = ++pos;
+        while (pos + 1 < hdr_len && !(buf[pos] == '\r' && buf[pos+1] == '\n')) {
+            if ((buf[pos] < 32 && buf[pos] != '\t') || buf[pos] == 127) return -1;
+            pos++;
         }
-        if (!match) continue;
-        /* skip whitespace, read digits */
-        size_t p = i + klen;
-        while (p < hdr_len && (buf[p] == ' ' || buf[p] == '\t')) p++;
-        long v = 0;
-        while (p < hdr_len && buf[p] >= '0' && buf[p] <= '9') {
-            /* Saturate instead of overflowing. Signed overflow is UB in
-               C, and an attacker fully controls these digits. Once we're
-               past the request cap the exact value no longer matters —
-               conn_process rejects it. */
-            if (v > (long)LEANTEA_MAX_REQUEST) return (long)LEANTEA_MAX_REQUEST + 1;
-            v = v * 10 + (buf[p] - '0');
-            p++;
+        if (pos + 1 >= hdr_len) return -1;
+        size_t end = pos;
+        while (value < end && (buf[value] == ' ' || buf[value] == '\t')) value++;
+        while (end > value && (buf[end-1] == ' ' || buf[end-1] == '\t')) end--;
+        if (header_name_is(buf + start, name_len, "transfer-encoding")) return -2;
+        if (header_name_is(buf + start, name_len, "content-length")) {
+            if (seen || value == end) return -1;
+            seen = true;
+            for (size_t i = value; i < end; i++) {
+                if (buf[i] < '0' || buf[i] > '9') return -1;
+                if (length <= (long)LEANTEA_MAX_REQUEST)
+                    length = length * 10 + buf[i] - '0';
+            }
         }
-        return v;
+        pos += 2;
     }
     return -1;
 }
@@ -296,21 +344,31 @@ static void conn_close(reactor_t *r, conn_t *c) {
     if (c->closing) return;
     c->closing = true;
     reactor_unwatch(r, c->fd);
-    if (r->dead_len == r->dead_cap) {
-        size_t nc = r->dead_cap ? r->dead_cap * 2 : 16;
-        conn_t **p = (conn_t **)realloc(r->dead, nc * sizeof(conn_t *));
-        if (!p) { conn_free(c); return; }  /* OOM: free now, best effort */
-        r->dead = p; r->dead_cap = nc;
-    }
-    r->dead[r->dead_len++] = c;
+    if (c->prev) c->prev->next = c->next;
+    else r->active = c->next;
+    if (c->next) c->next->prev = c->prev;
+    /* Intrusive list: OOM must never force immediate free within a batch. */
+    c->dead_next = r->dead;
+    r->dead = c;
 }
 
 /* Free every connection parked by conn_close during this batch. Called
    once, after all events in a kevent()/epoll_wait() result have been
    dispatched, so no dangling pointer survives into a later iteration. */
 static void reactor_reap(reactor_t *r) {
-    for (size_t i = 0; i < r->dead_len; i++) conn_free(r->dead[i]);
-    r->dead_len = 0;
+    while (r->dead) {
+        conn_t *c = r->dead;
+        r->dead = c->dead_next;
+        conn_free(c);
+    }
+}
+
+static void reactor_expire(reactor_t *r) {
+    uint64_t now = monotonic_ms();
+    for (conn_t *c = r->active, *next; c; c = next) {
+        next = c->next;
+        if (now >= c->deadline) conn_close(r, c);
+    }
 }
 
 /* Try to drain outbuf via non-blocking send.
@@ -326,6 +384,7 @@ static int conn_try_write(conn_t *c) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) return 1;
             return -1;
         }
+        if (n == 0) return -1;
         c->out_sent += (size_t)n;
     }
     /* fully sent */
@@ -334,30 +393,75 @@ static int conn_try_write(conn_t *c) {
     return 0;
 }
 
+/* Whether the response head [0, len) says `Connection: close`. The Lean
+   side (ReactorServer.wrap) always sets the header: close for HTTP/1.0
+   without keep-alive, `Connection: close` requests and requests it
+   could not parse. */
+static bool response_wants_close(const uint8_t *p, size_t len) {
+    ssize_t end = find_header_end(p, len);
+    size_t hdr = end < 0 ? len : (size_t)end;
+    size_t pos = 0;
+    while (pos + 1 < hdr) {
+        size_t line = pos;
+        while (pos + 1 < hdr && !(p[pos] == '\r' && p[pos+1] == '\n')) pos++;
+        size_t colon = line;
+        while (colon < pos && p[colon] != ':') colon++;
+        if (colon < pos && header_name_is(p + line, colon - line, "connection")) {
+            size_t v = colon + 1, e = pos;
+            while (v < e && (p[v] == ' ' || p[v] == '\t')) v++;
+            while (e > v && (p[e-1] == ' ' || p[e-1] == '\t')) e--;
+            if (header_name_is(p + v, e - v, "close")) return true;
+        }
+        pos += 2;
+    }
+    return false;
+}
+
+/* Queue a canned error response for a request we refuse to frame, and
+   close once it is sent: nothing after it on this stream can be trusted
+   to start a request. */
+static void conn_refuse(conn_t *c, int status) {
+    const char *msg =
+        status == 501 ? "HTTP/1.1 501 Not Implemented\r\ncontent-length: 0\r\nconnection: close\r\n\r\n" :
+        status == 431 ? "HTTP/1.1 431 Request Header Fields Too Large\r\ncontent-length: 0\r\nconnection: close\r\n\r\n" :
+        status == 413 ? "HTTP/1.1 413 Content Too Large\r\ncontent-length: 0\r\nconnection: close\r\n\r\n" :
+                        "HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+    size_t n = strlen(msg);
+    c->inbuf.len = 0;
+    c->want_close = true;
+    if (buf_reserve(&c->outbuf, c->outbuf.len + n)) {
+        memcpy(c->outbuf.data + c->outbuf.len, msg, n);
+        c->outbuf.len += n;
+    }
+}
+
 /* Called when there's data in inbuf; slice out a full request, invoke
    Lean, buffer the response.  Returns the number of requests handled
    in this call (>=0), or -1 on fatal error. */
 static int conn_process(reactor_t *r, conn_t *c) {
     int handled = 0;
     for (;;) {
+        if (c->outbuf.len != 0 || c->want_close) return handled;
         ssize_t hdr_end = find_header_end(c->inbuf.data, c->inbuf.len);
         if (hdr_end < 0) {
             /* Headers not complete yet. Bound how long we'll wait for the
                terminator so a client that never sends "\r\n\r\n" can't
                grow inbuf without limit (slowloris / header flood). */
-            if (c->inbuf.len > LEANTEA_MAX_HEADER) return -1;
+            if (c->inbuf.len > LEANTEA_MAX_HEADER) { conn_refuse(c, 431); return handled + 1; }
             return handled;
         }
+        if ((size_t)hdr_end > LEANTEA_MAX_HEADER) { conn_refuse(c, 431); return handled + 1; }
         long cl = parse_content_length(c->inbuf.data, (size_t)hdr_end);
-        if (cl < 0) cl = 0;
+        if (cl < 0) { conn_refuse(c, cl == -2 ? 501 : 400); return handled + 1; }
         size_t need = (size_t)hdr_end + (size_t)cl;
         /* Reject an over-large request rather than buffer it whole. */
-        if (need > LEANTEA_MAX_REQUEST) return -1;
+        if (need > LEANTEA_MAX_REQUEST) { conn_refuse(c, 413); return handled + 1; }
         if (c->inbuf.len < need) return handled;
 
         /* We have one full request in [0, need). Invoke Lean. */
         lean_object *resp = invoke_handler(r->handler, c->inbuf.data, need);
         size_t rlen = lean_sarray_size(resp);
+        if (response_wants_close(lean_sarray_cptr(resp), rlen)) c->want_close = true;
         if (!buf_reserve(&c->outbuf, c->outbuf.len + rlen)) {
             lean_dec(resp); return -1;
         }
@@ -372,66 +476,70 @@ static int conn_process(reactor_t *r, conn_t *c) {
         }
         c->inbuf.len = rest;
         handled++;
+        return handled;  /* Flush one response before dispatching another request. */
     }
 }
 
 /* Called by the reactor when the fd is readable. */
 static void on_readable(reactor_t *r, conn_t *c) {
-    /* Drain non-blocking recv into inbuf. */
+    /* Validate incrementally, before every allocation/read. Never drain an
+       unbounded stream before applying request limits. Flush each response
+       before consuming another request, applying backpressure to pipelines. */
     for (;;) {
-        if (!buf_reserve(&c->inbuf, c->inbuf.len + 8192)) {
+        int handled = conn_process(r, c);
+        if (handled < 0) { conn_close(r, c); return; }
+        if (c->outbuf.len > 0) {
+            int w = conn_try_write(c);
+            if (w < 0) { conn_close(r, c); return; }
+            if (w == 1) {
+                c->writing = true;
+                reactor_watch_write(r, c->fd, c);
+                return;
+            }
+            c->deadline = monotonic_ms() + r->timeout_ms;
+        }
+        if (c->want_close) { conn_close(r, c); return; }
+        if (handled > 0) continue;
+        if (c->inbuf.len >= LEANTEA_MAX_REQUEST) { conn_close(r, c); return; }
+        size_t count = LEANTEA_MAX_REQUEST - c->inbuf.len;
+        if (count > 8192) count = 8192;
+        if (!buf_reserve(&c->inbuf, c->inbuf.len + count)) {
             conn_close(r, c); return;
         }
         ssize_t n = recv(c->fd,
                          c->inbuf.data + c->inbuf.len,
-                         c->inbuf.cap - c->inbuf.len,
+                         count,
                          0);
         if (n < 0) {
             if (errno == EINTR) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return;
             conn_close(r, c); return;
         }
         if (n == 0) {
-            /* Client closed. If we have a pending response buffered,
-               still try to send it, otherwise tear down. */
-            c->want_close = true;
-            break;
+            conn_close(r, c); return;
         }
         c->inbuf.len += (size_t)n;
     }
 
-    /* Slice out and process any complete requests. */
-    int handled = conn_process(r, c);
-    if (handled < 0) { conn_close(r, c); return; }
-
-    /* Try to flush any queued response. */
-    if (c->outbuf.len > 0) {
-        int w = conn_try_write(c);
-        if (w < 0) { conn_close(r, c); return; }
-        if (w == 1) {
-            /* Partial write — register for EPOLLOUT / EVFILT_WRITE. */
-            c->writing = true;
-            reactor_watch_write(r, c->fd, c);
-            return;
-        }
-    }
-
-    /* Nothing left to write. If client closed and no response pending,
-       we're done. */
-    if (c->want_close && c->outbuf.len == 0) {
-        conn_close(r, c);
-    }
 }
 
 /* Called when the fd is writable and we had a partial write. */
 static void on_writable(reactor_t *r, conn_t *c) {
+    size_t sent = c->out_sent;
     int w = conn_try_write(c);
     if (w < 0) { conn_close(r, c); return; }
-    if (w == 1) return;  /* still partial */
+    /* A reader that keeps taking bytes keeps the connection; one that
+       stops for the whole timeout is dropped by reactor_expire. */
+    if (w == 1) {
+        if (c->out_sent != sent) c->deadline = monotonic_ms() + r->timeout_ms;
+        return;  /* still partial */
+    }
     c->writing = false;
+    c->deadline = monotonic_ms() + r->timeout_ms;
     /* Response fully sent. Re-arm for read. */
     reactor_watch_read(r, c->fd, c);
     if (c->want_close) conn_close(r, c);
+    else on_readable(r, c); /* Buffered pipelines and EPOLLET data need a drain. */
 }
 
 /* Called when the listener is readable — accept N new connections. */
@@ -444,11 +552,15 @@ static void on_accept(reactor_t *r) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) return;
             return;
         }
-        set_nonblocking(cfd);
+        if (set_nonblocking(cfd) < 0) { close(cfd); continue; }
         int one = 1;
         setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
         conn_t *c = conn_new(cfd);
         if (!c) { close(cfd); continue; }
+        c->deadline = monotonic_ms() + r->timeout_ms;
+        c->next = r->active;
+        if (c->next) c->next->prev = c;
+        r->active = c;
         reactor_watch_read(r, cfd, c);
     }
 }
@@ -461,7 +573,8 @@ static void on_accept(reactor_t *r) {
 static void reactor_loop(reactor_t *r) {
     struct kevent evs[128];
     while (!atomic_load(&r->stop)) {
-        int n = kevent(r->poll_fd, NULL, 0, evs, 128, NULL);
+        struct timespec tick = { .tv_sec = 0, .tv_nsec = 100000000 };
+        int n = kevent(r->poll_fd, NULL, 0, evs, 128, &tick);
         if (n < 0) {
             if (errno == EINTR) continue;
             break;
@@ -480,6 +593,7 @@ static void reactor_loop(reactor_t *r) {
                 if (!c->closing && evs[i].filter == EVFILT_WRITE) on_writable(r, c);
             }
         }
+        reactor_expire(r);
         reactor_reap(r);
     }
 }
@@ -489,7 +603,7 @@ static void reactor_loop(reactor_t *r) {
 static void reactor_loop(reactor_t *r) {
     struct epoll_event evs[128];
     while (!atomic_load(&r->stop)) {
-        int n = epoll_wait(r->poll_fd, evs, 128, -1);
+        int n = epoll_wait(r->poll_fd, evs, 128, 100);
         if (n < 0) {
             if (errno == EINTR) continue;
             break;
@@ -508,6 +622,7 @@ static void reactor_loop(reactor_t *r) {
                 if (!c->closing && (evs[i].events & EPOLLOUT)) on_writable(r, c);
             }
         }
+        reactor_expire(r);
         reactor_reap(r);
     }
 }
@@ -552,9 +667,10 @@ static int build_listener(uint16_t port) {
    Spins up a reactor and joins its thread. This call blocks the
    caller for the lifetime of the server — the way the existing
    `serve` functions do. */
-LEAN_EXPORT lean_obj_res lean_reactor_run(uint16_t port,
-                                          lean_object *handler,
-                                          lean_object *w) {
+LEAN_EXPORT lean_obj_res lean_reactor_run_timeout(uint16_t port,
+                                                  uint32_t timeout_ms,
+                                                  lean_object *handler,
+                                                  lean_object *w) {
     (void)w;
     reactor_t *r = (reactor_t *)calloc(1, sizeof(reactor_t));
     if (!r) {
@@ -563,6 +679,7 @@ LEAN_EXPORT lean_obj_res lean_reactor_run(uint16_t port,
     }
     atomic_init(&r->stop, 0);
     r->handler = handler; /* handler owned by the reactor for its lifetime */
+    r->timeout_ms = timeout_ms ? timeout_ms : LEANTEA_REQUEST_TIMEOUT_MS;
 
 #ifdef LEANTEA_HAVE_KQUEUE
     r->poll_fd = kqueue();
@@ -593,10 +710,17 @@ LEAN_EXPORT lean_obj_res lean_reactor_run(uint16_t port,
     reactor_loop(r);
 
     /* Not really reachable in normal ops. */
-    reactor_reap(r);        /* free any conns parked in the final batch */
-    free(r->dead);
+    while (r->active) conn_close(r, r->active);
+    reactor_reap(r);
     close(r->listen_fd);
     close(r->poll_fd);
     free(r);
     return lean_io_result_mk_ok(lean_box(0));
+}
+
+/* The original entry point: the default request timeout. */
+LEAN_EXPORT lean_obj_res lean_reactor_run(uint16_t port,
+                                          lean_object *handler,
+                                          lean_object *w) {
+    return lean_reactor_run_timeout(port, LEANTEA_REQUEST_TIMEOUT_MS, handler, w);
 }

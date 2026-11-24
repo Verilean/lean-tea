@@ -253,24 +253,74 @@ private def parseRequestLine (line : String) : Option (String × String × Strin
     | _ => none
   | _ => none
 
+private def isTokenChar (c : Char) : Bool :=
+  c.toNat < 128 && (c.isAlphanum || "!#$%&'*+-.^_`|~".contains c)
+
 private def parseHeaderLine (line : String) : Option (String × String) :=
   match line.splitOn ":" with
   | [] | [_] => none
   | k :: rest =>
-    let v := (String.intercalate ":" rest).trimAscii.toString
-    some (k.toLower, v)
+    let v := String.intercalate ":" rest
+    if k.isEmpty || !k.toList.all isTokenChar ||
+        v.toList.any (fun c => (c.toNat < 32 && c != '\t') || c.toNat == 127) then none
+    else some (k.toLower, v.trimAscii.toString)
+
+/-- The body length of a request, from its head (the bytes before
+    `\r\n\r\n`), or the status to answer with before closing the
+    connection when the request cannot be framed safely (RFC 9112 §6.3):
+
+    * 501 for any `Transfer-Encoding` (request bodies are only read by
+      `Content-Length`);
+    * 400 for a malformed request line or header line, more than one
+      `Content-Length`, or one that is not plain digits.
+
+    Only whole header lines count: a header *value* that contains
+    `content-length:` frames nothing. The servers check this before
+    reading the body, so a request they cannot frame is never passed on
+    and the bytes after it are never read as another request.
+    `c/leantea_reactor.c` (`parse_content_length`) applies the same rules. -/
+def requestBodyLength (head : String) : Except Nat Nat :=
+  let lines := head.splitOn "\r\n"
+  let validLine : Bool :=
+    match lines.head?.bind parseRequestLine with
+    | some (method, path, query, version) =>
+      !method.isEmpty && method.toList.all isTokenChar &&
+      (version == "HTTP/1.1" || version == "HTTP/1.0") &&
+      !(path ++ query).toList.any (fun c => c.toNat ≤ 32 || c.toNat == 127)
+    | none => false
+  let headers? : Option (List (String × String)) := lines.tail.mapM (m := Option) parseHeaderLine
+  match validLine, headers? with
+  | true, some headers =>
+    if headers.any (fun kv => kv.1 == "transfer-encoding") then .error 501
+    else match headers.filter (fun kv => kv.1 == "content-length") with
+      | [] => .ok 0
+      | [(_, v)] =>
+        match v.toNat? with
+        | some n => if v.toList.all (fun c => '0' ≤ c && c ≤ '9') then .ok n else .error 400
+        | none => .error 400
+      | _ => .error 400
+  | _, _ => .error 400
+
+/-- The answer to a request that `requestBodyLength` refused. -/
+def Response.framingError (status : Nat) : Response :=
+  if status == 501 then .text 501 "transfer-encoding not supported\n"
+  else if status == 413 then .text 413 "request too large\n"
+  else if status == 431 then .text 431 "request headers too large\n"
+  else .badRequest
 
 /-- Parse the complete request given the raw bytes that include both
     headers and (the entirety of) the body. Returns `none` if the
     request is malformed. -/
 def parseRequest (raw : ByteArray) (body : ByteArray) : Option Request := do
   let (headersStr, _earlyBody) ← splitHeaders raw
+  let .ok length := requestBodyLength headersStr | none
+  guard (body.size == length)
   let lines := headersStr.splitOn "\r\n"
   match lines with
   | [] => none
   | reqLine :: rest =>
     let (method, path, query, version) ← parseRequestLine reqLine
-    let headers := rest.filterMap parseHeaderLine
+    let headers ← rest.mapM (m := Option) parseHeaderLine
     some {
       method := method,
       path := path,

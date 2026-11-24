@@ -50,6 +50,11 @@ opaque acceptOne (listener : UInt32) : IO UInt32
 @[extern "lean_ft_recv_bytes"]
 opaque recvBytes (fd : UInt32) (max : UInt32) : IO ByteArray
 
+/-- Make a blocking `recvBytes` on `fd` fail after `milliseconds`
+    (`SO_RCVTIMEO`; must be positive). Sends are not affected. -/
+@[extern "lean_ft_set_recv_timeout"]
+opaque setRecvTimeout (fd : UInt32) (milliseconds : UInt32) : IO Unit
+
 /-- Write-all: retries on partial write and EINTR. -/
 @[extern "lean_ft_send_bytes"]
 opaque sendBytes (fd : UInt32) (bytes : ByteArray) : IO Unit
@@ -77,35 +82,46 @@ as `Std.Async.TCP` server, just without the async hop. -/
 private def maxHeaderBytes : Nat := 64 * 1024
 private def maxRequestBytes : Nat := 8 * 1024 * 1024
 
-private partial def readOneRequest (fd : UInt32) (acc : ByteArray)
-    : IO (Option (ByteArray × ByteArray)) := do
+/-- What reading one request ended with (see `Server`'s `Recv`). -/
+private inductive Recv where
+  | request (raw next : ByteArray)
+  | refuse (status : Nat)
+  | closed
+
+/-- One receive that gives up at `deadline` (monotonic ms): empty on EOF;
+    past the deadline the receive fails and the connection is dropped. -/
+private def recvBefore (fd : UInt32) (deadline : Nat) : IO ByteArray := do
+  let now ← IO.monoMsNow
+  if now ≥ deadline then return .empty
+  setRecvTimeout fd (min (deadline - now) (UInt32.size - 1)).toUInt32
+  recvBytes fd 8192
+
+/-- Read until `acc` holds one whole request, by the absolute `deadline`. -/
+private partial def readOneRequest (fd : UInt32) (acc : ByteArray) (deadline : Nat)
+    : IO Recv := do
   match splitHeaders acc with
   | some (headersStr, bodySoFar) =>
-    let lower := headersStr.toLower
-    let cl := match lower.splitOn "content-length:" with
-      | _ :: rest :: _ =>
-        let v := (rest.takeWhile (· != '\r')).toString.trimAscii.toString
-        v.toNat?.getD 0
-      | _ => 0
     let headBytes := headersStr.toUTF8
+    if headBytes.size + 4 > maxHeaderBytes then return .refuse 431
+    match requestBodyLength headersStr with
+    | .error status => return .refuse status
+    | .ok cl =>
     -- Reject an over-large request rather than buffer it whole.
-    if headBytes.size + 4 + cl > maxRequestBytes then return none
+    if headBytes.size + 4 + cl > maxRequestBytes then return .refuse 413
     if bodySoFar.size ≥ cl then
-      let sep : ByteArray := ⟨#[0x0d, 0x0a, 0x0d, 0x0a]⟩
-      let headEnd := headBytes.size + sep.size
-      let reqEnd := headEnd + cl
-      return some (acc.extract 0 reqEnd, acc.extract reqEnd acc.size)
+      let reqEnd := headBytes.size + 4 + cl
+      return .request (acc.extract 0 reqEnd) (acc.extract reqEnd acc.size)
     else
-      let chunk ← recvBytes fd 8192
-      if chunk.size == 0 then return none
-      readOneRequest fd (acc ++ chunk)
+      let chunk ← recvBefore fd deadline
+      if chunk.size == 0 then return .closed
+      readOneRequest fd (acc ++ chunk) deadline
   | none =>
     -- No header terminator yet. Bound the wait so a client that never
     -- sends "\r\n\r\n" can't grow `acc` without limit (slowloris).
-    if acc.size > maxHeaderBytes then return none
-    let chunk ← recvBytes fd 8192
-    if chunk.size == 0 then return none
-    readOneRequest fd (acc ++ chunk)
+    if acc.size > maxHeaderBytes then return .refuse 431
+    let chunk ← recvBefore fd deadline
+    if chunk.size == 0 then return .closed
+    readOneRequest fd (acc ++ chunk) deadline
 
 private def wantsClose (req : Request) : Bool :=
   let conn := (req.header? "connection").getD ""
@@ -122,10 +138,14 @@ private def annotateConnection (resp : Response) (close : Bool) : Response :=
     { resp with headers := resp.headers.push ("connection", v) }
 
 private partial def handleConnLoop (handler : Handler) (fd : UInt32)
-    (leftover : ByteArray) : IO Unit := do
-  match ← readOneRequest fd leftover with
-  | none => shutdownFd fd
-  | some (raw, next) =>
+    (leftover : ByteArray) (requestTimeoutMs : Nat) : IO Unit := do
+  let deadline := (← IO.monoMsNow) + requestTimeoutMs
+  match ← readOneRequest fd leftover deadline with
+  | .closed => shutdownFd fd
+  | .refuse status =>
+    sendBytes fd (annotateConnection (Response.framingError status) true).toBytes
+    shutdownFd fd
+  | .request raw next =>
     let body : ByteArray :=
       match baFindSeq raw CRLFCRLF with
       | some h => raw.extract (h + 4) raw.size
@@ -140,11 +160,11 @@ private partial def handleConnLoop (handler : Handler) (fd : UInt32)
     let resp := annotateConnection resp close
     sendBytes fd resp.toBytes
     if close then shutdownFd fd
-    else handleConnLoop handler fd next
+    else handleConnLoop handler fd next requestTimeoutMs
 
-private def handleConn (handler : Handler) (fd : UInt32) : IO Unit := do
+private def handleConn (handler : Handler) (fd : UInt32) (requestTimeoutMs : Nat) : IO Unit := do
   try
-    handleConnLoop handler fd .empty
+    handleConnLoop handler fd .empty requestTimeoutMs
   catch _ => pure ()
   closeFd fd
 
@@ -162,10 +182,10 @@ Two design points behind the loop shape below:
    also true of the async version; the difference is we avoid
    ~100-500 µs of scheduler overhead per syscall. -/
 
-private partial def acceptLoop (listener : UInt32) (handler : Handler) : IO Unit := do
+private partial def acceptLoop (listener : UInt32) (handler : Handler) (requestTimeoutMs : Nat) : IO Unit := do
   let client ← acceptOne listener
-  let _ ← IO.asTask (handleConn handler client)
-  acceptLoop listener handler
+  let _ ← IO.asTask (handleConn handler client requestTimeoutMs)
+  acceptLoop listener handler requestTimeoutMs
 
 /-- Serve `handler` on `port` with `workers` accept threads, each
     bound to the port via `SO_REUSEPORT`. The main thread parks on
@@ -174,8 +194,13 @@ private partial def acceptLoop (listener : UInt32) (handler : Handler) : IO Unit
     `workers` defaults to `1` — bump it (usually to `LEAN_NUM_THREADS`
     or physical core count) for real load. Above ~core count you get
     diminishing returns as the kernel-level accept queue is already
-    saturated. -/
+    saturated.
+
+    `requestTimeoutMs` (positive) bounds how long one request may take to
+    arrive, counted from when the worker starts waiting for it; trickling
+    bytes does not extend it. -/
 def serve (port : UInt16 := 8001) (workers : Nat := 1) (handler : Handler)
+    (requestTimeoutMs : Nat := 30000)
     : IO Unit := do
   IO.eprintln s!"fastserving on http://0.0.0.0:{port}/ (workers={workers})"
   -- Spawn (workers - 1) background workers, then run one on this thread.
@@ -183,8 +208,8 @@ def serve (port : UInt16 := 8001) (workers : Nat := 1) (handler : Handler)
   for _ in [0:tail] do
     let _ ← IO.asTask do
       let listener ← bindReusePort port
-      acceptLoop listener handler
+      acceptLoop listener handler requestTimeoutMs
   let listener ← bindReusePort port
-  acceptLoop listener handler
+  acceptLoop listener handler requestTimeoutMs
 
 end LeanTea.Net.FastServer

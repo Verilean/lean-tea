@@ -48,6 +48,13 @@ open LeanTea.Net.Http
 @[extern "lean_reactor_run"]
 opaque reactorRun (port : UInt16) (rawHandler : ByteArray → IO ByteArray) : IO Unit
 
+/-- `reactorRun` with the request timeout in milliseconds (0 means the
+    default, 30 s): a connection that neither completes a request nor
+    takes response bytes for that long is closed. -/
+@[extern "lean_reactor_run_timeout"]
+opaque reactorRunTimeout (port : UInt16) (requestTimeoutMs : UInt32)
+    (rawHandler : ByteArray → IO ByteArray) : IO Unit
+
 /-! ## User-facing wrapper -/
 
 /-- Turn a `Handler` into the raw-bytes callback the reactor speaks. -/
@@ -94,8 +101,13 @@ private def wrap (handler : Handler) (raw : ByteArray) : IO ByteArray := do
     `LEAN_NUM_THREADS` must be ≥ `workers` (plus headroom for the
     handlers) or the extra loops never get scheduled. Pass
     `workers := numCores` and run with `LEAN_NUM_THREADS` at least that
-    high. -/
+    high.
+
+    `requestTimeoutMs` closes a connection that makes no progress for
+    that long: no whole request since the last response (or accept), and
+    no response bytes taken by a slow reader (0 means 30 s). -/
 def serve (port : UInt16 := 8001) (workers : Nat := 1) (handler : Handler)
+    (requestTimeoutMs : UInt32 := 30000)
     : IO Unit := do
   -- Wrap once and share the callback across every loop.
   let cb := wrap handler
@@ -104,7 +116,7 @@ def serve (port : UInt16 := 8001) (workers : Nat := 1) (handler : Handler)
   -- last on this thread so `serve` blocks like the other backends.
   let tail : Nat := if workers == 0 then 0 else workers - 1
   for _ in [0:tail] do
-    let _ ← IO.asTask (reactorRun port cb)
-  reactorRun port cb
+    let _ ← IO.asTask (reactorRunTimeout port requestTimeoutMs cb)
+  reactorRunTimeout port requestTimeoutMs cb
 
 end LeanTea.Net.ReactorServer

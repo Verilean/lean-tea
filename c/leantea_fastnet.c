@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
@@ -93,6 +94,18 @@ LEAN_EXPORT lean_obj_res lean_ft_accept_one(uint32_t fd, lean_object *w) {
     int one = 1;
     setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
     return lean_io_result_mk_ok(lean_box_uint32((uint32_t)cfd));
+}
+
+/* setRecvTimeout(fd, ms) — SO_RCVTIMEO, so a blocking recv gives up
+   after `ms` (the request deadline). Only receives: a slow reader of a
+   large response is not cut off by what is left of the request clock. */
+LEAN_EXPORT lean_obj_res lean_ft_set_recv_timeout(uint32_t fd, uint32_t ms, lean_object *w) {
+    (void)w;
+    if (ms == 0) { errno = EINVAL; return mk_io_error("recv timeout must be positive"); }
+    struct timeval timeout = { .tv_sec = ms / 1000, .tv_usec = (ms % 1000) * 1000 };
+    if (setsockopt((int)fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
+        return mk_io_error("setsockopt(SO_RCVTIMEO)");
+    return lean_io_result_mk_ok(lean_box(0));
 }
 
 /* recvBytes(fd, max) — one blocking recv. Returns whatever the kernel
