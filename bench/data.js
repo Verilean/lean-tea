@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795483652810,
+  "lastUpdate": 1795485153541,
   "repoUrl": "https://github.com/Verilean/lean-tea",
   "entries": {
     "HTTP throughput (lean-tea reactor vs nginx)": [
@@ -2647,6 +2647,85 @@ window.BENCHMARK_DATA = {
           {
             "name": "nginx /json",
             "value": 183144,
+            "unit": "RPS"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "junjihashimoto@users.noreply.github.com",
+            "name": "junji hashimoto",
+            "username": "junjihashimoto"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e4313351406a172f96b18232065b44f5487d35d0",
+          "message": "Merge pull request #50 from Verilean/fix/mcp-bind-token\n\nMcp/Server: never fall back to 0.0.0.0; an allowed Origin still needs the token",
+          "timestamp": "2026-11-24T10:49:13+09:00",
+          "tree_id": "5155d4ddeaa9fb6f6e416092c4ea3d7c864ffb4c",
+          "url": "https://github.com/Verilean/lean-tea/commit/e4313351406a172f96b18232065b44f5487d35d0"
+        },
+        "date": 1795485152975,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "lean-tea libuv /health",
+            "value": 1663,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /json",
+            "value": 1627,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea libuv /echo",
+            "value": 1595,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /health",
+            "value": 114714,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /json",
+            "value": 118246,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea fast /echo",
+            "value": 75928,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /health",
+            "value": 146320,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /json",
+            "value": 148036,
+            "unit": "RPS"
+          },
+          {
+            "name": "lean-tea reactor /echo",
+            "value": 99484,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /health",
+            "value": 245475,
+            "unit": "RPS"
+          },
+          {
+            "name": "nginx /json",
+            "value": 245035,
             "unit": "RPS"
           }
         ]
