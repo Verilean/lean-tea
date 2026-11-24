@@ -4,6 +4,7 @@ import LeanTea.Net.TlsClient
 import LeanTea.Persist.Sqlite
 import LeanTea.Persist.Store
 import Lean.Data.Json
+import Std.Time
 
 /-! # Google OAuth 2.0 + session management
 
@@ -148,10 +149,12 @@ def randomToken : IO String := do
     s := s ++ hex b
   return s
 
-/-- Unix seconds. -/
+/-- Unix seconds (wall clock). Session and OAuth-state expiry and JWT
+    `exp`/`nbf` are all Unix times, so this must not be a monotonic
+    clock: that counts from boot, which put every JWT `exp` far in the
+    future and kept sessions alive across reboots. -/
 def nowSec : IO Nat := do
-  let ms ← IO.monoMsNow
-  return ms / 1000
+  return (← Std.Time.Timestamp.now).toSecondsSinceUnixEpoch.val.toNat
 
 /-! ## URL-encode (RFC 3986 unreserved chars passthrough) -/
 
@@ -283,11 +286,23 @@ def fetchUserInfo (accessToken : String) : IO (Except String UserInfo) := do
 
 /-! ## HTTP handlers for /auth/google/* -/
 
+/-- Cookie that ties a login's `state` to the browser that started it. -/
+def loginStateCookie : String := "google_login"
+
+private def sameString (a b : String) : Bool :=
+  let x := a.toUTF8
+  let y := b.toUTF8
+  x.size == y.size && (List.range x.size).foldl (fun acc i => acc ||| (x[i]! ^^^ y[i]!)) 0 == 0
+
 def loginHandler (cfg : Config) (store : AuthStore) : IO Response := do
   let state ← randomToken
   let now ← nowSec
   store.addState state now
-  return Response.redirect (authorizeUrl cfg state)
+  -- The callback accepts `state` only from the browser holding this
+  -- cookie; otherwise an attacker could finish a login of their own and
+  -- send the victim the callback link (login CSRF).
+  return (Response.redirect (authorizeUrl cfg state)).withCookie loginStateCookie state
+    (maxAgeSec := 600) (secure := cfg.cookieSecure)
 
 def callbackHandler (cfg : Config) (store : AuthStore) (req : Request) : IO Response := do
   -- Parse query string for code + state.
@@ -303,10 +318,15 @@ def callbackHandler (cfg : Config) (store : AuthStore) (req : Request) : IO Resp
   | some codeEnc, some stateEnc =>
     let code := codeEnc  -- code is opaque, no need to decode
     let state := stateEnc
-    -- CSRF state check
+    -- CSRF state check: the state must be this browser's, and unused.
+    let mine := match req.cookie? loginStateCookie with
+      | some c => sameString c state
+      | none => false
+    if !mine then
+      return (Response.text 400 "invalid state\n").clearCookie loginStateCookie (secure := cfg.cookieSecure)
     let ok ← store.takeState state
     if !ok then
-      return Response.text 400 "invalid state\n"
+      return (Response.text 400 "invalid state\n").clearCookie loginStateCookie (secure := cfg.cookieSecure)
     match ← exchangeCode cfg code with
     | .error e => return Response.text 502 s!"token exchange failed: {e}\n"
     | .ok tok =>
@@ -322,7 +342,7 @@ def callbackHandler (cfg : Config) (store : AuthStore) (req : Request) : IO Resp
           token := token, email := ui.email, name := ui.name, picture := ui.picture,
           createdAt := now, expiresAt := now + 86400 * 7
         }
-        let resp := Response.redirect "/"
+        let resp := (Response.redirect "/").clearCookie loginStateCookie (secure := cfg.cookieSecure)
         return resp.withCookie "session" token (secure := cfg.cookieSecure)
 
 def logoutHandler (store : AuthStore) (req : Request) (cookieSecure : Bool) : IO Response := do

@@ -332,6 +332,45 @@ def run : IO LSpec := do
 
 end SafeQueryGroup
 
+/-! ## Google login: wall clock, state bound to the browser -/
+
+namespace GoogleLoginGroup
+
+open LeanTea.Auth
+
+def run : IO LSpec := do
+  let path := "/tmp/leantea_persistspec_google.sqlite"
+  IO.FS.removeFile path |>.catchExceptions (fun _ => pure ())
+  let db ← LeanTea.Sqlite.open' path
+  let store ← AuthStore.attach db
+  let cfg : Config := { clientId := "cid", clientSecret := "csec", baseUrl := "http://localhost:8001" }
+  let h := gate cfg store [] (fun _ _ => pure (Response.text 200 "ok"))
+  let req := fun (path query : String) (cookie : Option String) =>
+    ({ method := "GET", path, query, body := .empty,
+       headers := match cookie with | some c => #[("cookie", c)] | none => #[] } : Request)
+  let login ← h (req "/auth/google/login" "" none)
+  let setCookie := (login.headers.toList.find? fun (k, v) =>
+    k.toLower == "set-cookie" && v.startsWith (loginStateCookie ++ "=")).map (·.2) |>.getD ""
+  let state := ((setCookie.drop (loginStateCookie.length + 1)).takeWhile (· != ';')).toString
+  let location := (login.headers.toList.find? (·.1.toLower == "location")).map (·.2) |>.getD ""
+  let noCookie ← h (req "/auth/google/callback" s!"code=x&state={state}" none)
+  let otherCookie ← h (req "/auth/google/callback" s!"code=x&state={state}" (some s!"{loginStateCookie}=deadbeef"))
+  -- The refused attempts must not have used up the state.
+  let stillThere ← store.takeState state
+  let now ← nowSec
+  return group "Google login (Auth.gate)" [
+    it "nowSec is Unix time, not time since boot" (now > 1_700_000_000),
+    it "login sets a short-lived, HttpOnly state cookie and sends the same state"
+      (state.length == 64 && (setCookie.splitOn "HttpOnly").length > 1 &&
+        (setCookie.splitOn "Max-Age=600").length > 1 && (location.splitOn s!"state={state}").length > 1),
+    it "a callback without this browser's state cookie is refused (login CSRF)"
+      (noCookie.status == 400),
+    it "a callback whose state cookie differs is refused" (otherCookie.status == 400),
+    it "refused callbacks do not use up the state" stillThere
+  ]
+
+end GoogleLoginGroup
+
 /-! ## Entry point. -/
 
 def main : IO Unit := do
@@ -340,6 +379,7 @@ def main : IO Unit := do
   let s3 ← MigrateGroup.run
   let s4 ← AuthProofGroup.run
   let s5 ← SafeQueryGroup.run
-  let tree := group "LeanTEA persistence integration" [s1, s2, s3, s4, s5]
+  let s6 ← GoogleLoginGroup.run
+  let tree := group "LeanTEA persistence integration" [s1, s2, s3, s4, s5, s6]
   let code ← lspecIO tree
   if code != 0 then IO.Process.exit code.toUInt8
