@@ -147,7 +147,7 @@ jobs:
 
       - name: TUI widget kit (layout, combinators, elements, app loop, raw-mode ANSI, wide chars, input decoding, mouse, repaint; 67 LSpec assertions)
         run: ./.lake/build/bin/tui_spec
-      - name: WebSocket server (RFC 6455 codec + handshake, live echo server: fragments, ping/pong, close codes, concurrency; 29 LSpec assertions)
+      - name: "WebSocket server (RFC 6455 codec + handshake, live echo server: fragments, ping/pong, close codes, concurrency; 29 LSpec assertions)"
         run: ./.lake/build/bin/websocket_spec
 
       - name: Breezehollow three.js demo (World.leanjs compiles + checks, node --check, page ids, Physics.step properties under node; 23 LSpec assertions)
