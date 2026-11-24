@@ -603,12 +603,12 @@ def sigTemplate (id : String) : String :=
 def hasTool (cmd : String) : IO Bool := do
   try
     let out ← IO.Process.output { cmd, args := #["version"] }
-    let _ := out
-    pure true
+    pure (out.exitCode == 0 || !out.stdout.isEmpty)
   catch _ => pure false
 
 /-- Sign `xml` (with a template inside) with xmlsec1 using `key`/`cert`. -/
 def xmlsecSign (dir : System.FilePath) (key cert xml : String) : IO String := do
+
   let lax := (← LeanTea.Auth.Saml.xmlsecVerifyArgs).contains "--lax-key-search"
   IO.FS.writeFile (dir / "tmpl.xml") xml
   let out ← IO.Process.output { cmd := "xmlsec1", args :=
@@ -648,6 +648,36 @@ def xmlsecE2E : IO LSpec := do
     let tamperedR ← LeanTea.Auth.Saml.validate cfg (b64 tampered) (replay := cache)
     let expired ← sign "idp" { assertionId := "_e2e3", notOnOrAfter := "2020-01-01T00:00:00Z" }
     let expiredR ← LeanTea.Auth.Saml.validate cfg (b64 expired) (replay := cache)
+    -- Forged identity inside the signature element (outside the digest).
+    let forgedSubject := "<saml:Subject><saml:NameID>admin@example.com</saml:NameID>" ++
+      "<saml:SubjectConfirmation Method=\"urn:oasis:names:tc:SAML:2.0:cm:bearer\">" ++
+      "<saml:SubjectConfirmationData NotOnOrAfter=\"2099-01-01T00:00:00Z\" Recipient=\"https://sp.example.com/saml/acs\"/>" ++
+      "</saml:SubjectConfirmation></saml:Subject>"
+    let objSigned ← sign "idp" { assertionId := "_e2e4" }
+    let objInjected := objSigned.replace "</ds:Signature>"
+      ("<ds:Object>" ++ forgedSubject ++ "</ds:Object></ds:Signature>")
+    let objR ← LeanTea.Auth.Saml.validate cfg (b64 objInjected) (replay := cache)
+    -- A processing-instruction pair that a comment stripper would read as
+    -- a comment around the real assertion, followed by a forged one.
+    let piSigned ← sign "idp" { assertionId := "_e2e5" }
+    -- A complete assertion (audience, conditions, bearer data) for
+    -- admin, with a fake non-dsig signature naming its own ID.
+    let forgedAssertion :=
+      ((buildResponse { assertionId := "_f", subjectEmail := "admin@example.com" })
+        |>.replace "<samlp:Response xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\">" ""
+        |>.replace "</samlp:Response>" "")
+        |>.replace "</saml:Assertion>" "<Signature><Reference URI=\"#_f\"/></Signature></saml:Assertion>"
+    let piInjected := (piSigned.replace "<saml:Assertion " "<?x <!--?><saml:Assertion ").replace
+      "</saml:Assertion>" ("</saml:Assertion><?y -->?>" ++ forgedAssertion)
+    let piR ← LeanTea.Auth.Saml.validate cfg (b64 piInjected) (replay := cache)
+    -- Signed with another key that the document carries as a certificate.
+    let x509Template := fun (f : Fixture) =>
+      (buildResponse f).replace "</saml:Issuer>" ("</saml:Issuer>" ++
+        (sigTemplate f.assertionId).replace "<ds:SignatureValue/>"
+          "<ds:SignatureValue/><ds:KeyInfo><ds:X509Data><ds:X509Certificate/></ds:X509Data></ds:KeyInfo>")
+    let embedded ← xmlsecSign dir (dir / "evil.key").toString (dir / "evil.pem").toString
+      (x509Template { assertionId := "_e2e6" })
+    let embeddedR ← LeanTea.Auth.Saml.validate cfg (b64 embedded) (replay := cache)
     let isOk := fun (r : Except String LeanTea.Auth.Saml.Assertion) => match r with
       | .ok a => a.nameId == "alice@example.com" | .error _ => false
     let isErr := fun (r : Except String LeanTea.Auth.Saml.Assertion) => match r with
@@ -659,7 +689,12 @@ def xmlsecE2E : IO LSpec := do
       it "the same response a second time is refused (replay)" (isErr replayed) (detail replayed),
       it "a response signed by another key is refused" (isErr evilR) (detail evilR),
       it "a signed response edited afterwards is refused" (isErr tamperedR) (detail tamperedR),
-      it "a signed but expired response is refused" (isErr expiredR) (detail expiredR)]
+      it "a signed but expired response is refused" (isErr expiredR) (detail expiredR),
+      it "an identity planted inside <ds:Signature> is never read"
+        (match objR with | .ok a => a.nameId == "alice@example.com" | .error _ => true) (detail objR),
+      it "a processing-instruction wrapping is refused" (isErr piR) (detail piR),
+      it "a response signed by another key carried in the document is refused"
+        (isErr embeddedR) (detail embeddedR)]
 
 def run : IO LSpec := do
   /- 1. Plain happy path: default fixture. -/
@@ -778,6 +813,16 @@ def run : IO LSpec := do
         (match commentedR with | .ok (a, _) => a.nameId == "alice@example.com" | .error _ => false),
       it "a forged saml: assertion beside a real saml2: one is refused"
         (LeanTea.Auth.Saml.assertionCount prefixed == 2 && refusedRaw prefixed),
+      it "withoutSignatures removes signature elements of any prefix"
+        (match LeanTea.Auth.Saml.withoutSignatures "<a><ds:Signature><x/></ds:Signature><b/><dsig:Signature/>c</a>" with
+          | .ok r => r == "<a><b/>c</a>" | .error _ => false),
+      it "parseInstant refuses impossible dates and an empty fraction"
+        (LeanTea.Auth.Saml.parseInstant "2026-02-31T00:00:00Z" == none &&
+          LeanTea.Auth.Saml.parseInstant "2028-02-29T00:00:00Z" != none &&
+          LeanTea.Auth.Saml.parseInstant "2026-01-01T00:00:00.Z" == none),
+      it "processing instructions other than the XML declaration are refused"
+        (refusedRaw ("<?x <!--?>" ++ signed {}) &&
+          !refusedRaw ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>" ++ signed {})),
       it "DOCTYPE, ENTITY, CDATA and unterminated comments are refused"
         (refusedRaw ("<!DOCTYPE r [<!ENTITY x \"y\">]>" ++ signed {}) &&
           refusedRaw ((signed {}).replace "alice@example.com" "<![CDATA[alice@example.com]]>") &&

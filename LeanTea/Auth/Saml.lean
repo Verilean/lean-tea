@@ -140,14 +140,57 @@ private def attrOf (xml : String) (attr : String) : String :=
     | some v => v
     | none   => ""
 
+/-- The element name at the start of `tag` (the text after a `<`). -/
+private def tagName (tag : String) : String :=
+  (tag.takeWhile fun c => !(c == ' ' || c == '>' || c == '/' ||
+                             c == '\t' || c == '\n' || c == '\r')).toString
+
+private def isLocal (local_ name : String) : Bool :=
+  name == local_ || name.endsWith (":" ++ local_)
+
+/-- `s` without its `Signature` elements, whatever their prefix.
+
+    The enveloped-signature transform leaves the `<Signature>` element
+    out of what is signed, so anything inside it (a `ds:Object`, extra
+    `KeyInfo`) can be added after signing. Fields are therefore read
+    from the assertion with every `Signature` removed: what is left is
+    exactly what the signature covers. -/
+def withoutSignatures (s : String) : Except String String := do
+  match s.splitOn "<" with
+  | [] => return s
+  | first :: tags =>
+    let mut out := first
+    let mut skip : Option (String × Nat) := none   -- (qualified name, depth)
+    for t in tags do
+      match skip with
+      | some (q, depth) =>
+        if t.startsWith ("/" ++ q) && (tagName (t.drop 1).toString) == q then
+          if depth == 1 then
+            skip := none
+            out := out ++ ((t.splitOn ">").drop 1 |> String.intercalate ">")
+          else skip := some (q, depth - 1)
+        else if tagName t == q && !((t.splitOn ">").head?.getD "").endsWith "/" then
+          skip := some (q, depth + 1)
+      | none =>
+        let n := tagName t
+        if isLocal "Signature" n then
+          let opener := (t.splitOn ">").head?.getD ""
+          if opener.endsWith "/" then
+            out := out ++ ((t.splitOn ">").drop 1 |> String.intercalate ">")
+          else skip := some (n, 1)
+        else out := out ++ "<" ++ t
+    if skip.isSome then throw "SAML: unterminated <Signature>"
+    return out
+
 /-! ## Parse a SAMLResponse (already base64-decoded) -/
 
 /-- Parse the XML of a `samlp:Response`. Does NOT verify the
     signature — call `verifySignature` separately. -/
 def parseResponse (xml : String) : Except String Assertion := do
-  let assertBlock ← match findTagBlock xml "saml:Assertion" "Assertion" with
+  let signedBlock ← match findTagBlock xml "saml:Assertion" "Assertion" with
     | some s => Except.ok s
     | none   => throw "no <Assertion> in response"
+  let assertBlock ← withoutSignatures signedBlock
   let id := attrOf assertBlock "ID"
   let issuer := innerText assertBlock "saml:Issuer" "Issuer"
   let subj   := findTagBlock assertBlock "saml:Subject" "Subject" |>.getD ""
@@ -155,12 +198,17 @@ def parseResponse (xml : String) : Except String Assertion := do
   let nameIdFormat := match findTagBlock subj "saml:NameID" "NameID" with
     | none => ""
     | some t => attrOf t "Format"
-  -- `<SubjectConfirmationData …/>` is usually self-closing, so read the
-  -- attributes off its opener rather than looking for a closing tag.
-  let bearer := (subj.splitOn "urn:oasis:names:tc:SAML:2.0:cm:bearer").length > 1
-  let confirm :=
-    ((afterFirst subj "<saml:SubjectConfirmationData ") <|> (afterFirst subj "<SubjectConfirmationData "))
-      |>.bind (beforeFirst · ">") |>.getD ""
+  -- The bearer confirmation's own `<SubjectConfirmationData …/>` (usually
+  -- self-closing, so read the attributes off its opener). Another
+  -- confirmation method's data must not stand in for it.
+  let confirmations := (subj.splitOn "<saml:SubjectConfirmation ").drop 1 ++
+                       (subj.splitOn "<SubjectConfirmation ").drop 1
+  let bearerChunk : Option String := confirmations.find? fun c =>
+    (((c.splitOn ">").head?.getD "").splitOn "urn:oasis:names:tc:SAML:2.0:cm:bearer").length > 1
+  let bearer := bearerChunk.isSome
+  let confirm := (bearerChunk.bind fun c =>
+    ((afterFirst c "<saml:SubjectConfirmationData ") <|> (afterFirst c "<SubjectConfirmationData "))
+      |>.bind (beforeFirst · ">")) |>.getD ""
   let cond := findTagBlock assertBlock "saml:Conditions" "Conditions" |>.getD ""
   let notBefore := attrOf cond "NotBefore"
   let notOnOrAfter := attrOf cond "NotOnOrAfter"
@@ -242,10 +290,15 @@ def parseInstant (s : String) : Option Int := do
   let mi ← digits ((cs.drop 14).take 2)
   let sec ← digits ((cs.drop 17).take 2)
   guard (1 ≤ mo && mo ≤ 12 && 1 ≤ d && d ≤ 31 && h ≤ 23 && mi ≤ 59 && sec ≤ 60)
+  let leap := y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+  let monthDays := [31, if leap then 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  guard (d ≤ monthDays.getD (mo - 1) 31)
   let rest := cs.drop 19
-  let rest := match rest with
-    | '.' :: frac => frac.dropWhile Char.isDigit
-    | r => r
+  let rest ← match rest with
+    | '.' :: frac =>
+      let digitsCount := (frac.takeWhile Char.isDigit).length
+      if digitsCount == 0 then none else some (frac.drop digitsCount)
+    | r => some r
   let offset ← match rest with
     | ['Z'] => some (0 : Int)
     | [sign, h1, h2, ':', m1, m2] =>
@@ -267,7 +320,10 @@ def parseInstant (s : String) : Option Int := do
     the document (no external URIs fetched). xmlsec1 1.3 also needs
     `--lax-key-search` to use a key given without a name; 1.2 does not
     know that option, so it is added by version. -/
+private initialize xmlsecArgsCache : IO.Ref (Option (Array String)) ← IO.mkRef none
+
 def xmlsecVerifyArgs : IO (Array String) := do
+  if let some a ← xmlsecArgsCache.get then return a
   let out ← IO.Process.output { cmd := "xmlsec1", args := #["--version"] }
   -- "xmlsec1 1.3.7 (openssl)"
   let ver := (out.stdout.splitOn " ")[1]? |>.getD ""
@@ -275,8 +331,10 @@ def xmlsecVerifyArgs : IO (Array String) := do
   let atLeast13 := match nums with
     | major :: minor :: _ => major > 1 || (major == 1 && minor ≥ 3)
     | _ => false
-  return #["--verify"] ++ (if atLeast13 then #["--lax-key-search"] else #[]) ++
+  let args := #["--verify"] ++ (if atLeast13 then #["--lax-key-search"] else #[]) ++
     #["--enabled-key-data", "raw-x509-cert", "--enabled-reference-uris", "empty,same-doc"]
+  xmlsecArgsCache.set (some args)
+  return args
 
 /-- Verify the assertion signature using xmlsec1. `idpCertPemPath` is
     a PEM file of the IdP's signing certificate. Requires `xmlsec1`
@@ -394,10 +452,7 @@ def assertionCount (xml : String) : Nat :=
   -- Every start tag whose local name is `Assertion`, whatever its prefix
   -- (`saml:`, `saml2:`, none …): an IdP that writes `saml2:` must not let
   -- a forged `<saml:Assertion>` go uncounted.
-  (xml.splitOn "<").drop 1 |>.countP fun tag =>
-    let name := (tag.takeWhile fun c => !(c == ' ' || c == '>' || c == '/' ||
-                                          c == '\t' || c == '\n' || c == '\r')).toString
-    name == "Assertion" || name.endsWith ":Assertion"
+  (xml.splitOn "<").drop 1 |>.countP fun tag => isLocal "Assertion" (tagName tag)
 
 /-- `xml` without `<!-- … -->` comments, or an error when it has an
     unterminated comment, a DOCTYPE / entity declaration or a CDATA
@@ -406,6 +461,18 @@ def assertionCount (xml : String) : Nat :=
     forged `<Assertion>` could hide there. SAML responses need none of
     them. -/
 def stripComments (xml : String) : Except String String := do
+  -- Processing instructions: only a leading XML declaration. A PI can
+  -- carry `<!--` or `-->` that verification reads as PI text but a
+  -- comment stripper would read as a comment, hiding the signed
+  -- assertion from the parser and showing it a forged one instead.
+  let trimmed := xml.trimAsciiStart.toString
+  let declOk := trimmed.startsWith "<?xml " &&
+    match (trimmed.splitOn "?>").head? with
+    | some decl => !((decl.drop 2).toString.contains '<') && (decl.splitOn "--").length == 1
+    | none => false
+  let pis := (xml.splitOn "<?").length - 1
+  if pis > (if declOk then 1 else 0) then
+    throw "SAML: processing instructions are not accepted"
   if (xml.splitOn "<!DOCTYPE").length > 1 || (xml.splitOn "<!ENTITY").length > 1 then
     throw "SAML: DOCTYPE / ENTITY declarations are not accepted"
   if (xml.splitOn "<![CDATA[").length > 1 then
@@ -429,7 +496,7 @@ def checkNoWrapping (xml : String) (a : Assertion) : Except String Unit := do
     throw s!"SAML: expected exactly one <Assertion>, found {n} (possible signature-wrapping attack)"
   if a.id.isEmpty then
     throw "SAML: assertion has no ID attribute — cannot bind signature to content"
-  let sig := occurrences xml "<Signature" + occurrences xml "<ds:Signature"
+  let sig := (xml.splitOn "<").drop 1 |>.countP fun tag => isLocal "Signature" (tagName tag)
   if sig == 0 then
     throw "SAML: no <Signature> present in response"
   -- The verified signature must reference this exact assertion by ID.
@@ -479,7 +546,8 @@ def checkAssertion (cfg : Config) (now : Int) (xml : String)
   if let some r := inResponseTo then
     if a.confirmInResponseTo != r then
       throw s!"SAML: InResponseTo {a.confirmInResponseTo}, want {r}"
-  return (a, max expiresAt confirmUntil + leeway)
+  -- Refused anyway once the earlier window has passed.
+  return (a, min expiresAt confirmUntil + leeway)
 
 /-- Decode the form value, verify the signature, run `checkAssertion`
     at the current time, then refuse an assertion ID seen before
