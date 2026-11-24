@@ -350,7 +350,8 @@ tools/list works but gemini_ask / chat / review will error until you set it"
     let cfg := if a.model.isEmpty then baseCfg else { baseCfg with model := a.model }
     cfgRef.set (some cfg)
     IO.eprintln s!"gemini-mcp: ready (default model = {cfg.model})"
-  workspaceRef.set a.workspace
+  if a.workspace.isEmpty then workspaceRef.set ""
+  else workspaceRef.set (← IO.FS.realPath a.workspace).toString
   if a.workspace.isEmpty then
     IO.eprintln "gemini-mcp: --workspace not set — \
 gemini_review_files and gemini_review_diff will refuse to run"

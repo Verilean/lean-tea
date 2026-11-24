@@ -62,6 +62,12 @@ def normalise (raw : String) : String :=
 def under (workspace path : String) : Except String SafePath :=
   if path.contains '\u0000' then
     .error "SafePath.under: NUL byte in path"
+  else if !workspace.startsWith "/" then
+    -- `normalise` roots every path at `/`, so a relative workspace such
+    -- as "." or "data" would become "/" or "/data" and the check below
+    -- would admit the whole filesystem. Resolve it first
+    -- (`IO.FS.realPath`).
+    .error s!"SafePath.under: workspace {workspace} is not an absolute path"
   else
     let abs := if path.startsWith "/" then path else workspace ++ "/" ++ path
     let norm := normalise abs

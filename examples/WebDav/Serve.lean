@@ -18,7 +18,9 @@ mountable by:
 
 Args:
   --port      <PORT>        HTTP port (default 8021)
-  --host      <HOST>        listen address (default 0.0.0.0)
+  --host      <HOST>        listen address (default 127.0.0.1; there is no
+                            authentication, so anyone who can reach it can
+                            read, write and delete under the workspace)
   --workspace <DIR>         filesystem root to expose (default = cwd)
   --prefix    <PREFIX>      URL prefix the WebDAV tree is mounted
                             under (default `/dav`)
@@ -38,7 +40,7 @@ open LeanTea LeanTea.Net
 
 private structure Args where
   port      : UInt16 := 8021
-  host      : String := "0.0.0.0"
+  host      : String := "127.0.0.1"
   workspace : String := ""
   pathPrefix : String := "/dav"
   readonly  : Bool   := false
@@ -66,7 +68,7 @@ def main (args : List String) : IO Unit := do
     if r.toLower == "1" || r.toLower == "true" then a := { a with readonly := true }
   IO.eprintln s!"webdav-serve: http://{a.host}:{a.port}{a.pathPrefix} → {a.workspace}{if a.readonly then " (read-only)" else ""}"
   let cfg : WebDav.Config := {
-    workspace := a.workspace,
+    workspace := (← IO.FS.realPath a.workspace).toString,
     urlPrefix := a.pathPrefix,
     readonly  := a.readonly
   }
