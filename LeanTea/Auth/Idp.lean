@@ -269,6 +269,12 @@ structure Fixture where
   attributes   : List Attribute := [⟨"groups", ["engineers", "oncall"]⟩]
   /-- Bare ID — caller supplies for replay-detection tests. -/
   assertionId  : String := "_a1"
+  /-- Emit a bearer `SubjectConfirmation` (the Web Browser SSO profile's). -/
+  bearer       : Bool := true
+  recipient    : String := "https://sp.example.com/saml/acs"
+  /-- `InResponseTo` on the confirmation; empty leaves it out. -/
+  inResponseTo : String := ""
+  confirmNotOnOrAfter : String := "2099-06-17T01:00:00Z"
   deriving Inhabited
 
 /-- Build an unsigned AuthnResponse. Real IdP would sign the
@@ -283,6 +289,12 @@ def buildResponse (f : Fixture) : String :=
   s!"<saml:Issuer>{f.issuer}</saml:Issuer>" ++
   "<saml:Subject>" ++
   s!"<saml:NameID Format=\"urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress\">{f.subjectEmail}</saml:NameID>" ++
+  (if f.bearer then
+    "<saml:SubjectConfirmation Method=\"urn:oasis:names:tc:SAML:2.0:cm:bearer\">" ++
+    s!"<saml:SubjectConfirmationData NotOnOrAfter=\"{f.confirmNotOnOrAfter}\" Recipient=\"{f.recipient}\"" ++
+    (if f.inResponseTo.isEmpty then "" else s!" InResponseTo=\"{f.inResponseTo}\"") ++
+    "/></saml:SubjectConfirmation>"
+  else "") ++
   "</saml:Subject>" ++
   s!"<saml:Conditions NotBefore=\"{f.notBefore}\" NotOnOrAfter=\"{f.notOnOrAfter}\">" ++
   "<saml:AudienceRestriction>" ++

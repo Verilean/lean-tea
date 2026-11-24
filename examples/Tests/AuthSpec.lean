@@ -597,12 +597,57 @@ def run : IO LSpec := do
       "</saml:Assertion>" (sigFor "_other" ++ "</saml:Assertion>")
   -- Unsigned single assertion → reject (no <Signature>).
   let unsigned := buildResponse { assertionId := "_a1" }
+  /- 5. Validity window, bearer confirmation, recipient, InResponseTo,
+     issuer — `checkAssertion` at a fixed clock (2030-01-01T00:00:00Z). -/
+  let signed := fun (f : Fixture) =>
+    (buildResponse f).replace "</saml:Assertion>" (sigFor f.assertionId ++ "</saml:Assertion>")
+  let cfg : LeanTea.Auth.Saml.Config := {
+    spEntityId := "https://sp.example.com", idpCertPemPath := "",
+    acsUrl := "https://sp.example.com/saml/acs", idpEntityId := "https://idp.example.com" }
+  let now : Int := 1893456000
+  let accepts := fun (f : Fixture) (irt : Option String) =>
+    match LeanTea.Auth.Saml.checkAssertion cfg now (signed f) irt with
+    | .ok _ => true | .error _ => false
+  let ok := fun (f : Fixture) => accepts f none
+  let cache ← LeanTea.Auth.Saml.ReplayCache.new
+  let first ← cache.claim "_r1" (now + 300) now
+  let again ← cache.claim "_r1" (now + 300) now
+  let later ← cache.claim "_r1" (now + 900) (now + 301)
   let guard := fun (xml : String) =>
     match parseResponse xml with
     | .ok a => match LeanTea.Auth.Saml.checkNoWrapping xml a with
                | .ok _ => true | .error _ => false
     | .error _ => false
   return group "SAML 2.0 fixture round-trip" [
+    group "validity window and confirmation (checkAssertion at a fixed clock)" [
+      it "a current assertion for this SP is accepted" (ok {}),
+      it "NotOnOrAfter two minutes ago is refused"
+        (!ok { notOnOrAfter := "2029-12-31T23:58:00Z" }),
+      it "NotOnOrAfter 30 s ago is within the 60 s leeway"
+        (ok { notOnOrAfter := "2029-12-31T23:59:30Z" }),
+      it "NotBefore five minutes ahead is refused"
+        (!ok { notBefore := "2030-01-01T00:05:00Z" }),
+      it "a missing NotOnOrAfter is refused" (!ok { notOnOrAfter := "" }),
+      it "an unreadable NotOnOrAfter is refused" (!ok { notOnOrAfter := "tomorrow" }),
+      it "a time without a zone is refused" (!ok { notOnOrAfter := "2099-06-17T01:00:00" }),
+      it "no bearer SubjectConfirmation is refused" (!ok { bearer := false }),
+      it "an expired SubjectConfirmationData is refused"
+        (!ok { confirmNotOnOrAfter := "2029-12-31T23:50:00Z" }),
+      it "a Recipient other than this SP's ACS URL is refused"
+        (!ok { recipient := "https://other-sp.example.com/acs" }),
+      it "InResponseTo must match the request the SP sent"
+        (accepts { inResponseTo := "_req1" } (some "_req1") &&
+          !accepts { inResponseTo := "_req1" } (some "_req2") &&
+          !accepts {} (some "_req1")),
+      it "another issuer is refused" (!ok { issuer := "https://evil.example.com" }),
+      it "another audience is refused" (!ok { audience := "https://other-sp.example.com" }),
+      it "parseInstant: epoch, offsets and fractions"
+        (LeanTea.Auth.Saml.parseInstant "1970-01-01T00:00:00Z" == some 0 &&
+          LeanTea.Auth.Saml.parseInstant "2030-01-01T09:00:00+09:00" == some now &&
+          LeanTea.Auth.Saml.parseInstant "2030-01-01T00:00:00.123Z" == some now &&
+          LeanTea.Auth.Saml.parseInstant "2030-13-01T00:00:00Z" == none),
+      it "ReplayCache accepts an ID once until it expires" (first && !again && later)
+    ],
     group "signature-wrapping (XSW) guard" [
       it "single signed self-referencing assertion is accepted"
         (guard signedOk),
