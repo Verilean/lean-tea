@@ -56,12 +56,16 @@ private def acceptKey (clientKey : String) : String :=
   let digest := LeanTea.Crypto.Sha1.hashString combined
   LeanTea.Crypto.Base64.encode digest
 
+/-- RFC 6455 wants the key and the masks unpredictable (§10.3: a
+    predictable mask lets a page aim bytes at a proxy), so they come
+    from the OS random source. -/
+private def randomBytes (n : Nat) : IO ByteArray := do
+  let bs ← IO.getRandomBytes n.toUSize
+  if bs.size != n then throw <| IO.userError "websocket: OS random source failed"
+  return bs
+
 private def randomNonceB64 : IO String := do
-  let mut bs : ByteArray := ByteArray.empty
-  for _ in [0 : 16] do
-    let r ← IO.rand 0 255
-    bs := bs.push r.toUInt8
-  return LeanTea.Crypto.Base64.encode bs
+  return LeanTea.Crypto.Base64.encode (← randomBytes 16)
 
 private def expectStatus101 (head : String) : IO Unit := do
   let firstLine := (head.splitOn "\r\n").head!
@@ -184,10 +188,7 @@ private def encodeTextFrame (payload : ByteArray) : IO ByteArray := do
       let shift : UInt64 := UInt64.ofNat ((7 - i) * 8)
       frame := frame.push ((n64 >>> shift) &&& 0xff).toUInt8
   /- 4-byte masking key. -/
-  let mut mask : ByteArray := ByteArray.empty
-  for _ in [0 : 4] do
-    let r ← IO.rand 0 255
-    mask := mask.push r.toUInt8
+  let mask ← randomBytes 4
   frame := frame ++ mask
   /- XOR payload by mask, cycling key over `i % 4`. -/
   let mut masked : ByteArray := ByteArray.empty
@@ -243,10 +244,7 @@ partial def recvText (c : Conn) : IO String := do
     let mut pong := ByteArray.empty
     pong := pong.push 0x8A  -- FIN + opcode 0xA (pong)
     pong := pong.push (0x80 ||| bytes.size.toUInt8)
-    let mut maskOut := ByteArray.empty
-    for _ in [0 : 4] do
-      let r ← IO.rand 0 255
-      maskOut := maskOut.push r.toUInt8
+    let maskOut ← randomBytes 4
     pong := pong ++ maskOut
     for i in [0 : bytes.size] do
       pong := pong.push (bytes[i]! ^^^ maskOut[i % 4]!)

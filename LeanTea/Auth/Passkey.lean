@@ -73,9 +73,7 @@ them keyed by session token and consumes (deletes) them when the
 client finishes. -/
 
 def newChallenge : IO String := do
-  let h ← IO.FS.Handle.mk "/dev/urandom" .read
-  let bytes ← h.read (32 : USize)
-  return Base64.encodeUrl bytes
+  return Base64.encodeUrl (← LeanTea.Auth.secureRandomBytes 32)
 
 /-! ## clientDataJSON parsing
 

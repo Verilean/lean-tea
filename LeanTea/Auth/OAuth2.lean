@@ -111,8 +111,8 @@ structure AuthState where
   codeVerifier  : String
   deriving Inhabited, Repr
 
-/-- Generate a fresh `(state, code_verifier)` pair. Both come from
-    `/dev/urandom`. -/
+/-- Generate a fresh `(state, code_verifier)` pair. Both come from the
+    OS random source (`randomToken`). -/
 def beginAuth (_ : Config) : IO AuthState := do
   let st ← randomToken            -- 64-hex (~32 bytes entropy)
   let ver ← randomToken

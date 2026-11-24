@@ -135,12 +135,21 @@ private structure CurlResp where
 /-- POST a JSON body to `url` via curl, returning status + body.
     The request body is staged through a temp file so very large
     prompts work and the bytes are passed binary-safe. -/
-private def curlPost (url : String) (jsonBody : String) (timeoutSec : Nat)
-    : IO CurlResp := do
-  let tmpDir := (← IO.getEnv "TMPDIR").getD "/tmp"
-  let bodyFile := s!"{tmpDir}/gemini-req-{← IO.rand 0 0xffff_ffff}.json"
-  let respFile := s!"{tmpDir}/gemini-resp-{← IO.rand 0 0xffff_ffff}.json"
+private def curlPost (url : String) (apiKey : String) (jsonBody : String) (timeoutSec : Nat)
+    : IO CurlResp :=
+  /- The body, the response and the API key go through files in a fresh
+     private directory, never through argv (`/proc/PID/cmdline` is
+     readable by every local user) or guessable names in a shared `/tmp`.
+     The key reaches curl as a header in a config file (`-K`). -/
+  IO.FS.withTempDir fun dir => do
+  let bodyFile := (dir / "req.json").toString
+  let respFile := (dir / "resp.json").toString
+  let keyFile := (dir / "key.conf").toString
   IO.FS.writeFile bodyFile jsonBody
+  if apiKey.any (fun c => c == '\n' || c == '\r') then
+    throw <| IO.userError "gemini: API key contains a line break"
+  let quoted := apiKey.replace "\\" "\\\\" |>.replace "\"" "\\\""
+  IO.FS.writeFile keyFile s!"header = \"x-goog-api-key: {quoted}\"\n"
   let out ← IO.Process.output {
     cmd := "curl",
     args := #[
@@ -148,6 +157,7 @@ private def curlPost (url : String) (jsonBody : String) (timeoutSec : Nat)
       "--max-time", toString timeoutSec,
       "-X", "POST",
       "-H", "content-type: application/json",
+      "-K", keyFile,
       "-w", "\n___STATUS:%{http_code}",
       "-o", respFile,
       "--data-binary", s!"@{bodyFile}",
@@ -233,9 +243,9 @@ private def parseResponse (model rawBody : String) : IO Response := do
 def generate (cfg : Config) (messages : List Message) (opts : CallOpts := {})
     : IO Response := do
   let model := opts.model.getD cfg.model
-  let url := s!"{cfg.endpoint}/models/{model}:generateContent?key={cfg.apiKey}"
+  let url := s!"{cfg.endpoint}/models/{model}:generateContent"
   let body := (buildRequest messages opts).compress
-  let resp ← curlPost url body cfg.timeoutSec
+  let resp ← curlPost url cfg.apiKey body cfg.timeoutSec
   if resp.status < 200 || resp.status >= 300 then
     throw <| IO.userError s!"Gemini HTTP {resp.status}: {resp.body.take 500}\n{resp.err}"
   parseResponse model resp.body

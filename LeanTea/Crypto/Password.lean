@@ -45,19 +45,14 @@ def hashLen : Nat := 32
 
 /-! ## Randomness for salts -/
 
-/-- 16 random bytes from `/dev/urandom`, with `IO.rand` fallback so
-    the test suite still works on platforms without that special. -/
+/-- 16 bytes from the OS random source (`IO.getRandomBytes`). Throws
+    when the OS cannot supply them rather than salting with guessable
+    bytes. -/
 def randomSalt : IO ByteArray := do
-  let result : IO ByteArray := do
-    let h ← IO.FS.Handle.mk "/dev/urandom" .read
-    h.read saltLen.toUSize
-  let bytes ← result.catchExceptions (fun _ => pure .empty)
-  if bytes.size == saltLen then return bytes
-  let mut out : ByteArray := .empty
-  for _ in [:saltLen] do
-    let n ← IO.rand 0 255
-    out := out.push n.toUInt8
-  return out
+  let bytes ← IO.getRandomBytes saltLen.toUSize
+  if bytes.size != saltLen then
+    throw <| IO.userError s!"randomSalt: got {bytes.size} of {saltLen} bytes from the OS"
+  return bytes
 
 /-! ## Constant-time equality
 

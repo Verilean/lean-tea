@@ -240,12 +240,15 @@ structure HttpResp where
   /-- stdout from curl when something goes wrong (network, DNS). -/
   diag   : String := ""
 
-private def curlSigned (r : SignedRequest) : IO HttpResp := do
+private def curlSigned (r : SignedRequest) : IO HttpResp :=
   /- Write the payload (possibly binary) to a temp file so curl can
-     `--data-binary @file`. Inline `-d` would mangle bytes. -/
-  let tmpDir := (← IO.getEnv "TMPDIR").getD "/tmp"
-  let bodyFile := s!"{tmpDir}/leantea-s3-body-{← IO.rand 0 0xffff_ffff}.bin"
-  let outFile  := s!"{tmpDir}/leantea-s3-resp-{← IO.rand 0 0xffff_ffff}.bin"
+     `--data-binary @file`. Inline `-d` would mangle bytes. The files
+     live in a fresh private directory: guessable names in a shared
+     `/tmp` let another local user plant a symlink there and have the
+     write land on (or the read come from) a file of their choosing. -/
+  IO.FS.withTempDir fun dir => do
+  let bodyFile := (dir / "body.bin").toString
+  let outFile  := (dir / "resp.bin").toString
   if !r.payload.isEmpty then
     IO.FS.writeBinFile bodyFile r.payload
   let mut args : Array String := #[
