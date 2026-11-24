@@ -36,20 +36,23 @@ def sendRaw (r : S3.SignedRequest) (bodyOverride? : Option ByteArray := none) : 
 
 /-- `GET /` (ListBuckets) — the client only signs bucket paths, so
     sign this one by hand with the exported SigV4 pieces. -/
-def signRoot : IO S3.SignedRequest := do
+def signRoot (at_ : Option (String × String) := none) (signDate := true) : IO S3.SignedRequest := do
   let out ← IO.Process.output { cmd := "date", args := #["-u", "+%Y%m%dT%H%M%SZ %Y%m%d"] }
-  let (iso, date) := match out.stdout.trimAscii.toString.splitOn " " with
-    | [i, d] => (i, d) | _ => ("", "")
+  let (iso, date) := at_.getD (match out.stdout.trimAscii.toString.splitOn " " with
+    | [i, d] => (i, d) | _ => ("", ""))
   let host := s!"127.0.0.1:{port}"
   let ph := S3.hexSha256 .empty
-  let hs := [("host", host), ("x-amz-content-sha256", ph), ("x-amz-date", iso)]
+  let hs := if signDate then [("host", host), ("x-amz-content-sha256", ph), ("x-amz-date", iso)]
+            else [("host", host), ("x-amz-content-sha256", ph)]
   let scope := s!"{date}/{cfg.region}/s3/aws4_request"
   let canon := S3.canonicalRequest "GET" "/" "" hs ph
   let sig := LeanTea.Crypto.Hmac.sha256Hex (S3.signingKey cfg.secretKey date cfg.region "s3")
     (S3.stringToSign iso scope canon).toUTF8
-  let auth := s!"AWS4-HMAC-SHA256 Credential={cfg.accessKey}/{scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature={sig}"
+  let signedNames := ";".intercalate (hs.map (·.1))
+  let auth := s!"AWS4-HMAC-SHA256 Credential={cfg.accessKey}/{scope}, SignedHeaders={signedNames}, Signature={sig}"
+  let sent := if signDate then hs else hs ++ [("x-amz-date", iso)]
   return { method := "GET", url := s!"http://{host}/", payload := .empty,
-           headers := (hs.map (fun (k, v) => s!"{k}: {v}")).toArray.push s!"Authorization: {auth}" }
+           headers := (sent.map (fun (k, v) => s!"{k}: {v}")).toArray.push s!"Authorization: {auth}" }
 
 def errOf (act : IO α) : IO String := do
   try let _ ← act; return "" catch e => return toString e
@@ -81,6 +84,10 @@ def spec (dataDir : System.FilePath) : IO LSpec := do
   let notEmptyDel ← S3.signRequest cfg "DELETE" ""
   let (delBucketStatus, delBucketBody) ← sendRaw notEmptyDel
   let (_, bucketsXml) ← sendRaw (← signRoot)
+  -- A correctly signed request from long ago (a captured request
+  -- replayed) and one that leaves x-amz-date out of the signature.
+  let (oldStatus, oldBody) ← sendRaw (← signRoot (some ("20200101T000000Z", "20200101")))
+  let (unsignedDateStatus, _) ← sendRaw (← signRoot (signDate := false))
   -- every stored file sits directly inside the bucket dir
   let mut strays := 0
   for e in ← dataDir.readDir do
@@ -106,6 +113,9 @@ def spec (dataDir : System.FilePath) : IO LSpec := do
       it "wrong secret → SignatureDoesNotMatch" (hasSubstr badSecretErr "SignatureDoesNotMatch"),
       it "unknown access key → InvalidAccessKeyId" (hasSubstr badKeyErr "InvalidAccessKeyId"),
       it "unsigned request → 403" (unsigned.stdout == "403"),
+      it "a correctly signed request from 2020 is refused (replay)"
+        (oldStatus == 403 && hasSubstr oldBody "RequestTimeTooSkewed"),
+      it "a signature that leaves out x-amz-date is refused" (unsignedDateStatus == 403),
       it s!"tampered body → 400 ({tamperStatus})" (tamperStatus == 400 && hasSubstr tamperBody "XAmzContentSHA256Mismatch"),
       it "tampered body not stored" (String.fromUTF8! afterTamper == "alpha"),
       it "delete non-empty bucket → 409" (delBucketStatus == 409 && hasSubstr delBucketBody "BucketNotEmpty"),

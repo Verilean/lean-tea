@@ -3,6 +3,7 @@ import LeanTea.Cloud.S3
 import LeanTea.Crypto.Hmac
 import LeanTea.Crypto.Password
 import Lean.Data.Json
+import Std.Time
 
 /-! # LeanTea.Net.S3Server — a small S3-compatible object store
 
@@ -133,8 +134,39 @@ private def field (auth key : String) : Option String :=
   | _ :: rest :: _ => some ((rest.splitOn ",").head!.trimAscii.toString)
   | _ => none
 
-/-- `none` when the request is authentic, else the S3 error to send. -/
-def verify (cfg : Config) (req : Request) : Option Response := Id.run do
+/-- Unix seconds of an `x-amz-date` (`20261124T093000Z`), or `none`. -/
+def parseAmzDate (s : String) : Option Int := do
+  let cs := s.toList
+  guard (cs.length == 16 && cs[8]? == some 'T' && cs[15]? == some 'Z')
+  let num := fun (from_ len : Nat) => do
+    let ds := (cs.drop from_).take len
+    guard (ds.all Char.isDigit)
+    (String.ofList ds).toNat?
+  let y ← num 0 4
+  let mo ← num 4 2
+  let d ← num 6 2
+  let h ← num 9 2
+  let mi ← num 11 2
+  let sec ← num 13 2
+  guard (1 ≤ mo && mo ≤ 12 && 1 ≤ d && d ≤ 31 && h ≤ 23 && mi ≤ 59 && sec ≤ 60)
+  -- days from 1970-01-01 (proleptic Gregorian)
+  let yy : Int := if mo ≤ 2 then y - 1 else y
+  let era := (if yy ≥ 0 then yy else yy - 399) / 400
+  let yoe := yy - era * 400
+  let mm : Int := mo
+  let doy := (153 * (mm + (if mm > 2 then -3 else 9)) + 2) / 5 + d - 1
+  let doe := yoe * 365 + yoe / 4 - yoe / 100 + doy
+  let days := era * 146097 + doe - 719468
+  return days * 86400 + h * 3600 + mi * 60 + sec
+
+/-- How far `x-amz-date` may be from the server's clock (AWS uses 15
+    minutes). Beyond it a captured request is refused, so it cannot be
+    replayed later. -/
+def maxClockSkewSec : Int := 15 * 60
+
+/-- `none` when the request is authentic, else the S3 error to send.
+    `now` is the server's Unix time. -/
+def verify (cfg : Config) (req : Request) (now : Int) : Option Response := Id.run do
   let some auth := req.header? "authorization"
     | return some (s3Error 403 "AccessDenied" "missing Authorization header")
   unless auth.startsWith "AWS4-HMAC-SHA256 " do
@@ -152,8 +184,18 @@ def verify (cfg : Config) (req : Request) : Option Response := Id.run do
     if payloadHash != "UNSIGNED-PAYLOAD" && payloadHash != S3.hexSha256 req.body then
       return some (s3Error 400 "XAmzContentSHA256Mismatch" "body does not match x-amz-content-sha256")
     let names := signed.splitOn ";"
-    unless names.contains "host" do
-      return some (s3Error 403 "AccessDenied" "host must be signed")
+    unless names.contains "host" && names.contains "x-amz-date" do
+      return some (s3Error 403 "AccessDenied" "host and x-amz-date must be signed")
+    -- The date is part of the signature only if it is a signed header;
+    -- it must also match the credential scope and be close to now, or a
+    -- request captured once could be replayed (with any body, under
+    -- UNSIGNED-PAYLOAD) forever.
+    let some at_ := parseAmzDate amzDate
+      | return some (s3Error 403 "AccessDenied" "malformed x-amz-date")
+    unless (amzDate.take 8).toString == date do
+      return some (s3Error 403 "AccessDenied" "x-amz-date does not match the credential scope")
+    if at_ > now + maxClockSkewSec || at_ < now - maxClockSkewSec then
+      return some (s3Error 403 "RequestTimeTooSkewed" "x-amz-date is too far from the server time")
     let headers := names.map (fun n => (n, (req.header? n).getD ""))
     let canon := S3.canonicalRequest req.method req.path (canonicalQuery req.query) headers payloadHash
     let scope := s!"{date}/{region}/{service}/aws4_request"
@@ -199,7 +241,8 @@ def health : Response := { status := 200, headers := #[("content-type", "text/pl
 
 def handler (cfg : Config) : Handler := fun req => do
   if req.path == "/health" || req.path == "/minio/health/live" then return health
-  if let some err := verify cfg req then return err
+  let now := (← Std.Time.Timestamp.now).toSecondsSinceUnixEpoch.val
+  if let some err := verify cfg req now then return err
   let segs := (req.path.drop 1).toString.splitOn "/"
   let bucket := segs.head!
   let key := pathDecode ("/".intercalate segs.tail)

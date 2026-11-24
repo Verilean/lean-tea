@@ -99,7 +99,10 @@ private def jStr (j : Json) (k : String) : String :=
   (j.getObjVal? k).toOption.bind (·.getStr?.toOption) |>.getD ""
 
 def parseClientData (bytes : ByteArray) : Except String ClientData := do
-  let text := String.fromUTF8! bytes
+  -- `fromUTF8?`: this comes from the client, and a panic on bad bytes
+  -- would take the server down.
+  let some text := String.fromUTF8? bytes
+    | throw "clientDataJSON is not valid UTF-8"
   match Json.parse text with
   | .error e => throw s!"clientDataJSON parse: {e}"
   | .ok j    =>
@@ -203,8 +206,15 @@ def verifyAuthentication (req : AuthenticateRequest)
       (ad.get! 34).toUInt32 <<< 16 |||
       (ad.get! 35).toUInt32 <<< 8 |||
       (ad.get! 36).toUInt32
-    if counter ≤ req.stored.signCount && counter != 0 then
+    -- WebAuthn §7.2: authenticators without a counter always send 0; once
+    -- either side is non-zero the counter must grow. (Accepting 0 after a
+    -- non-zero count let a clone that reports 0 slip past this check.)
+    if (counter != 0 || req.stored.signCount != 0) && counter ≤ req.stored.signCount then
       return .error s!"signCount didn't advance ({counter} ≤ {req.stored.signCount}) — possible cloned authenticator"
+    -- Flags byte: bit 0 is User Present. Without it the authenticator
+    -- signed without anyone touching it.
+    if (ad.get! 32) &&& 0x01 == 0 then
+      return .error "authenticator did not report user presence (UP flag)"
     -- 3. ECDSA P-256 signature verify. Prefer the native libcrypto
     --    path (no fork) when LEANTEA_CRYPTO=1; fall back to openssl
     --    CLI shell-out so this still works in stub builds.

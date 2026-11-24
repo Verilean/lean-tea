@@ -384,9 +384,14 @@ def reviewMany (cfg : Config)
 def reviewDiff (cfg : Config) (workspace base head : String)
     (prompt : String := "") (opts : CallOpts := {})
     : IO Response := do
+  -- `base`/`head` come from tool arguments: a value such as
+  -- `--output=/home/u/.bashrc` would be read as an option and write a
+  -- file. Refuse them, and end option parsing before the revisions.
+  if base.startsWith "-" || head.startsWith "-" then
+    throw <| IO.userError s!"reviewDiff: revision may not start with '-' ({base} {head})"
   let out ← IO.Process.output {
     cmd := "git",
-    args := #["-C", workspace, "diff", base, head]
+    args := #["-C", workspace, "diff", "--end-of-options", base, head]
   }
   if out.exitCode != 0 then
     throw <| IO.userError s!"git diff failed: {out.stderr}"

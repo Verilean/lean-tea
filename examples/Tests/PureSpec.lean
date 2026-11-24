@@ -261,11 +261,50 @@ def run : IO LSpec := do
 
 end CryptoGroup
 
+/-! ## Hardening checks that stop before any crypto or network -/
+
+namespace HardeningGroup
+
+open LeanTea.Auth.Passkey in
+def passkeyReq (flags : UInt8) (counter stored : UInt32) (clientData : ByteArray) : AuthenticateRequest :=
+  let rpHash := LeanTea.Crypto.Sha256.hashString "example.com"
+  let ad := rpHash.push flags |>.push (counter >>> 24).toUInt8 |>.push (counter >>> 16).toUInt8
+            |>.push (counter >>> 8).toUInt8 |>.push counter.toUInt8
+  { authenticatorData := ad, clientDataJSON := clientData, signature := .empty,
+    expectedChallenge := "abc", expectedOrigin := "https://example.com", expectedRpId := "example.com",
+    stored := { credId := "c", publicKeyPem := "", signCount := stored, rpId := "example.com" } }
+
+def run : IO LSpec := do
+  let cd := "{\"type\":\"webauthn.get\",\"challenge\":\"abc\",\"origin\":\"https://example.com\"}".toUTF8
+  let errText := fun (r : Except String UInt32) => match r with | .ok _ => "" | .error e => e
+  let has := fun (s sub : String) => (s.splitOn sub).length > 1
+  let cloneZero ← LeanTea.Auth.Passkey.verifyAuthentication (passkeyReq 0x01 0 5 cd)
+  let noUp ← LeanTea.Auth.Passkey.verifyAuthentication (passkeyReq 0x00 6 5 cd)
+  let badUtf8 ← LeanTea.Auth.Passkey.verifyAuthentication (passkeyReq 0x01 6 5 ⟨#[0xff, 0xfe]⟩)
+  let gemini : LeanTea.Cloud.Gemini.Config := { apiKey := "unused" }
+  let optRev ← try
+      let _ ← LeanTea.Cloud.Gemini.reviewDiff gemini "." "--output=/tmp/leantea-pwned" "HEAD"
+      pure ""
+    catch e => pure (toString e)
+  return group "Hardening" [
+    it "passkey: a counter of 0 after a non-zero count is refused (clone)"
+      (has (errText cloneZero) "signCount") (errText cloneZero),
+    it "passkey: an assertion without the User Present flag is refused"
+      (has (errText noUp) "user presence") (errText noUp),
+    it "passkey: clientDataJSON that is not UTF-8 is an error, not a panic"
+      (has (errText badUtf8) "UTF-8") (errText badUtf8),
+    it "reviewDiff refuses a revision that looks like a git option"
+      (has optRev "may not start with '-'" && !(← System.FilePath.pathExists "/tmp/leantea-pwned")) optRev
+  ]
+
+end HardeningGroup
+
 /-! ## Entry point. -/
 
 def main : IO Unit := do
   let t ← TemplateGroup.run
   let c ← CryptoGroup.run
-  let tree := group "LeanTEA pure-Lean subsystems" [t, c]
+  let h ← HardeningGroup.run
+  let tree := group "LeanTEA pure-Lean subsystems" [t, c, h]
   let code ← lspecIO tree
   if code != 0 then IO.Process.exit code.toUInt8
