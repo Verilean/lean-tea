@@ -294,6 +294,51 @@ def stateMachineSpec : LSpec :=
     ]
   ]
 
+/-! ## MCP HTTP transport access -/
+
+def mcpReq (headers : List (String × String)) (method := "POST") : LeanTea.Net.Http.Request :=
+  { method, path := "/mcp", query := "", headers := headers.toArray,
+    body := "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}".toUTF8 }
+
+def mcpAccessSpec : IO LSpec := do
+  let called ← IO.mkRef 0
+  let h : LeanTea.Mcp.Handler := {
+    initializeResult := Lean.Json.null, toolsList := Lean.Json.arr #[]
+    callTool := fun _ _ => do called.modify (· + 1); pure Lean.Json.null }
+  let open_ := LeanTea.Mcp.httpHandler h
+  let tok := LeanTea.Mcp.httpHandler h { token := some "s3cret-token" }
+  let json := ("content-type", "application/json")
+  let local_ := ("host", "127.0.0.1:8000")
+  let status (r : LeanTea.Net.Http.Response) := r.status
+  let ok ← open_ (mcpReq [json, local_])
+  let localhost ← open_ (mcpReq [json, ("host", "localhost:8000")])
+  let plain ← open_ (mcpReq [("content-type", "text/plain"), local_])
+  let noType ← open_ (mcpReq [local_])
+  let page ← open_ (mcpReq [json, local_, ("origin", "https://evil.example")])
+  let rebind ← open_ (mcpReq [json, ("host", "evil.example:8000")])
+  let noHost ← open_ (mcpReq [json])
+  let allowed ← LeanTea.Mcp.httpHandler h { allowedOrigins := ["https://ui.example"] }
+    (mcpReq [json, local_, ("origin", "https://ui.example")])
+  let noTok ← tok (mcpReq [json, local_])
+  let badTok ← tok (mcpReq [json, local_, ("authorization", "Bearer s3cret-tokeN")])
+  let goodTok ← tok (mcpReq [json, local_, ("authorization", "Bearer s3cret-token")])
+  let remote ← try
+      LeanTea.Mcp.Handler.serveHttp h 18799 "0.0.0.0"
+      pure false
+    catch _ => pure true
+  return group "MCP HTTP transport access" [
+    it "a JSON POST to a loopback Host is served" (status ok == 200 && status localhost == 200),
+    it "a non-JSON POST (a page's simple request) is refused with 415"
+      (status plain == 415 && status noType == 415),
+    it "a request with a foreign Origin is refused" (status page == 403),
+    it "an allow-listed Origin is served" (status allowed == 200),
+    it "a non-loopback Host (DNS rebinding) is refused" (status rebind == 403 && status noHost == 403),
+    it "with a token, a missing or wrong bearer token is 401"
+      (status noTok == 401 && status badTok == 401),
+    it "with a token, the right bearer token is served" (status goodTok == 200),
+    it "listening on 0.0.0.0 without a token is refused" remote
+  ]
+
 /-! ## Aggregate tree + entry point -/
 
 def allSpecs : LSpec := group "LeanTEA construction-time security" [
@@ -308,5 +353,6 @@ def allSpecs : LSpec := group "LeanTEA construction-time security" [
 ]
 
 def main : IO Unit := do
-  let code ← lspecIO allSpecs
+  let mcp ← mcpAccessSpec
+  let code ← lspecIO (group "LeanTEA security" [allSpecs, mcp])
   if code != 0 then IO.Process.exit code.toUInt8
