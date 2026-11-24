@@ -28,12 +28,18 @@ are likewise out of scope (most modern clients tolerate a 501).
 Every request path is funnelled through `LeanTea.Net.SafePath` —
 `..`, NUL bytes, absolute paths outside the workspace, and
 sibling-prefix attacks are all refused with a 403 *before* any
-filesystem call. The workspace itself isn't read symlinks (best-
-effort, same as SafePath).
+filesystem call. Then the path, with symlinks followed (its parent for
+a path not created yet), must still be inside the workspace, so a link
+pointing out, or a dangling one, is refused too. The workspace root
+cannot be deleted or overwritten, `DELETE` removes a symlink itself
+rather than what it points at, and files are served with
+`X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`
+so an uploaded page cannot run script on this origin.
+`Config.workspace` must be an absolute path (`IO.FS.realPath`).
 
-For **authenticated** WebDAV, wrap the returned handler in your
-own auth gate (`Auth.gate` / `Form.csrf` etc.). Bearer-token
-header support is one configuration step away. -/
+There is **no authentication** here: anyone who can reach the handler
+can read, write and delete under the workspace. Listen on loopback, or
+wrap the handler in your own gate (`OAuth2.gate`, `Auth.gate`). -/
 
 namespace LeanTea.Net.WebDav
 
@@ -123,6 +129,35 @@ def Config.resolve (cfg : Config) (urlPath : String) : Except String SafePath :=
   | some rel =>
     let inner := if rel.startsWith "/" then (rel.drop 1).toString else rel
     SafePath.under cfg.workspace inner
+
+/-- Whether `p` stays inside the workspace once symlinks are followed:
+    `SafePath` is lexical, so a link inside the workspace that points
+    out (or a dangling one, which a `PUT` would create outside) is
+    refused here. A path that does not exist yet is judged by its
+    parent. -/
+private def insideReal (cfg : Config) (p : SafePath) : IO Bool := do
+  try
+    let root := (← IO.FS.realPath cfg.workspace).toString
+    let target := System.FilePath.mk p.value
+    let isLink ← try pure ((← target.symlinkMetadata).type == .symlink) catch _ => pure false
+    let probe ←
+      if isLink || (← target.pathExists) then IO.FS.realPath target
+      else IO.FS.realPath (target.parent.getD target)
+    let real := probe.toString
+    return real == root || real.startsWith (root ++ "/")
+  catch _ => return false
+
+/-- `resolve`, then `insideReal`. -/
+def Config.resolveReal (cfg : Config) (urlPath : String) : IO (Except String SafePath) := do
+  match cfg.resolve urlPath with
+  | .error e => return .error e
+  | .ok p =>
+    if ← insideReal cfg p then return .ok p
+    else return .error s!"{urlPath} leaves the workspace through a symlink"
+
+/-- The workspace root itself, which is never deleted or overwritten. -/
+private def Config.isRoot (cfg : Config) (p : SafePath) : Bool :=
+  p.value == SafePath.normalise cfg.workspace
 
 /-! ## XML escaping for PROPFIND output -/
 
@@ -245,7 +280,7 @@ private def guessContentType (path : String) : String :=
   else "application/octet-stream"
 
 private def handleGet (cfg : Config) (req : Request) : IO Response := do
-  match cfg.resolve req.path with
+  match ← cfg.resolveReal req.path with
   | .error _ => return forbidden
   | .ok p =>
     if !(← System.FilePath.pathExists p.value) then return Response.notFound
@@ -256,7 +291,12 @@ private def handleGet (cfg : Config) (req : Request) : IO Response := do
       let bs ← IO.FS.readBinFile p.value
       let mut r : Response :=
         { status := 200,
-          headers := #[("content-type", guessContentType p.value)],
+          -- Uploaded files are served as inert data: no type sniffing, and
+          -- a sandbox CSP so an uploaded .html or .svg cannot run script
+          -- on this origin (stored XSS).
+          headers := #[("content-type", guessContentType p.value),
+                       ("x-content-type-options", "nosniff"),
+                       ("content-security-policy", "sandbox")],
           body := bs }
       r := r.setHeader! "content-length" (toString bs.size)
       return r
@@ -267,9 +307,10 @@ private def handleHead (cfg : Config) (req : Request) : IO Response := do
 
 private def handlePut (cfg : Config) (req : Request) : IO Response := do
   if cfg.readonly then return forbidden
-  match cfg.resolve req.path with
+  match ← cfg.resolveReal req.path with
   | .error _ => return forbidden
   | .ok p =>
+    if cfg.isRoot p then return forbidden
     /- WebDAV doesn't say "create parent dirs"; clients are expected
        to MKCOL them. We do the same — refuse PUT if the parent
        doesn't exist yet. -/
@@ -282,12 +323,16 @@ private def handlePut (cfg : Config) (req : Request) : IO Response := do
 
 private def handleDelete (cfg : Config) (req : Request) : IO Response := do
   if cfg.readonly then return forbidden
-  match cfg.resolve req.path with
+  match ← cfg.resolveReal req.path with
   | .error _ => return forbidden
   | .ok p =>
-    if !(← System.FilePath.pathExists p.value) then return Response.notFound
+    if cfg.isRoot p then return forbidden
+    let info? ← try pure (some (← System.FilePath.symlinkMetadata (System.FilePath.mk p.value)))
+                catch _ => pure none
+    let some info := info? | return Response.notFound
     try
-      let info ← System.FilePath.metadata (System.FilePath.mk p.value)
+      -- `symlinkMetadata`, not `metadata`: a symlink is removed itself,
+      -- never followed into what it points at.
       if info.type == .dir then IO.FS.removeDirAll p.value
       else IO.FS.removeFile p.value
       return Response.text 204 ""
@@ -295,7 +340,7 @@ private def handleDelete (cfg : Config) (req : Request) : IO Response := do
 
 private def handleMkcol (cfg : Config) (req : Request) : IO Response := do
   if cfg.readonly then return forbidden
-  match cfg.resolve req.path with
+  match ← cfg.resolveReal req.path with
   | .error _ => return forbidden
   | .ok p =>
     if (← System.FilePath.pathExists p.value) then return methodNotAllowed
@@ -305,7 +350,7 @@ private def handleMkcol (cfg : Config) (req : Request) : IO Response := do
     catch e => return Response.serverError s!"mkcol: {e}"
 
 private def handlePropfind (cfg : Config) (req : Request) : IO Response := do
-  match cfg.resolve req.path with
+  match ← cfg.resolveReal req.path with
   | .error _ => return forbidden
   | .ok p =>
     if !(← System.FilePath.pathExists p.value) then return Response.notFound

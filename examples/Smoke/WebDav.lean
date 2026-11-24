@@ -54,6 +54,47 @@ private def spawnServer (workspace : String) :
 private def hasSubstr (haystack needle : String) : Bool :=
   (haystack.splitOn needle).length > 1
 
+/-- Symlinks and the workspace root: nothing outside the workspace is
+    read, written or deleted through a link, the root cannot be deleted,
+    and files are served as inert data. -/
+def boundarySpec (workspace outside : String) : IO LSpec := do
+  let ln := fun (target link : String) => do
+    let _ ← IO.Process.output { cmd := "ln", args := #["-s", target, link] }
+  IO.FS.writeFile s!"{outside}/secret.txt" "outside secret"
+  IO.FS.createDirAll s!"{outside}/outdir"
+  IO.FS.writeFile s!"{outside}/outdir/keep.txt" "keep"
+  IO.FS.createDirAll s!"{workspace}/inner-dir"
+  IO.FS.writeFile s!"{workspace}/inner-dir/keep.txt" "keep"
+  ln s!"{outside}/secret.txt" s!"{workspace}/link-file"
+  ln s!"{outside}/outdir" s!"{workspace}/link-dir"
+  ln s!"{outside}/new.txt" s!"{workspace}/dangling"
+  ln s!"{workspace}/inner-dir" s!"{workspace}/inner-link"
+  let req := fun (m path body : String) => do
+    request m (← parsedUrl path) (body := body.toUTF8)
+  let getLink ← req "GET" "/dav/link-file" ""
+  let putDangling ← req "PUT" "/dav/dangling" "planted"
+  let putThroughDir ← req "PUT" "/dav/link-dir/x.txt" "planted"
+  let delLinkDir ← req "DELETE" "/dav/link-dir" ""
+  let delRoot ← req "DELETE" "/dav/" ""
+  let delInnerLink ← req "DELETE" "/dav/inner-link" ""
+  let _ ← req "PUT" "/dav/page.html" "<script>alert(1)</script>"
+  let page ← req "GET" "/dav/page.html" ""
+  return group "workspace boundary" [
+    it "GET through a symlink to a file outside is 403" (getLink.status == 403),
+    it "PUT to a dangling symlink pointing outside is 403 and creates nothing"
+      (putDangling.status == 403 && !(← System.FilePath.pathExists s!"{outside}/new.txt")),
+    it "PUT through a symlinked directory outside is 403"
+      (putThroughDir.status == 403 && !(← System.FilePath.pathExists s!"{outside}/outdir/x.txt")),
+    it "DELETE of a symlink to a directory outside is 403 and leaves it intact"
+      (delLinkDir.status == 403 && (← System.FilePath.pathExists s!"{outside}/outdir/keep.txt")),
+    it "DELETE of the workspace root is 403" (delRoot.status == 403 && (← System.FilePath.pathExists workspace)),
+    it "DELETE of a symlink inside removes the link, not its target"
+      (delInnerLink.status == 204 && (← System.FilePath.pathExists s!"{workspace}/inner-dir/keep.txt")),
+    it "files are served with nosniff and a sandbox CSP"
+      (page.status == 200 && headerVal page "x-content-type-options" == some "nosniff" &&
+        headerVal page "content-security-policy" == some "sandbox")
+  ]
+
 def spec : IO LSpec := do
   /- 1. OPTIONS → 200 with DAV header. -/
   let u ← parsedUrl "/dav/"
@@ -100,14 +141,18 @@ def main : IO Unit := do
   /- Fresh tempdir per run. -/
   let ts ← IO.monoMsNow
   let workspace := s!"/tmp/leantea-webdav-smoke-{ts}"
+  let outside := s!"/tmp/leantea-webdav-outside-{ts}"
   IO.FS.createDirAll workspace
+  IO.FS.createDirAll outside
   IO.println s!"webdav_smoke — workspace={workspace}"
   let child ← spawnServer workspace
   try
     let tree ← spec
-    let code ← lspecIO (group "LeanTEA WebDAV" [tree])
+    let boundary ← boundarySpec workspace outside
+    let code ← lspecIO (group "LeanTEA WebDAV" [tree, boundary])
     let _ ← child.kill
     try IO.FS.removeDirAll workspace catch _ => pure ()
+    try IO.FS.removeDirAll outside catch _ => pure ()
     if code != 0 then IO.Process.exit code.toUInt8
   catch e =>
     let _ ← child.kill

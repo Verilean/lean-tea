@@ -377,7 +377,7 @@ def serveMain (args : List String) : IO Unit := do
   if a.workspace.isEmpty then
     IO.eprintln "coder-mcp: --workspace is required (or set CODER_MCP_WORKSPACE)"
     IO.Process.exit 2
-  wsRef.set a.workspace
+  wsRef.set (← IO.FS.realPath a.workspace).toString
   IO.eprintln s!"coder-mcp: workspace = {a.workspace}"
   let mcpHandler : LeanTea.Mcp.Handler := {
     initializeResult := initializeResult,

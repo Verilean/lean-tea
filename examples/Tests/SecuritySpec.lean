@@ -67,6 +67,11 @@ def safePathSpec : LSpec :=
   let okAndEq (s : Except String SafePath) (expected : String) : Bool :=
     match s with | .ok p => p.value == expected | .error _ => false
   group "SafePath (Primitive 5)" [
+    group "relative workspaces" [
+      it "a relative workspace is refused (it would cover the whole filesystem)"
+        ((match SafePath.under "." "etc/passwd" with | .ok _ => false | .error _ => true) &&
+         (match SafePath.under "data" "x" with | .ok _ => false | .error _ => true))
+    ],
     group "accepted" [
       it "relative joined"
         (okAndEq (SafePath.under ws "a.txt") "/srv/uploads/a.txt"),
