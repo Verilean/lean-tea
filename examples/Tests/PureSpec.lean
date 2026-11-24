@@ -129,6 +129,16 @@ def run : IO LSpec := do
   let jwtNoneAlg := Jwt.verifyHS256 forgedToken secret 1_700_000_000 {}
   let jwtBadIss  := Jwt.verifyHS256 token secret 1_700_000_000
                     { issuer := some "other" }
+  let signWith := fun (fields : List (String × Lean.Json)) => Jwt.signHS256 (Lean.Json.mkObj fields) secret
+  let rejects := fun (r : Except String Jwt.Claims) => match r with | .ok _ => false | .error _ => true
+  let noExp := signWith [("sub", Lean.Json.str "u")]
+  let jwtNoExpDefault := Jwt.verifyHS256 noExp secret 1_700_000_000 {}
+  let jwtNoExpRequired := Jwt.verifyHS256 noExp secret 1_700_000_000 { requireExp := true }
+  let fracExp := signWith [("exp", (Lean.Json.parse "2000000000.5").toOption.getD Lean.Json.null)]
+  let strExp := signWith [("exp", Lean.Json.str "2000000000")]
+  let expired := signWith [("exp", Lean.Json.num (1_600_000_000 : Int))]
+  let notYet := signWith [("exp", Lean.Json.num (2_000_000_000 : Int)), ("nbf", Lean.Json.num (1_800_000_000 : Int))]
+  let badUtf8 := Base64.encodeUrl ⟨#[0xff, 0xfe]⟩ ++ "." ++ Base64.encodeUrl "{}".toUTF8 ++ ".x"
 
   /- SAML — pure parse. -/
   let saml := LeanTea.Auth.Saml.parseResponse samlXml
@@ -184,7 +194,17 @@ def run : IO LSpec := do
       it "rejects alg=none forgery"
         (match jwtNoneAlg with | .ok _ => false | .error _ => true),
       it "rejects wrong issuer"
-        (match jwtBadIss with | .ok _ => false | .error _ => true)
+        (match jwtBadIss with | .ok _ => false | .error _ => true),
+      it "a token without exp passes by default and fails with requireExp"
+        (!rejects jwtNoExpDefault && rejects jwtNoExpRequired),
+      it "a fractional or string exp is refused, not skipped"
+        (rejects (Jwt.verifyHS256 fracExp secret 1_700_000_000 {}) &&
+          rejects (Jwt.verifyHS256 strExp secret 1_700_000_000 {})),
+      it "an expired token and a not-yet-valid token are refused"
+        (rejects (Jwt.verifyHS256 expired secret 1_700_000_000 {}) &&
+          rejects (Jwt.verifyHS256 notYet secret 1_700_000_000 {})),
+      it "a segment that is not UTF-8 is an error, not a panic"
+        (rejects (Jwt.verifyHS256 badUtf8 secret 1_700_000_000 {}))
     ],
     group "SAML 2.0 assertion parse" (
       match saml with

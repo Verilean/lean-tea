@@ -69,7 +69,8 @@ private def decodeSegment (s : String) : Except String Json := do
   let bytes ← match Base64.decodeUrl s with
     | some bs => Except.ok bs
     | _       => Except.error s!"segment not valid base64url: `{s}`"
-  let text := String.fromUTF8! bytes
+  let some text := String.fromUTF8? bytes
+    | throw "segment is not valid UTF-8"
   match Json.parse text with
   | .ok j    => return j
   | .error e => throw s!"segment JSON parse: {e}"
@@ -98,6 +99,9 @@ structure VerifyOpts where
   audience : Option String := none
   /-- Clock-skew tolerance for `exp` / `nbf`, in seconds. -/
   leeway : Nat := 30
+  /-- Refuse a token without an `exp` claim. Without it, a token without
+      `exp` never expires. Turn it on for bearer tokens you issue. -/
+  requireExp : Bool := false
   deriving Inhabited, Repr
 
 structure Claims where
@@ -143,10 +147,20 @@ private def parseEnvelope (token : String) (opts : VerifyOpts)
     typically `LeanTea.Auth.nowSec`. -/
 private def checkClaims (body : Json) (opts : VerifyOpts) (nowSec : Nat)
     : Except String Unit := do
-  if let some exp := jNat? body "exp" then
+  -- A present but unreadable `exp`/`nbf` (a string, a negative or
+  -- fractional number) is refused rather than skipped.
+  let timeClaim (k : String) : Except String (Option Nat) :=
+    match body.getObjVal? k with
+    | .error _ => .ok none
+    | .ok _ => match jNat? body k with
+      | some n => .ok (some n)
+      | none => .error s!"`{k}` is not a whole number of seconds"
+  match ← timeClaim "exp" with
+  | some exp =>
     if nowSec > exp + opts.leeway then
       throw s!"token expired (exp={exp}, now={nowSec})"
-  if let some nbf := jNat? body "nbf" then
+  | none => if opts.requireExp then throw "token has no `exp`"
+  if let some nbf ← timeClaim "nbf" then
     if nowSec + opts.leeway < nbf then
       throw s!"token not yet valid (nbf={nbf})"
   if let some want := opts.issuer then
