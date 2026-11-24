@@ -44,6 +44,9 @@ def includeSrc : String :=
 
 def run : IO LSpec := do
   let flat    ← (parse flatSrc).renderFlat [("name", "Junji"), ("count", "3")]
+  let unclosedRaw ← (parse "a {{{b").renderFlat [("b", "x")]
+  let unclosedMb ← (parse "a {{{あ").renderFlat []
+  let unclosed ← (parse "a {{b c").renderFlat [("b", "x")]
   let escaped ← (parse escapeSrc).renderFlat
     [("v", "<script>alert('x')</script>\" onmouseover=\"x & y"), ("html", "<b>ok</b>")]
   let listOut ← (parse listSrc).render
@@ -61,6 +64,8 @@ def run : IO LSpec := do
   return group "Template engine" [
     it "flat substitution"
       (flat == "Hello, Junji! You have 3 new messages."),
+    it "an opener without a closer stays text (no panic, nothing dropped)"
+      (unclosedRaw == "a {{{b" && unclosedMb == "a {{{あ" && unclosed == "a {{b c"),
     it "{{v}} is HTML-escaped in text and attributes; {{{v}}} is inserted as is"
       (escaped == "<p title=\"&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;&quot; onmouseover=&quot;x &amp; y\">" ++
         "&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;&quot; onmouseover=&quot;x &amp; y</p><b>ok</b>"),

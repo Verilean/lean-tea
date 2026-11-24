@@ -133,7 +133,8 @@ segment), so we don't pay an extra `recv?` in the common case. -/
 
 private partial def handleConnLoop (handler : Handler) (ws : WebSocketServer.Router)
     (client : Socket.Client) (leftover : ByteArray) (requestTimeoutMs : Nat) : IO Unit := do
-  let deadline := (← IO.monoMsNow) + requestTimeoutMs
+  -- 0 means the default, as in `ReactorServer` (not "close at once").
+  let deadline := (← IO.monoMsNow) + (if requestTimeoutMs == 0 then 30000 else requestTimeoutMs)
   match ← recvUntilRequest client leftover deadline with
   | .closed => (client.shutdown).block
   | .refuse status =>
@@ -237,11 +238,13 @@ def serveConcurrent (port : UInt16 := 8001) (host : String := "0.0.0.0")
 /-- Sequential accept loop. A WebSocket session (`ws`) holds the loop for
     its whole lifetime, so servers with WebSockets want `serveConcurrent`.
 
-    `requestTimeoutMs` (positive) bounds how long one request may take to
-    arrive, counted from when the server starts waiting for it (so it
-    also closes idle keep-alive connections). Trickling bytes does not
-    extend it. On this loop one slow client holds every other client for
-    up to that long; `serveConcurrent` does not have that problem. -/
+    `requestTimeoutMs` (0 = the default 30 s) bounds how long one request
+    may take to arrive, counted from when the server starts waiting for
+    it (so it also closes idle keep-alive connections). Trickling bytes
+    does not extend it. It does not bound sending the response: on this
+    loop a client that stops reading a large response, like one that
+    stalls its request for up to the timeout, holds every other client.
+    `serveConcurrent` does not have that problem. -/
 def serve (port : UInt16 := 8001) (host : String := "0.0.0.0")
     (handler : Handler) (ws : WebSocketServer.Router := WebSocketServer.Router.none)
     (requestTimeoutMs : Nat := 30000) : IO Unit := do

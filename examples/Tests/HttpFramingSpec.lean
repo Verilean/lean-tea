@@ -79,6 +79,7 @@ def specs (name : String) (port : Nat) : IO LSpec := do
     s!"POST /a HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n{injected}"
   let signed ← exchange port
     s!"POST /a HTTP/1.1\r\nHost: t\r\nContent-Length: +{injLen}\r\n\r\n{injected}"
+  let huge ← exchange port s!"GET /h HTTP/1.1\r\nHost: t\r\nX-Big: {String.ofList (List.replicate 70000 'a')}\r\n\r\n"
   let spaced ← exchange port
     s!"POST /a HTTP/1.1\r\nHost: t\r\nContent-Length : {injLen}\r\n\r\n{injected}"
   let folded ← exchange port
@@ -114,6 +115,9 @@ def specs (name : String) (port : Nat) : IO LSpec := do
       it "Content-Length with a sign → 400" (refused signed "400") signed.text,
       it "space before the colon → 400" (refused spaced "400") spaced.text,
       it "folded header line → 400" (refused folded "400") folded.text,
+      it "oversized headers → 431 with its reason phrase"
+        (status huge == "431" && has huge.text "431 Request Header Fields Too Large") (huge.text.take 80).toString,
+      it "Transfer-Encoding is answered 501 Not Implemented" (has chunked.text "501 Not Implemented") (chunked.text.take 80).toString,
       it "`content-length:` inside another header's value frames nothing"
         (responses inValue == 1 && has inValue.text s!"path=/a body={injLen}" &&
           !has inValue.text "/injected") inValue.text],

@@ -391,7 +391,9 @@ def reviewDiff (cfg : Config) (workspace base head : String)
     throw <| IO.userError s!"reviewDiff: revision may not start with '-' ({base} {head})"
   let out ← IO.Process.output {
     cmd := "git",
-    args := #["-C", workspace, "diff", "--end-of-options", base, head]
+    -- The trailing `--` keeps git from reading a revision as a path
+    -- (which would silently switch to comparing arbitrary files).
+    args := #["-C", workspace, "diff", "--end-of-options", base, head, "--"]
   }
   if out.exitCode != 0 then
     throw <| IO.userError s!"git diff failed: {out.stderr}"

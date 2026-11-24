@@ -135,11 +135,6 @@ structure Config where
   timeoutSec : Option Nat := some 600
   deriving Inhabited
 
-private def curlAuthArgs (cfg : Config) : Array String :=
-  match cfg.apiKey? with
-  | none => #[]
-  | some k => #["-H", s!"Authorization: Bearer {k}"]
-
 private def curlTimeoutArgs (cfg : Config) : Array String :=
   match cfg.timeoutSec with
   | none   => #[]
@@ -237,19 +232,9 @@ private def deltaContent (j : Json) : Option String := do
   let content ← delta.getObjVal? "content" |>.toOption
   content.getStr?.toOption
 
-/-- Spawn curl, stream the response, hand each delta token to
-    `onDelta`. Returns the concatenated text once `[DONE]` arrives. -/
-partial def chatStream (cfg : Config) (req : ChatRequest)
-    (onDelta : String → IO Unit) : IO String := do
-  let body := (requestToJson { req with stream := true }).compress
-  let url  := s!"{cfg.baseUrl}/chat/completions"
-  let args :=
-    #["-sS", "--no-buffer", "-X", "POST",
-      "-H", "Content-Type: application/json",
-      "--data-binary", body]
-    ++ curlAuthArgs cfg
-    ++ curlTimeoutArgs cfg
-    ++ #[url]
+/-- Run curl with `args`, reading SSE lines and handing each delta token
+    to `onDelta`. Returns the concatenated text. -/
+private partial def streamCurl (args : Array String) (onDelta : String → IO Unit) : IO String := do
   let child ← IO.Process.spawn {
     cmd    := "curl",
     args,
@@ -282,6 +267,33 @@ partial def chatStream (cfg : Config) (req : ChatRequest)
     let err ← child.stderr.readToEnd
     throw <| IO.userError s!"curl (streaming): {err}"
   return acc
+
+/-- Spawn curl, stream the response, hand each delta token to
+    `onDelta`. Returns the concatenated text once `[DONE]` arrives.
+
+    The body and the API key reach curl through files in a fresh private
+    directory, never through argv (`/proc/PID/cmdline` is readable by
+    every local user). -/
+partial def chatStream (cfg : Config) (req : ChatRequest)
+    (onDelta : String → IO Unit) : IO String := do
+  let body := (requestToJson { req with stream := true }).compress
+  let url  := s!"{cfg.baseUrl}/chat/completions"
+  IO.FS.withTempDir fun dir => do
+    let bodyFile := (dir / "body.json").toString
+    IO.FS.writeFile bodyFile body
+    let auth ← match cfg.apiKey? with
+      | none => pure #[]
+      | some k =>
+        if k.any (fun c => c == '\n' || c == '\r') then
+          throw <| IO.userError "openai: API key contains a line break"
+        let conf := (dir / "auth.conf").toString
+        let quoted := k.replace "\\" "\\\\" |>.replace "\"" "\\\""
+        IO.FS.writeFile conf s!"header = \"Authorization: Bearer {quoted}\"\n"
+        pure #["-K", conf]
+    streamCurl (#["-sS", "--no-buffer", "-X", "POST",
+                  "-H", "Content-Type: application/json",
+                  "--data-binary", s!"@{bodyFile}"]
+                ++ auth ++ curlTimeoutArgs cfg ++ #[url]) onDelta
 
 /-! ## Convenience builders -/
 

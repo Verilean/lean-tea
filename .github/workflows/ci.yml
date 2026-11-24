@@ -149,7 +149,7 @@ jobs:
         run: ./.lake/build/bin/tui_spec
       - name: "WebSocket server (RFC 6455 codec + handshake, live echo server: fragments, ping/pong, close codes, concurrency; 29 LSpec assertions)"
         run: ./.lake/build/bin/websocket_spec
-      - name: "HTTP framing + request deadlines on all four server backends (smuggling attempts refused, pipelining, Connection: close; 56 LSpec assertions)"
+      - name: "HTTP framing + request deadlines on all four server backends (smuggling attempts refused, pipelining, Connection: close; 64 LSpec assertions)"
         run: ./.lake/build/bin/http_framing_spec
 
       - name: Breezehollow three.js demo (World.leanjs compiles + checks, node --check, page ids, Physics.step properties under node; 23 LSpec assertions)

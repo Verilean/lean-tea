@@ -72,11 +72,16 @@ def boundarySpec (workspace outside : String) : IO LSpec := do
   let req := fun (m path body : String) => do
     request m (← parsedUrl path) (body := body.toUTF8)
   let getLink ← req "GET" "/dav/link-file" ""
+  let listing ← request "PROPFIND" (← parsedUrl "/dav/") (headers := #[("Depth", "1")])
+  let listText := (String.fromUTF8? listing.body).getD ""
+  let putNoParent ← req "PUT" "/dav/missing/x.txt" "x"
+  let getNoParent ← req "GET" "/dav/missing/x.txt" ""
   let putDangling ← req "PUT" "/dav/dangling" "planted"
   let putThroughDir ← req "PUT" "/dav/link-dir/x.txt" "planted"
   let delLinkDir ← req "DELETE" "/dav/link-dir" ""
   let delRoot ← req "DELETE" "/dav/" ""
   let delInnerLink ← req "DELETE" "/dav/inner-link" ""
+  let delOutLink ← req "DELETE" "/dav/link-file" ""
   let _ ← req "PUT" "/dav/page.html" "<script>alert(1)</script>"
   let page ← req "GET" "/dav/page.html" ""
   return group "workspace boundary" [
@@ -85,11 +90,19 @@ def boundarySpec (workspace outside : String) : IO LSpec := do
       (putDangling.status == 403 && !(← System.FilePath.pathExists s!"{outside}/new.txt")),
     it "PUT through a symlinked directory outside is 403"
       (putThroughDir.status == 403 && !(← System.FilePath.pathExists s!"{outside}/outdir/x.txt")),
-    it "DELETE of a symlink to a directory outside is 403 and leaves it intact"
-      (delLinkDir.status == 403 && (← System.FilePath.pathExists s!"{outside}/outdir/keep.txt")),
+    it "DELETE of a symlink to a directory outside removes the link and leaves the target intact"
+      (delLinkDir.status == 204 && (← System.FilePath.pathExists s!"{outside}/outdir/keep.txt")),
     it "DELETE of the workspace root is 403" (delRoot.status == 403 && (← System.FilePath.pathExists workspace)),
     it "DELETE of a symlink inside removes the link, not its target"
       (delInnerLink.status == 204 && (← System.FilePath.pathExists s!"{workspace}/inner-dir/keep.txt")),
+    it "PROPFIND does not list links that point outside"
+      (listing.status == 207 && !hasSubstr listText "link-file" && !hasSubstr listText "link-dir" &&
+        hasSubstr listText "inner-dir"),
+    it "PUT under a missing directory is 409 and GET is 404 (not 403)"
+      (putNoParent.status == 409 && getNoParent.status == 404),
+    it "DELETE of a link that points outside removes the link only"
+      (delOutLink.status == 204 && (← System.FilePath.pathExists s!"{outside}/secret.txt") &&
+        !(← System.FilePath.pathExists s!"{workspace}/link-file")),
     it "files are served with nosniff and a sandbox CSP"
       (page.status == 200 && headerVal page "x-content-type-options" == some "nosniff" &&
         headerVal page "content-security-policy" == some "sandbox")

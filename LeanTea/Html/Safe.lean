@@ -63,7 +63,7 @@ private def nameAllowList : List String := [
 /-- Attributes whose value is a URL. `SafeAttr.text` refuses them, so a
     `javascript:` URL cannot slip in as "plain text". -/
 private def urlAttrs : List String :=
-  ["href", "src", "srcset", "action", "formaction", "poster", "data-msg"]
+  ["href", "src", "srcset", "action", "formaction", "poster"]
 
 private def isEventHandlerName (s : String) : Bool := s.startsWith "on"
 
@@ -96,21 +96,24 @@ private def isSchemeRejected (url : String) : Bool :=
 def text (name value : String) : Except String SafeAttr :=
   if isEventHandlerName name then
     .error s!"SafeAttr.text: event-handler name rejected ({name})"
-  else if urlAttrs.contains name && name != "data-msg" then
+  else if urlAttrs.contains name then
     .error s!"SafeAttr.text: {name} holds a URL; use SafeAttr.url"
   else if !nameAllowed name then
     .error s!"SafeAttr.text: name not on allow-list ({name})"
   else
     .ok ⟨name, value⟩
 
-/-- URL attribute (`href`, `src`, `action`, `formaction`, `data-msg`).
+/-- URL attribute (`href`, `src`, `srcset`, `action`, `formaction`,
+    `poster`). `data-msg` is a framework message, not a URL: use `text`.
     Rejects `javascript:` and `data:text/html` schemes. Everything
     else (http(s), mailto, tel, relative paths, fragments) is allowed
     and escaped at render. -/
 def url (name urlV : String) : Except String SafeAttr :=
   if !urlAttrs.contains name then
     .error s!"SafeAttr.url: URL attribute must be one of {urlAttrs}; got '{name}'"
-  else if isSchemeRejected urlV then
+  -- `srcset` is a comma-separated list of `URL [descriptor]`.
+  else if (if name == "srcset" then (urlV.splitOn ",").map (fun c => (c.trimAscii.toString.splitOn " ").head?.getD "")
+           else [urlV]).any isSchemeRejected then
     .error s!"SafeAttr.url: scheme rejected ({urlV.take 30})"
   else
     .ok ⟨name, urlV⟩

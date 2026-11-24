@@ -37,6 +37,13 @@ rather than what it points at, and files are served with
 so an uploaded page cannot run script on this origin.
 `Config.workspace` must be an absolute path (`IO.FS.realPath`).
 
+These checks look at the path just before the file operation, so they
+hold only while nothing else creates links in the workspace: another
+process that swaps a directory for a symlink in between, or a hard
+link to a file outside, gets past them (the Lean standard library has
+no `openat` / `O_NOFOLLOW`). Do not share a workspace with tools that
+can create links.
+
 There is **no authentication** here: anyone who can reach the handler
 can read, write and delete under the workspace. Listen on loopback, or
 wrap the handler in your own gate (`OAuth2.gate`, `Auth.gate`). -/
@@ -135,24 +142,37 @@ def Config.resolve (cfg : Config) (urlPath : String) : Except String SafePath :=
     out (or a dangling one, which a `PUT` would create outside) is
     refused here. A path that does not exist yet is judged by its
     parent. -/
-private def insideReal (cfg : Config) (p : SafePath) : IO Bool := do
+private def isLinkPath (p : System.FilePath) : IO Bool :=
+  try pure ((← p.symlinkMetadata).type == .symlink) catch _ => pure false
+
+/-- The real path of `p`, or of its nearest existing ancestor when `p`
+    (or a parent) does not exist yet. -/
+private partial def realOrAncestor (p : System.FilePath) : IO System.FilePath := do
+  if (← isLinkPath p) || (← p.pathExists) then IO.FS.realPath p
+  else match p.parent with
+    | some q => if q == p then IO.FS.realPath p else realOrAncestor q
+    | none => IO.FS.realPath p
+
+/-- `followLast := false` judges a final symlink by its parent only
+    (used by DELETE, which removes the link itself). -/
+private def insideReal (cfg : Config) (p : SafePath) (followLast := true) : IO Bool := do
   try
     let root := (← IO.FS.realPath cfg.workspace).toString
     let target := System.FilePath.mk p.value
-    let isLink ← try pure ((← target.symlinkMetadata).type == .symlink) catch _ => pure false
     let probe ←
-      if isLink || (← target.pathExists) then IO.FS.realPath target
-      else IO.FS.realPath (target.parent.getD target)
+      if !followLast && (← isLinkPath target) then realOrAncestor (target.parent.getD target)
+      else realOrAncestor target
     let real := probe.toString
     return real == root || real.startsWith (root ++ "/")
   catch _ => return false
 
 /-- `resolve`, then `insideReal`. -/
-def Config.resolveReal (cfg : Config) (urlPath : String) : IO (Except String SafePath) := do
+def Config.resolveReal (cfg : Config) (urlPath : String) (followLast := true)
+    : IO (Except String SafePath) := do
   match cfg.resolve urlPath with
   | .error e => return .error e
   | .ok p =>
-    if ← insideReal cfg p then return .ok p
+    if ← insideReal cfg p followLast then return .ok p
     else return .error s!"{urlPath} leaves the workspace through a symlink"
 
 /-- The workspace root itself, which is never deleted or overwritten. -/
@@ -323,7 +343,7 @@ private def handlePut (cfg : Config) (req : Request) : IO Response := do
 
 private def handleDelete (cfg : Config) (req : Request) : IO Response := do
   if cfg.readonly then return forbidden
-  match ← cfg.resolveReal req.path with
+  match ← cfg.resolveReal req.path (followLast := false) with
   | .error _ => return forbidden
   | .ok p =>
     if cfg.isRoot p then return forbidden
@@ -380,6 +400,12 @@ private def handlePropfind (cfg : Config) (req : Request) : IO Response := do
         let pre := if topRelClean.endsWith "/" then topRelClean
                    else topRelClean ++ "/"
         let childUrl := pre ++ name
+        -- A child that is a symlink out of the workspace is not listed:
+        -- its size and type would describe the outside target.
+        let inside ← match cfg.resolve (cfg.urlPrefix ++ childUrl) with
+          | .ok cp => insideReal cfg cp
+          | .error _ => pure false
+        if !inside then continue
         match ← entryOf cfg childUrl with
         | none => pure ()
         | some e => body := body ++ renderResponse e now
