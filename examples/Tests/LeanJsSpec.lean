@@ -7,6 +7,7 @@ import LeanJs.JsParser
 import LeanJs.LeanEmit
 import LeanJs.Includes
 import LeanJs.Typed
+import LeanJs.Embed
 
 /-! # examples/Tests/LeanJsSpec.lean — LSpec tests for the Fay pipeline
 
@@ -661,6 +662,19 @@ def typedSpecs : IO LSpec := do
       (has (← typedErr "def f(x : Float) : Array Float := [x, null]") "`null` has no type")
   ]
 
+/-- Reversi's client, compiled while this file was built. -/
+def reversiAtBuild : String := leanjs_file% "../Reversi/Game.leanjs"
+
+def embedSpecs : IO LSpec := do
+  let atRun ← LeanJs.Embed.compileFile "examples/Reversi/Game.leanjs"
+  let bad ← LeanJs.Embed.compileFile "examples/Tests/fixtures/arity.leanjs"
+  return group "leanjs_file%" [
+    it "compiles at build time to what the run-time path gives"
+      (atRun.toOption == some reversiAtBuild && has reversiAtBuild "const update"),
+    it "a check failure names the file (a build error under leanjs_file%)"
+      (match bad with | .error e => has e "arity.leanjs" && has e "double" | .ok _ => false)
+  ]
+
 def main : IO UInt32 := do
   IO.println "── LeanJs pure tests ─────────────────────────────────────"
   let pureCode ← lspecIO pureSpecs
@@ -698,4 +712,8 @@ def main : IO UInt32 := do
   IO.println "── LeanJs types through Lean ─────────────────────────────"
   let typedCode ← lspecIO (← typedSpecs)
 
-  return pureCode + nodeCode + dualCode + leanCode + incCode + ergCode + typedCode
+  IO.println ""
+  IO.println "── LeanJs compiled at build time ─────────────────────────"
+  let embedCode ← lspecIO (← embedSpecs)
+
+  return pureCode + nodeCode + dualCode + leanCode + incCode + ergCode + typedCode + embedCode

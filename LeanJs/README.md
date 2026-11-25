@@ -43,6 +43,7 @@ Files in this directory:
 | `LeanEmit.lean`  | `Ast` → real Lean source for `lean --run`             |
 | `Check.lean`     | arity, fields, names, order of definitions, `match`   |
 | `Typed.lean`     | typed pure rules → Lean, checked by Lean's elaborator |
+| `Embed.lean`     | `leanjs_file% "x.leanjs"`: compiled when Lean builds  |
 
 ---
 
