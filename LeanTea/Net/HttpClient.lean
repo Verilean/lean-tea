@@ -1,5 +1,6 @@
 import Std.Async.TCP
 import Std.Net
+import LeanTea.Net.Transport
 
 /-! # LeanTea.Net.HttpClient — minimal pure-Lean HTTP/1.1 client
 
@@ -298,6 +299,20 @@ def request (method : String) (url : Url)
   let headStr := match String.fromUTF8? headBs with | some s => s | none => ""
   let (status, hdrs) := parseHead headStr
   return { status, headers := hdrs, body := bodyBs }
+
+/-- `request` to an HTTP server listening on the Unix socket at
+    `socketPath` (for example one started with
+    `LeanTea.Net.Server.serveUnix`). `Host:` is `localhost`; a chunked
+    body is decoded. -/
+def requestUnix (socketPath method path : String)
+    (body : ByteArray := .empty)
+    (headers : Array (String × String) := #[]) : IO Response := do
+  let t ← LeanTea.Net.Transport.connectUnix socketPath
+  try
+    t.send (buildRequest method "localhost" path body headers)
+    return parseResponse (← drainResponse (t.recv 0))
+  finally
+    t.close
 
 /-- POST JSON convenience: serialise → request → response. The body
     is sent as `application/json` with `Content-Length` filled in

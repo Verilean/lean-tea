@@ -226,8 +226,16 @@ def fetchUserInfo (cfg : Config) (accessToken : String)
     let picture :=
       let p := jStr j "picture"
       if !p.isEmpty then p else jStr j "avatar_url"
+    -- The address stands in for a user name only when the provider says
+    -- it checked it (OIDC `email_verified`): otherwise anyone could sign
+    -- up with someone else's address and be let in under it.
+    let verified := match j.getObjVal? "email_verified" with
+      | .ok (.bool b) => b
+      | .ok (.str s) => s == "true"
+      | _ => false
     let login :=
-      [jStr j "login", jStr j "preferred_username", email].find? (!·.isEmpty) |>.getD ""
+      [jStr j "login", jStr j "preferred_username", if verified then email else ""].find?
+        (!·.isEmpty) |>.getD ""
     return .ok { sub, login, email, name := jStr j "name", picture, raw := resp.body }
 
 /-! ## Gate: sign-in in front of a `Handler`
@@ -625,21 +633,31 @@ private def logoutRoute (g : GateConfig) (sessions : Sessions) (req : Request) :
   if let some v := req.cookie? g.cookieName then sessions.drop v
   return (Response.redirect g.afterLogout).clearCookie g.cookieName (secure := g.cookieSecure)
 
+/-- What `gate` does with `req`: answer it itself (`.error`: the sign-in
+    routes, a redirect to sign in, 401), or let it through with the user
+    (`.ok`; `none` only on a public path without a session). -/
+def gateCheck (g : GateConfig) (sessions : Sessions) (req : Request)
+    : IO (Except Response (Option User)) := do
+  if req.path == g.loginPath && req.method == "GET" then return .error (← loginRoute g sessions req)
+  else if req.path == g.callbackPath && req.method == "GET" then
+    return .error (← callbackRoute g sessions req)
+  else if req.path == g.logoutPath then return .error (← logoutRoute g sessions req)
+  else
+    let user ← currentUser g sessions req
+    if user.isSome || g.isPublic req.path then return .ok user
+    else if g.apiPrefixes.any (req.path.startsWith ·) then
+      return .error (Response.text 401 "login required\n")
+    else
+      let next := if req.query.isEmpty then req.path else req.path ++ "?" ++ req.query
+      return .error (Response.redirect (g.loginPath ++ "?next=" ++ urlEncode next))
+
 /-- Put `inner` behind sign-in. `inner` gets the user on every request
     with a live session, and `none` only on public paths. -/
 def gate (g : GateConfig) (sessions : Sessions) (inner : Option User → Handler) : Handler :=
   fun req => do
-    if req.path == g.loginPath && req.method == "GET" then loginRoute g sessions req
-    else if req.path == g.callbackPath && req.method == "GET" then callbackRoute g sessions req
-    else if req.path == g.logoutPath then logoutRoute g sessions req
-    else
-      let user ← currentUser g sessions req
-      if user.isSome || g.isPublic req.path then inner user req
-      else if g.apiPrefixes.any (req.path.startsWith ·) then
-        return Response.text 401 "login required\n"
-      else
-        let next := if req.query.isEmpty then req.path else req.path ++ "?" ++ req.query
-        return Response.redirect (g.loginPath ++ "?next=" ++ urlEncode next)
+    match ← gateCheck g sessions req with
+    | .error r => return r
+    | .ok user => inner user req
 
 /-- Put WebSocket upgrades behind the same sign-in as `gate`. The HTTP
     gate does not see upgrades (the server asks the router first), so a

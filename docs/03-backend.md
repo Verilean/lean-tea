@@ -103,6 +103,15 @@ client still holds the others for up to that long. Prefer
 `serveConcurrent` (or the FFI backends) for anything reachable from
 untrusted clients. `http_framing_spec` checks all four.
 
+`serveUnix path mode handler (ws := router)` is `serveConcurrent` on a
+Unix domain socket: the same handler and WebSocket router, one thread
+per connection. It creates the socket with `mode` (default `0o660`)
+before it starts listening, and replaces a stale socket at `path` but
+never another kind of file. Who may connect is then up to the file's
+owner, group and mode and the directory it is in, so a service behind
+a proxy needs no token and no free TCP port. `HttpClient.requestUnix`
+is the matching client.
+
 The matching client is `LeanTea.Net.HttpClient` — pure Lean HTTP/1.1
 with `Content-Length` honouring (no curl shell-out, no node bridge).
 Used by every MCP server and the LLM streaming client.
@@ -248,9 +257,35 @@ auth_proxy --listen 0.0.0.0:2343 --upstream 127.0.0.1:9107 --provider github \
 - Secrets come from files, by default `$CREDENTIALS_DIRECTORY/client-secret`
   and `cookie-secret` (systemd `LoadCredential`), never from arguments.
 - It forwards method, path, query, body (≤ 1 MiB) and headers, and
-  returns the status, headers and body.
-- Every client `X-Forwarded-*` is dropped first; then the login is set
-  as `X-Forwarded-User`.
+  relays the response as it arrives. A WebSocket upgrade becomes a
+  tunnel to the upstream.
+- Every client `X-Forwarded-*` is dropped first (the `_` spellings
+  too); then the login is set as `X-Forwarded-User`.
+- `--upstream` is `HOST:PORT` or `unix:/path`.
+- WebSocket upgrades and POST/PUT/PATCH/DELETE from another origin get
+  403 (`--allow-origin` names the public origin behind a tunnel).
+
+With `--user-map FILE` instead of `--upstream`, each user gets their
+own upstream, for example one service per Unix account:
+
+```
+# login            path prefix  upstream
+alice@example.com  /            unix:/run/app/alice/daemon.sock
+alice@example.com  /stream      unix:/run/app/alice/stream.sock
+bob@example.com    /            unix:/run/app/bob/daemon.sock
+*                  /admin       deny
+```
+
+The longest prefix wins, segment by segment (`deny` wins a tie, `*`
+lines apply to everyone). A login or a path the map does not route gets
+403. Paths are matched after `canonicalPath?`, so `/x/../admin` is 400,
+not a way around `deny`, and they are passed on unchanged. With Google,
+the login is the e-mail address, used only when the provider marks it
+`email_verified`.
+
+In Lean the same proxy is `Proxy.takeover cfg g sessions`, a
+`Server.Takeover`: a hook that the server asks before the WebSocket
+router and the handler, and that answers on the connection itself.
 
 Provider calls use `TlsClient` for `https://`, with a 10 s timeout, and
 the plain `HttpClient` for `http://`, which only a local test IdP

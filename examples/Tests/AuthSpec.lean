@@ -597,6 +597,214 @@ def run (idpPort : UInt16) : IO LSpec := do
 
 end ProxyGroup
 
+/-! ## Group 5 — the streaming proxy: per-login upstreams on Unix sockets
+
+Two upstreams listen on Unix sockets (`serveUnix`), one per user, and
+the proxy runs as a `Server.Takeover` with a routing table. Sessions are
+made directly (the sign-in itself is group 4's), and the proxy is driven
+with raw bytes over TCP, so streaming and the WebSocket tunnel are seen
+as a browser sees them. -/
+
+namespace RelayGroup
+
+open GateGroup
+open LeanTea.Net
+open LeanTea.Auth.Proxy
+
+def proxyPort : UInt16 := 18780
+def dir : System.FilePath := ".lake/build/relay_test"
+
+/-- Answers who it is and what it was sent. -/
+def echoAs (name : String) : Handler := fun req =>
+  pure <| Response.text 200
+    s!"{name}|{req.path}|{(req.header? "x-forwarded-user").getD ""}|{(req.header? "host").getD ""}|{(req.header? "cookie").getD ""}"
+
+/-- `/slow` answers in two parts, 600 ms apart, with no length. -/
+def slow : Server.Takeover := fun req => pure <|
+  if req.path != "/slow" then none else some fun c _ => do
+    c.send "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nfirst\n".toUTF8
+    IO.sleep 600
+    c.send "second\n".toUTF8
+
+/-- WebSocket echo on `/stream`, prefixed with the upstream's name. -/
+def wsEcho (name : String) : WebSocketServer.Router := fun req => pure <|
+  if req.path != "/stream" then none else some (.ok fun conn => do
+    repeat
+      match ← conn.recv with
+      | some (.text s) => conn.sendText s!"{name}:{s}"
+      | some (.binary b) => conn.sendBinary b
+      | none => break)
+
+def dial : IO Transport := do
+  let s ← Std.Async.TCP.Socket.Client.mk
+  (s.connect (.v4 { addr := Server.parseIPv4 "127.0.0.1", port := proxyPort })).block
+  return Transport.ofTcp s
+
+/-- Read until the peer closes or `ms` pass. -/
+partial def readFor (t : Transport) (ms : Nat) : IO ByteArray := do
+  let deadline := (← IO.monoMsNow) + ms
+  let rec go (acc : ByteArray) : IO ByteArray := do
+    match ← t.recv deadline with
+    | some b => go (acc ++ b)
+    | none => return acc
+  go .empty
+
+def text (b : ByteArray) : String := (String.fromUTF8? b).getD ""
+
+/-- One request; the whole answer as text. -/
+def ask (path : String) (cookie : String := "") (extra : String := "") (method := "GET") : IO String := do
+  let t ← dial
+  let c := if cookie.isEmpty then "" else s!"Cookie: session={cookie}; theme=dark\r\n"
+  t.send s!"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{proxyPort}\r\n{c}{extra}\r\n".toUTF8
+  let r := text (← readFor t 3000)
+  t.close
+  return r
+
+def statusOf (r : String) : String := ((r.splitOn " ").getD 1 "").take 3 |>.toString
+def bodyOf (r : String) : String := (r.splitOn "\r\n\r\n").getD 1 ""
+
+def wsHandshake (cookie origin : String) : String :=
+  s!"GET /stream HTTP/1.1\r\nHost: 127.0.0.1:{proxyPort}\r\nUpgrade: websocket\r\n" ++
+  "Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\n" ++
+  "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" ++
+  s!"Origin: {origin}\r\nCookie: session={cookie}\r\n\r\n"
+
+def userOf (login : String) : User :=
+  { provider := "test", login, sub := login, email := login, name := login, picture := "" }
+
+def run : IO LSpec := do
+  IO.FS.createDirAll dir
+  -- A socket path must fit in 108 bytes; a build directory may be deeper.
+  let sockDir ← IO.FS.createTempDir
+  let aSock := sockDir / "alice.sock"
+  let bSock := sockDir / "bob.sock"
+  let _ ← IO.asTask (prio := .dedicated)
+    (Server.serveUnix aSock.toString 0o660 (echoAs "alice") (ws := wsEcho "alice") (takeover := slow))
+  let _ ← IO.asTask (prio := .dedicated)
+    (Server.serveUnix bSock.toString 0o600 (echoAs "bob") (ws := wsEcho "bob"))
+  let table := s!"# who            where     upstream\n" ++
+    s!"alice@example.com  /        unix:{aSock}\n" ++
+    s!"alice@example.com  /stream  unix:{aSock}\n" ++
+    s!"bob@example.com    /        unix:{bSock}\n" ++
+    s!"*                  /mcp     deny\n" ++
+    s!"*                  /health  unix:{bSock}\n"
+  let routes ← IO.ofExcept (parseRoutes table)
+  let cfg ← GateGroup.idpConfig
+  let g : GateConfig := {
+    client := cfg, publicPaths := ["/health"]
+    allowedLogins := ["alice@example.com", "bob@example.com", "carol@example.com"] }
+  let sessions ← signedSessions "relay-test-secret-0123456789abcdef".toUTF8
+  let _ ← IO.asTask (prio := .dedicated) (Server.serveConcurrent proxyPort "127.0.0.1"
+    (fun _ => pure Response.notFound) (takeover := takeover { routes } g sessions))
+  IO.sleep 300
+  let exp := (← wallSec) + 3600
+  let alice ← sessions.create (userOf "alice@example.com") exp
+  let bob ← sessions.create (userOf "bob@example.com") exp
+  let carol ← sessions.create (userOf "carol@example.com") exp
+
+  let aGet ← ask "/api/x" alice "X-Forwarded-User: mallory\r\nX-Forwarded_User: mallory\r\n"
+  let bGet ← ask "/api/x" bob
+  let cGet ← ask "/api/x" carol
+  let mcp ← ask "/mcp" alice
+  let mcpSub ← ask "/mcp/tools" alice
+  let dotted ← ask "/x/../mcp" alice
+  let anonApi ← ask "/api/x"
+  let anonPage ← ask "/desktop"
+  let health ← ask "/health"
+  let post ← ask "/api/x" alice "Origin: https://evil.test\r\nContent-Length: 0\r\n" "POST"
+  let postSame ← ask "/api/x" alice s!"Origin: http://127.0.0.1:{proxyPort}\r\nContent-Length: 0\r\n" "POST"
+  -- Streaming: the first part arrives before the upstream sends the second.
+  let t ← dial
+  let t0 ← IO.monoMsNow
+  t.send s!"GET /slow HTTP/1.1\r\nHost: x\r\nCookie: session={alice}\r\n\r\n".toUTF8
+  let first ← t.recv ((← IO.monoMsNow) + 3000)
+  let firstMs := (← IO.monoMsNow) - t0
+  let rest ← readFor t 3000
+  let allMs := (← IO.monoMsNow) - t0
+  t.close
+  let slowText := text ((first.getD .empty) ++ rest)
+  -- WebSocket through the tunnel.
+  let w ← dial
+  w.send (wsHandshake alice s!"http://127.0.0.1:{proxyPort}").toUTF8
+  let head ← w.recv ((← IO.monoMsNow) + 3000)
+  let mask := ByteArray.mk #[1, 2, 3, 4]
+  w.send (WebSocketFrame.encode WebSocketFrame.opText "hello".toUTF8 (mask := some mask))
+  let reply ← w.recv ((← IO.monoMsNow) + 3000)
+  let echoed := match WebSocketFrame.decode (reply.getD .empty) with
+    | .frame f _ => text f.payload
+    | _ => ""
+  w.close
+  let wsCross ← ask "/stream" alice
+    s!"Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nOrigin: https://evil.test\r\n"
+  let bobWs ← ask "/stream" bob
+    s!"Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nOrigin: http://127.0.0.1:{proxyPort}\r\n"
+  -- The Unix client and the socket's mode.
+  let direct ← HttpClient.requestUnix aSock.toString "GET" "/direct"
+  let modeA ← IO.Process.output { cmd := "stat", args := #["-c", "%a", aSock.toString] }
+  let modeB ← IO.Process.output { cmd := "stat", args := #["-c", "%a", bSock.toString] }
+  -- A file that is not a socket is never replaced.
+  let plain := dir / "plain.sock"
+  IO.FS.writeFile plain "keep"
+  let refused ← try Server.serveUnix plain.toString (handler := echoAs "x"); pure false
+    catch _ => pure true
+  let kept ← IO.FS.readFile plain
+  try IO.FS.removeDirAll sockDir catch _ => pure ()
+  return group "streaming proxy (Unix upstreams, routing table)" [
+    it "alice reaches her upstream; her login replaces the spoofed ones"
+      (statusOf aGet == "200" && bodyOf aGet == "alice|/api/x|alice@example.com|localhost|theme=dark") aGet,
+    it "bob reaches his own upstream" (bodyOf bGet == "bob|/api/x|bob@example.com|localhost|theme=dark") bGet,
+    it "a signed-in login the table does not route gets 403" (statusOf cGet == "403") cGet,
+    it "a deny line refuses its prefix for everyone" (statusOf mcp == "403" && statusOf mcpSub == "403"),
+    it "a dot segment cannot step into a denied prefix (400)" (statusOf dotted == "400") dotted,
+    it "without a session: 401 for the API, a redirect for a page"
+      (statusOf anonApi == "401" && statusOf anonPage == "302"),
+    it "a public path goes to the `*` route with no X-Forwarded-User"
+      (bodyOf health == "bob|/health||localhost|") health,
+    it "a cross-origin POST is 403, a same-origin one passes"
+      (statusOf post == "403" && statusOf postSame == "200") s!"{post} / {postSame}",
+    it s!"a response is relayed as it arrives (first part {firstMs} ms, all {allMs} ms)"
+      (firstMs < 450 && allMs ≥ 550 && hasSubstr slowText "first\n" && hasSubstr slowText "second\n") slowText,
+    it "a WebSocket upgrade becomes a tunnel to the user's upstream"
+      (hasSubstr (text (head.getD .empty)) "101 Switching Protocols" && echoed == "alice:hello") echoed,
+    it "a cross-origin WebSocket upgrade is 403" (statusOf wsCross == "403") wsCross,
+    it "bob's /stream goes to bob's upstream, not alice's" (statusOf bobWs == "101") bobWs,
+    it "HttpClient.requestUnix talks to a serveUnix server"
+      (direct.status == 200 && direct.bodyText == "alice|/direct||localhost|"),
+    it "serveUnix sets the socket's mode"
+      (modeA.stdout.trimAscii.toString == "660" && modeB.stdout.trimAscii.toString == "600"),
+    it "serveUnix does not replace a file that is not a socket" (refused && kept == "keep"),
+    it "prefixes match whole segments" (prefixCovers "/stream" "/stream/x" &&
+      !prefixCovers "/stream" "/streams" && prefixCovers "/" "/anything" && prefixCovers "/a/" "/a"),
+    it "the longest prefix wins, and deny wins a tie"
+      (pick routes (some "alice@example.com") "/stream/x" == some (.unix aSock.toString) &&
+        pick [{ login := "a", pathPrefix := "/x", target := .tcp "127.0.0.1" 1 },
+              { login := "*", pathPrefix := "/x", target := .deny }] (some "a") "/x" == some .deny &&
+        pick routes none "/api" == none),
+    it "a malformed table is refused with its line number"
+      (match parseRoutes "a / unix:/s\nb /x" with | .error e => hasSubstr e "line 2" | .ok _ => false),
+    it "targets: unix needs an absolute path, TCP an IPv4 address"
+      (Target.parse? "unix:rel" == none && Target.parse? "example.com:80" == none &&
+        Target.parse? "http://127.0.0.1:8080/" == some (.tcp "127.0.0.1" 8080))
+  ]
+
+/-- With no `login`, the e-mail address is the user name, but only when
+    the provider says it verified it. -/
+def emailLogin : IO LSpec := do
+  let cfg ← GateGroup.idpConfig
+  let sessions ← signedSessions "relay-test-secret-0123456789abcdef".toUTF8
+  let base : GateConfig := { client := cfg, allowedLogins := ["alice@example.com", "bob@example.com"] }
+  let as (id : String) : GateConfig := { base with client := { cfg with clientId := id } }
+  let inner : Option User → Handler := fun u _ => pure (Response.text 200 ((u.map (·.login)).getD ""))
+  let (_, bobCb) ← signIn (gate (as "verified-client") sessions inner)
+  let (_, eveCb) ← signIn (gate (as "unverified-client") sessions inner)
+  return group "e-mail as the login" [
+    it "a verified address signs in as that address" (bobCb.status == 302 && (cookieSet bobCb "session").isSome),
+    it "an unverified address (claiming an allowed user's) does not sign in"
+      (eveCb.status == 403 && (cookieSet eveCb "session").isNone) (body eveCb)
+  ]
+
+end RelayGroup
+
 /-! ## Group 2 — SAML 2.0 fixture round-trip -/
 
 namespace SamlGroup
@@ -924,7 +1132,9 @@ def main : IO Unit := do
     let s2 ← SamlGroup.run
     let s3 ← GateGroup.run
     let s4 ← ProxyGroup.run port
-    let tree := group "LeanTEA auth integration" [s1, s3, s4, s2]
+    let s5 ← RelayGroup.run
+    let s6 ← RelayGroup.emailLogin
+    let tree := group "LeanTEA auth integration" [s1, s3, s4, s5, s6, s2]
     let code ← lspecIO tree
     let _ ← child.kill
     -- exit explicitly: a returning `main` waits for the in-process servers' tasks

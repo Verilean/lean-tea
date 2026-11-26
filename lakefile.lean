@@ -312,6 +312,22 @@ extern_lib libleantea_fastnet pkg := do
   let wrapperO ← leantea_fastnet_o.fetch
   buildStaticLib (pkg.staticLibDir / name) #[wrapperO]
 
+/-! ## Unix domain sockets — `LeanTea.Net.Unix`
+
+`Std.Async` has no Unix sockets; `c/leantea_unix.c` has blocking POSIX
+`socket`/`bind`/`accept`/`connect`/`recv`/`send` for
+`LeanTea.Net.Server.serveUnix` and the proxy's Unix upstreams. -/
+
+target leantea_unix_o pkg : FilePath := do
+  let oFile := pkg.buildDir / "c" / "leantea_unix.o"
+  let srcJob ← inputTextFile <| pkg.dir / "c" / "leantea_unix.c"
+  buildO oFile srcJob #["-I", (← getLeanIncludeDir).toString] #["-fPIC", "-O2"] "cc"
+
+extern_lib libleantea_unix pkg := do
+  let name := nameToStaticLib "leantea_unix"
+  let wrapperO ← leantea_unix_o.fetch
+  buildStaticLib (pkg.staticLibDir / name) #[wrapperO]
+
 /-! ## TLS client (OpenSSL libssl) FFI — `LEANTEA_TLS=1`
 
 HTTPS transport for `LeanTea.Net.TlsClient`. Opt-in like the crypto FFI:

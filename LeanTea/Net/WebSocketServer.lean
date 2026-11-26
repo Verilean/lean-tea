@@ -1,6 +1,6 @@
-import Std.Async.TCP
 import Std.Sync.Mutex
 import LeanTea.Net.Http
+import LeanTea.Net.Transport
 import LeanTea.Net.WebSocketFrame
 
 /-! # LeanTea.Net.WebSocketServer — RFC 6455 server side
@@ -40,14 +40,13 @@ pusher task, typically); frames never interleave.
 
 Sessions are long-lived, so use `serveConcurrent`: with the sequential
 `serve` loop a session blocks every other connection. Only the default
-(libuv) server supports upgrades; the C `fast`/`reactor` backends do not. -/
+(libuv) server and `serveUnix` support upgrades; the C `fast`/`reactor`
+backends do not. -/
 
 namespace LeanTea.Net.WebSocketServer
 
 open LeanTea.Net.Http
 open LeanTea.Net.WebSocketFrame
-open Std.Async
-open Std.Async.TCP
 
 inductive Message where
   | text (s : String)
@@ -55,7 +54,8 @@ inductive Message where
   deriving Inhabited
 
 structure Conn where
-  socket     : Socket.Client
+  /-- The connection (TCP or Unix socket). -/
+  io         : Transport
   /-- Bytes received but not yet decoded. -/
   buf        : IO.Ref ByteArray
   sendLock   : Std.Mutex Unit
@@ -110,7 +110,7 @@ namespace Conn
 
 private def sendFrame (c : Conn) (opcode : UInt8) (payload : ByteArray) : IO Unit :=
   c.sendLock.atomically do
-    (c.socket.send (encode opcode payload)).block
+    c.io.send (encode opcode payload)
 
 def sendText (c : Conn) (s : String) : IO Unit := c.sendFrame opText s.toUTF8
 def sendBinary (c : Conn) (b : ByteArray) : IO Unit := c.sendFrame opBinary b
@@ -133,7 +133,7 @@ private partial def nextFrame (c : Conn) : IO (Except String (Option Frame)) := 
   | .frame f rest => c.buf.set rest; return .ok (some f)
   | .error e => return .error e
   | .needMore =>
-    match ← (c.socket.recv? 65536).block with
+    match ← c.io.recv 0 with
     | none => return .ok none
     | some chunk => c.buf.modify (· ++ chunk); nextFrame c
 
@@ -203,22 +203,22 @@ def handshake (req : Request) : Except String ByteArray := do
           "Connection: Upgrade\r\n" ++
           s!"Sec-WebSocket-Accept: {acceptKey key}\r\n\r\n").toUTF8
 
-/-- Complete the upgrade on `socket` and run `session`. `leftover` holds
+/-- Complete the upgrade on `io` and run `session`. `leftover` holds
     bytes that arrived after the request head (early frames). Always
-    shuts the socket down afterwards. -/
-def run (socket : Socket.Client) (req : Request) (leftover : ByteArray) (session : Session)
+    closes the connection afterwards. -/
+def run (io : Transport) (req : Request) (leftover : ByteArray) (session : Session)
     (maxMessage : Nat := 16 * 1024 * 1024) : IO Unit := do
   match handshake req with
   | .error e =>
-    (socket.send (Response.toBytes (Response.text 400 s!"websocket: {e}\n"))).block
+    io.send (Response.toBytes (Response.text 400 s!"websocket: {e}\n"))
   | .ok head =>
-    (socket.send head).block
-    let conn : Conn := { socket, request := req, maxMessage,
+    io.send head
+    let conn : Conn := { io, request := req, maxMessage,
                          buf := ← IO.mkRef leftover, sendLock := ← Std.Mutex.new (),
                          closed := ← IO.mkRef false }
     try session conn
     catch e => IO.eprintln s!"websocket session error: {e}"
     conn.close 1000
-  try (socket.shutdown).block catch _ => pure ()
+  io.close
 
 end LeanTea.Net.WebSocketServer
