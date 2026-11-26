@@ -218,6 +218,40 @@ collider bone that `World.leanjs` names.
 
 Shader source fits in ordinary string literals, which may span lines.
 
+## Compiling at build time
+
+The examples above compile at server startup. To compile when the Lean
+code is built instead, use `leanjs_file%` from `LeanJs.Embed`:
+
+```lean
+import LeanJs.Embed
+
+def clientJs : String := leanjs_file% "../web/client.leanjs"
+```
+
+The path is relative to the Lean file, as with `include_str`. The file
+is parsed, its `include`s resolved and `LeanJs.Check` run. A mistake
+there (a parse error, wrong arity, an unknown name) fails `lake build`
+with the file, line and column. The JavaScript ends up as a string
+constant, so nothing is compiled at startup and a broken client never
+ships.
+
+Lake does not track the file by itself. Declare it as an `input_file`
+and add it to the `needs` of the library that embeds it, so that editing
+it triggers a rebuild:
+
+```lean
+input_file clientLeanjs where
+  path := "web/client.leanjs"
+  text := true
+
+lean_lib App where
+  needs := #[clientLeanjs]
+```
+
+Compile at startup instead (as Breezehollow's `--dev` does) when you
+want to edit the file while the server runs.
+
 ## Errors and checks
 
 Parse errors give the line, column, the source line and a caret at
