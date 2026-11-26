@@ -145,7 +145,7 @@ def Target.connect : Target → IO LeanTea.Net.Transport
       | throw (IO.userError s!"not an IPv4 address: {h}")
     let c ← Std.Async.TCP.Socket.Client.mk
     (c.connect (.v4 { addr := a, port := p })).block
-    return LeanTea.Net.Transport.ofTcp c
+    LeanTea.Net.Transport.ofTcp c
   | .unix path => LeanTea.Net.Transport.connectUnix path
   | .deny => throw (IO.userError "deny is not an upstream")
 
@@ -181,10 +181,18 @@ def parseRoutes (text : String) : Except String (List Route) := do
     | _ => throw s!"line {n}: expected LOGIN PATH-PREFIX TARGET"
   return out.toList
 
+/-- A path prefix without its trailing slashes (`/mcp/` is `/mcp`), so
+    the same prefix is the same length whichever way it is written. -/
+def normPrefix (pre : String) : String := Id.run do
+  let mut p := pre
+  while p.length > 1 && p.endsWith "/" do
+    p := (p.dropEnd 1).toString
+  return p
+
 /-- Does `pre` cover `path`, segment-wise (`/stream` covers `/stream` and
     `/stream/x`, not `/streams`)? -/
 def prefixCovers (pre path : String) : Bool :=
-  let p := if pre.length > 1 && pre.endsWith "/" then (pre.dropEnd 1).toString else pre
+  let p := normPrefix pre
   p == "/" || path == p || path.startsWith (p ++ "/")
 
 /-- The target for `login` (`none`: not signed in) at the canonical
@@ -193,7 +201,8 @@ def prefixCovers (pre path : String) : Bool :=
 def pick (routes : List Route) (login : Option String) (path : String) : Option Target :=
   let mine := routes.filter fun r =>
     (r.login == "*" || login.any (·.toLower == r.login.toLower)) && prefixCovers r.pathPrefix path
-  let len (r : Route) := r.pathPrefix.length
+  -- Compared as normalised, as `prefixCovers` matches them.
+  let len (r : Route) := (normPrefix r.pathPrefix).length
   let best := mine.foldl (fun (acc : Option Route) r =>
     match acc with
     | none => some r
@@ -253,6 +262,21 @@ private partial def readHead (up : LeanTea.Net.Transport) (deadline : Nat) (acc 
     | some b => readHead up deadline (acc ++ b)
     | none => return none
 
+/-- Pass interim (1xx) responses on to `client` and return the final
+    head; `101` is final when the request asked for an upgrade. A 1xx is
+    not the answer: the final one follows on the same connection,
+    possibly in the bytes already read. -/
+private partial def finalHead (up client : LeanTea.Net.Transport) (upgrade : Bool) (deadline : Nat)
+    (h : Head) : IO (Option Head) := do
+  if h.status < 100 || h.status ≥ 200 || (upgrade && h.status == 101) then return some h
+  if h.status == 101 then return none  -- switching protocols that were not asked for
+  let name (l : String) := ((l.splitOn ":").headD "").trimAscii.toString.toLower
+  let kept := h.lines.filter fun l => !["connection", "keep-alive"].contains (name l)
+  client.send (h.statusLine ++ "\r\n" ++ String.join (kept.map (· ++ "\r\n")) ++ "\r\n").toUTF8
+  match ← readHead up deadline h.rest with
+  | some next => finalHead up client upgrade deadline next
+  | none => return none
+
 /-- Copy from `src` to `dst` until `src` ends (or `limit` bytes, when
     given). Stops quietly when `dst` goes away. -/
 private partial def pump (src dst : LeanTea.Net.Transport) (limit : Option Nat) : IO Unit := do
@@ -297,8 +321,14 @@ def relay (cfg : Config) (g : GateConfig) (user : Option User) (target : Target)
       head := head ++ s!"Content-Length: {req.body.size}\r\n"
     up.send ((head ++ "\r\n").toUTF8 ++ req.body)
     let deadline := (← IO.monoMsNow) + cfg.headTimeoutMs
-    let some h ← readHead up deadline .empty
+    let some first ← readHead up deadline .empty
       | IO.eprintln s!"auth proxy: upstream {target.describe}: no response head"
+        return ← answer client (Response.text 502 "upstream sent no response\n")
+    -- After an interim response the client has already seen a status
+    -- line, so a broken final one can only end the connection.
+    let some h ← finalHead up client upgrade deadline first
+      | IO.eprintln s!"auth proxy: upstream {target.describe}: no final response"
+        if first.status ≥ 100 && first.status < 200 && !(upgrade && first.status == 101) then return
         return ← answer client (Response.text 502 "upstream sent no response\n")
     let name (l : String) := ((l.splitOn ":").headD "").trimAscii.toString.toLower
     if upgrade && h.status == 101 then
@@ -322,8 +352,7 @@ def relay (cfg : Config) (g : GateConfig) (user : Option User) (target : Target)
       let length := h.lines.findSome? fun l =>
         if name l == "content-length" then ((l.splitOn ":").getD 1 "").trimAscii.toString.toNat?
         else none
-      let noBody := req.method == "HEAD" || h.status == 204 || h.status == 304 ||
-        (100 ≤ h.status && h.status < 200)
+      let noBody := req.method == "HEAD" || h.status == 204 || h.status == 304
       let limit := if noBody then some 0 else length
       let first := match limit with
         | some n => h.rest.extract 0 n

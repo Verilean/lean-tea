@@ -621,16 +621,35 @@ def echoAs (name : String) : Handler := fun req =>
 
 /-- `/slow` answers in two parts, 600 ms apart, with no length. -/
 def slow : Server.Takeover := fun req => pure <|
-  if req.path != "/slow" then none else some fun c _ => do
+  if req.path == "/slow" then some fun c _ => do
     c.send "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nfirst\n".toUTF8
     IO.sleep 600
     c.send "second\n".toUTF8
+  -- An interim 103 before the answer, in one write or two.
+  else if req.path == "/hints" then some fun c _ =>
+    c.send ("HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\n" ++
+      "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").toUTF8
+  else if req.path == "/hints-split" then some fun c _ => do
+    c.send "HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\n".toUTF8
+    IO.sleep 100
+    c.send "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-".toUTF8
+    IO.sleep 100
+    c.send "Length: 2\r\n\r\nok".toUTF8
+  else none
 
 /-- WebSocket echo on `/stream`, prefixed with the upstream's name. -/
 def wsEcho (name : String) : WebSocketServer.Router := fun req => pure <|
   if req.path != "/stream" then none else some (.ok fun conn => do
     repeat
       match ← conn.recv with
+      | some (.text "bye") => break  -- the upstream ends the session
+      | some (.text "spam") =>
+        -- Sends until the other end is gone.
+        repeat
+          let ok ← try conn.sendText "x"; pure true catch _ => pure false
+          if !ok then break
+          IO.sleep 5
+        break
       | some (.text s) => conn.sendText s!"{name}:{s}"
       | some (.binary b) => conn.sendBinary b
       | none => break)
@@ -638,7 +657,7 @@ def wsEcho (name : String) : WebSocketServer.Router := fun req => pure <|
 def dial : IO Transport := do
   let s ← Std.Async.TCP.Socket.Client.mk
   (s.connect (.v4 { addr := Server.parseIPv4 "127.0.0.1", port := proxyPort })).block
-  return Transport.ofTcp s
+  Transport.ofTcp s
 
 /-- Read until the peer closes or `ms` pass. -/
 partial def readFor (t : Transport) (ms : Nat) : IO ByteArray := do
@@ -671,6 +690,75 @@ def wsHandshake (cookie origin : String) : String :=
 
 def userOf (login : String) : User :=
   { provider := "test", login, sub := login, email := login, name := login, picture := "" }
+
+/-- A connected pair of TCP transports on `port` (ours, the server's). -/
+def tcpPair (port : UInt16) : IO (Transport × Transport) := do
+  let srv ← Std.Async.TCP.Socket.Server.mk
+  srv.bind (.v4 { addr := Server.parseIPv4 "127.0.0.1", port })
+  srv.listen 1
+  let acc ← IO.asTask (prio := .dedicated) (srv.accept).block
+  let c ← Std.Async.TCP.Socket.Client.mk
+  (c.connect (.v4 { addr := Server.parseIPv4 "127.0.0.1", port })).block
+  let s ← IO.ofExcept (← IO.wait acc)
+  return (← Transport.ofTcp c, ← Transport.ofTcp s)
+
+/-- A connected pair of Unix transports through a socket in `dir`. -/
+def unixPair (dir : System.FilePath) (name : String) : IO (Transport × Transport) := do
+  let path := (dir / name).toString
+  let l ← Unix.listen path 0o600
+  let acc ← IO.asTask (prio := .dedicated) (Unix.accept l)
+  let c ← Unix.connect path
+  let s ← IO.ofExcept (← IO.wait acc)
+  Unix.close l
+  return (← Transport.ofUnix c, ← Transport.ofUnix s)
+
+/-- How long `t` took to finish, waiting at most `ms` (then `ms`). -/
+def finishesIn (t : Task (Except IO.Error Unit)) (ms : Nat) : IO Nat := do
+  let t0 ← IO.monoMsNow
+  while !(← IO.hasFinished t) && (← IO.monoMsNow) - t0 < ms do IO.sleep 10
+  return (← IO.monoMsNow) - t0
+
+/-- `close` wakes a task waiting in `recv`, on TCP and on a Unix socket:
+    whether the receive was still waiting just before, and how long it
+    took to return after. The peer stays open throughout (dropping its
+    last reference would close it and end the receive by itself). -/
+def closeWakes (sockDir : System.FilePath) : IO ((Bool × Nat) × (Bool × Nat)) := do
+  let (tPeer, tSrv) ← tcpPair 18781
+  let (uPeer, uSrv) ← unixPair sockDir "pair.sock"
+  let measure (peer t : Transport) : IO (Bool × Nat) := do
+    let r ← IO.asTask (prio := .dedicated) (do let _ ← t.recv 0; pure ())
+    IO.sleep 100
+    let waiting := !(← IO.hasFinished r)
+    let t0 ← IO.monoMsNow
+    t.close
+    let _ ← finishesIn r 3000
+    let ms := (← IO.monoMsNow) - t0
+    peer.close
+    return (waiting, ms)
+  return (← measure tPeer tSrv, ← measure uPeer uSrv)
+
+def upgradeRequest : Request := {
+  method := "GET", path := "/stream", query := "", body := .empty, version := "HTTP/1.1"
+  headers := #[("host", "127.0.0.1"), ("upgrade", "websocket"), ("connection", "Upgrade"),
+               ("sec-websocket-version", "13"), ("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")] }
+
+/-- Run `relay` for a WebSocket upgrade on `srv`, read the 101 on `ours`,
+    then `act`; how long the relay took to end after that (at most 3 s). -/
+def tunnelEnds (g : GateConfig) (aSock : System.FilePath) (ours srv : Transport)
+    (act : IO Unit) : IO (Bool × Nat) := do
+  let r ← IO.asTask (prio := .dedicated)
+    (relay { routes := [] } g (some (userOf "alice@example.com")) (.unix aSock.toString)
+      upgradeRequest srv .empty)
+  let head ← ours.recv ((← IO.monoMsNow) + 3000)
+  let ok := (String.fromUTF8? (head.getD .empty)).any (fun h => (h.splitOn "101").length > 1)
+  act
+  let ms ← finishesIn r 3000
+  -- Our end stays referenced until now, so it is not closed by being freed.
+  ours.close
+  return (ok, ms)
+
+def frame (s : String) : ByteArray :=
+  WebSocketFrame.encode WebSocketFrame.opText s.toUTF8 (mask := some (ByteArray.mk #[1, 2, 3, 4]))
 
 def run : IO LSpec := do
   IO.FS.createDirAll dir
@@ -748,6 +836,20 @@ def run : IO LSpec := do
   let refused ← try Server.serveUnix plain.toString (handler := echoAs "x"); pure false
     catch _ => pure true
   let kept ← IO.FS.readFile plain
+  -- How the tunnel ends.
+  let ((tcpWaiting, tcpWake), (unixWaiting, unixWake)) ← closeWakes sockDir
+  let (o1, p1) ← tcpPair 18782
+  let (up1, upFirst) ← tunnelEnds g aSock o1 p1 (o1.send (frame "bye"))
+  let (o2, p2) ← tcpPair 18783
+  let (up2, clientFirst) ← tunnelEnds g aSock o2 p2 o2.close
+  let (o3, p3) ← unixPair sockDir "spam.sock"
+  let (up3, sendFails) ← tunnelEnds g aSock o3 p3 do
+    o3.send (frame "spam")
+    let _ ← o3.recv ((← IO.monoMsNow) + 3000)
+    o3.close
+  -- Interim responses.
+  let hints ← ask "/hints" alice
+  let hintsSplit ← ask "/hints-split" alice
   try IO.FS.removeDirAll sockDir catch _ => pure ()
   return group "streaming proxy (Unix upstreams, routing table)" [
     it "alice reaches her upstream; her login replaces the spoofed ones"
@@ -782,6 +884,22 @@ def run : IO LSpec := do
         pick routes none "/api" == none),
     it "a malformed table is refused with its line number"
       (match parseRoutes "a / unix:/s\nb /x" with | .error e => hasSubstr e "line 2" | .ok _ => false),
+    it s!"close wakes a waiting recv (TCP {tcpWake} ms, Unix {unixWake} ms)"
+      (tcpWaiting && unixWaiting && tcpWake < 500 && unixWake < 500),
+    it s!"the tunnel ends when the upstream closes first ({upFirst} ms)" (up1 && upFirst < 2000),
+    it s!"the tunnel ends when the client closes first ({clientFirst} ms)" (up2 && clientFirst < 2000),
+    it s!"the tunnel ends when sending to the client fails ({sendFails} ms)" (up3 && sendFails < 2000),
+    it "an interim 103 is passed on and the final answer follows (one write)"
+      (hasSubstr hints "103 Early Hints" && hasSubstr hints "HTTP/1.1 200 OK" &&
+        hints.endsWith "\r\n\r\nok") hints,
+    it "interim 103 and 100, then the answer, over several writes"
+      (hasSubstr hintsSplit "103 Early Hints" && hasSubstr hintsSplit "100 Continue" &&
+        hasSubstr hintsSplit "HTTP/1.1 200 OK" && hintsSplit.endsWith "\r\n\r\nok") hintsSplit,
+    it "a trailing slash does not let a route beat deny on the same prefix"
+      (let allow : Route := { login := "alice", pathPrefix := "/mcp/", target := .tcp "127.0.0.1" 1234 }
+       let deny : Route := { login := "*", pathPrefix := "/mcp", target := .deny }
+       [[deny, allow], [allow, deny]].all fun rs =>
+         ["/mcp", "/mcp/", "/mcp/tools"].all fun p => pick rs (some "alice") p == some .deny),
     it "targets: unix needs an absolute path, TCP an IPv4 address"
       (Target.parse? "unix:rel" == none && Target.parse? "example.com:80" == none &&
         Target.parse? "http://127.0.0.1:8080/" == some (.tcp "127.0.0.1" 8080))

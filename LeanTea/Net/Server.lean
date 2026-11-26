@@ -202,7 +202,7 @@ partial def serveLoop (server : Socket.Server) (handler : Handler)
     (ws : WebSocketServer.Router := WebSocketServer.Router.none)
     (requestTimeoutMs : Nat := 30000) (takeover : Takeover := Takeover.none) : IO Unit := do
   let client ← (server.accept).block
-  handleConn handler ws takeover (Transport.ofTcp client) requestTimeoutMs
+  handleConn handler ws takeover (← Transport.ofTcp client) requestTimeoutMs
   serveLoop server handler ws requestTimeoutMs takeover
 
 /-- Concurrent variant: each accepted connection is handled in its
@@ -216,7 +216,8 @@ partial def serveLoopConcurrent (server : Socket.Server) (handler : Handler)
     (ws : WebSocketServer.Router := WebSocketServer.Router.none)
     (requestTimeoutMs : Nat := 30000) (takeover : Takeover := Takeover.none) : IO Unit := do
   let client ← (server.accept).block
-  let _ ← IO.asTask (handleConn handler ws takeover (Transport.ofTcp client) requestTimeoutMs)
+  let conn ← Transport.ofTcp client
+  let _ ← IO.asTask (handleConn handler ws takeover conn requestTimeoutMs)
   serveLoopConcurrent server handler ws requestTimeoutMs takeover
 
 /-- A dotted IPv4 address (four decimal octets, each 0–255), or

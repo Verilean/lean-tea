@@ -1,5 +1,6 @@
 import Std.Async.TCP
 import Std.Async.Timer
+import Std.Sync.CancellationToken
 import LeanTea.Net.Unix
 
 /-! # LeanTea.Net.Transport — one connected byte stream, TCP or Unix
@@ -27,23 +28,40 @@ structure Transport where
 
 namespace Transport
 
-/-- A TCP connection accepted or opened through `Std.Async.TCP`. -/
-def ofTcp (client : Socket.Client) : Transport where
-  recv deadline := do
-    try
-      if deadline == 0 then return ← (client.recv? 65536).block
-      let now ← IO.monoMsNow
-      if now ≥ deadline then return none
-      let wait : Async (Option ByteArray) := do
-        let timer ← Selector.sleep (Std.Time.Millisecond.Offset.ofNat (deadline - now))
-        -- The selector cancels whichever of the two loses.
-        Selectable.one #[.case (client.recvSelector 65536) pure,
-                         .case timer (fun _ => pure none)]
-      wait.block
-    catch _ => return none
-  send b := (client.send b).block
-  shutdownWrite := try (client.shutdown).block catch _ => pure ()
-  close := try (client.shutdown).block catch _ => pure ()
+/-- A TCP connection accepted or opened through `Std.Async.TCP`.
+
+    `close` cancels a token every `recv` also waits on, so a task waiting
+    to receive returns `none` at once instead of waiting for the peer: a
+    relay that closes both ends when one side finishes relies on it.
+    (`Std.Async.TCP` has no close; the shutdown ends sending, and the
+    socket itself goes when it is no longer referenced.) -/
+def ofTcp (client : Socket.Client) : IO Transport := do
+  let closed ← Std.CancellationToken.new
+  return {
+    recv := fun deadline => do
+      if ← closed.isCancelled then return none
+      try
+        let now ← IO.monoMsNow
+        if deadline != 0 && now ≥ deadline then return none
+        let wait : Async (Option ByteArray) := do
+          let stop := Selectable.case closed.selector (fun _ => pure none)
+          let data := Selectable.case (client.recvSelector 65536) pure
+          if deadline == 0 then
+            Selectable.one #[data, stop]
+          else
+            let timer ← Selector.sleep (Std.Time.Millisecond.Offset.ofNat (deadline - now))
+            -- The selector cancels whichever cases lose.
+            Selectable.one #[data, stop, .case timer (fun _ => pure none)]
+        wait.block
+      catch _ => return none
+    send := fun b => do
+      if ← closed.isCancelled then throw (IO.userError "send: connection closed")
+      (client.send b).block
+    shutdownWrite := try (client.shutdown).block catch _ => pure ()
+    close := do
+      if ← closed.isCancelled then return
+      closed.cancel
+      try (client.shutdown).block catch _ => pure () }
 
 /-- State of a Unix descriptor shared by `recv`, `send` and `close`. -/
 private structure FdState where

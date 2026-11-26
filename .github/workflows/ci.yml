@@ -107,7 +107,7 @@ jobs:
       - name: Pure subsystems (Template + Crypto + JWT + SAML + Auth.Security, ~36 LSpec assertions)
         run: ./.lake/build/bin/pure_spec
 
-      - name: Auth integration (OAuth2 round-trip, OAuth2.gate, auth_proxy, per-user streaming proxy over Unix sockets, TLS timeout, SAML fixtures, ~147 LSpec assertions)
+      - name: Auth integration (OAuth2 round-trip, OAuth2.gate, auth_proxy, per-user streaming proxy over Unix sockets, TLS timeout, SAML fixtures, ~154 LSpec assertions)
         run: ./.lake/build/bin/auth_spec
 
       - name: Valkey driver (RESP round-trip against the `services:` valkey container, 8 LSpec assertions)
