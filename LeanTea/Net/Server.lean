@@ -1,7 +1,7 @@
 import LeanTea.Net.Http
 import LeanTea.Net.WebSocketServer
 import LeanTea.Net.Transport
-import LeanTea.Net.Unix
+import LeanTea.Net.Sock
 import Std.Async.TCP
 import Std.Net
 import Std.Async.Timer
@@ -28,7 +28,10 @@ wins on trivial handlers — the task-spawn overhead exceeds the
 handler cost.
 
 `serveUnix` serves the same handler and WebSocket router on a Unix
-domain socket, one dedicated thread per connection.
+domain socket, and `serveThreads` on TCP, both with plain descriptors
+(`LeanTea.Net.Sock`) and one dedicated thread per connection. Their
+connections can be closed while a send waits for a client that stopped
+reading, which libuv sockets cannot do; `auth_proxy` uses `serveThreads`.
 
 Before the WebSocket router and the handler, an optional `Takeover`
 can claim a request and answer on the connection itself, for as long
@@ -291,6 +294,26 @@ def serve (port : UInt16 := 8001) (host : String := "0.0.0.0")
   IO.eprintln s!"serving (keep-alive) on http://{host}:{port}/"
   serveLoop server handler ws requestTimeoutMs takeover
 
+/-- Accept on a listening descriptor forever, each connection on its own
+    dedicated thread. -/
+private partial def serveFd (listener : UInt32) (handler : Handler) (ws : WebSocketServer.Router)
+    (requestTimeoutMs : Nat) (takeover : Takeover) : IO Unit := do
+  let rec loop : IO Unit := do
+    match ← (Sock.accept listener).toBaseIO with
+    | .ok fd =>
+      let conn ← Transport.ofFd fd
+      let _ ← IO.asTask (prio := .dedicated) (handleConn handler ws takeover conn requestTimeoutMs)
+    | .error e =>
+      -- Out of descriptors and the like: wait a little rather than spin.
+      IO.eprintln s!"accept: {e}"
+      IO.sleep 100
+    loop
+  -- `accept` blocks its thread, so the loop runs on one of its own.
+  let t ← IO.asTask (prio := .dedicated) loop
+  match t.get with
+  | .ok () => pure ()
+  | .error e => throw e
+
 /-- `serveConcurrent` on a Unix domain socket at `path`, created with file
     mode `mode` (who may connect is decided by the file's owner, group and
     mode, and by the directory it is in). A stale socket at `path` is
@@ -299,25 +322,24 @@ def serve (port : UInt16 := 8001) (host : String := "0.0.0.0")
 
     `requestTimeoutMs` (0 = the default 30 s) bounds how long each request
     may take to arrive, as on the TCP servers. -/
-partial def serveUnix (path : String) (mode : UInt32 := 0o660)
+def serveUnix (path : String) (mode : UInt32 := 0o660)
     (handler : Handler) (ws : WebSocketServer.Router := WebSocketServer.Router.none)
     (requestTimeoutMs : Nat := 30000) (takeover : Takeover := Takeover.none) : IO Unit := do
-  let listener ← Unix.listen path mode
+  let listener ← Sock.listenUnix path mode
   IO.eprintln s!"serving (concurrent, keep-alive) on unix:{path}"
-  let rec loop : IO Unit := do
-    match ← (Unix.accept listener).toBaseIO with
-    | .ok fd =>
-      let conn ← Transport.ofUnix fd
-      let _ ← IO.asTask (prio := .dedicated) (handleConn handler ws takeover conn requestTimeoutMs)
-    | .error e =>
-      -- Out of descriptors and the like: wait a little rather than spin.
-      IO.eprintln s!"unix accept: {e}"
-      IO.sleep 100
-    loop
-  -- `accept` blocks its thread, so the loop runs on one of its own.
-  let t ← IO.asTask (prio := .dedicated) loop
-  match t.get with
-  | .ok () => pure ()
-  | .error e => throw e
+  serveFd listener handler ws requestTimeoutMs takeover
+
+/-- `serveConcurrent` with plain TCP descriptors and one dedicated thread
+    per connection instead of libuv. Closing a connection then also ends a
+    send that waits for a client that stopped reading, which a relay
+    (`LeanTea.Auth.Proxy.takeover`) needs. `host` is an IPv4 address or
+    `localhost`. -/
+def serveThreads (port : UInt16 := 8001) (host : String := "127.0.0.1")
+    (handler : Handler) (ws : WebSocketServer.Router := WebSocketServer.Router.none)
+    (requestTimeoutMs : Nat := 30000) (takeover : Takeover := Takeover.none) : IO Unit := do
+  let _ ← listenAddress host  -- refuses anything but an IPv4 address
+  let listener ← Sock.listenTcp (if host == "localhost" then "127.0.0.1" else host) port
+  IO.eprintln s!"serving (threads, keep-alive) on http://{host}:{port}/"
+  serveFd listener handler ws requestTimeoutMs takeover
 
 end LeanTea.Net.Server

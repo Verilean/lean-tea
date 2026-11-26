@@ -33,7 +33,14 @@ Two ways to run it:
   each signed-in login, and each path prefix, goes to its own upstream,
   TCP or Unix socket. Responses are relayed as they arrive, and a
   WebSocket upgrade becomes a byte tunnel. Logins and paths the table
-  does not route get 403. `auth_proxy --user-map` runs this. -/
+  does not route get 403. `auth_proxy` runs this.
+
+Serve `takeover` with `Server.serveThreads` or `serveUnix`, not the
+libuv servers: on a libuv connection a send to a client that stopped
+reading cannot be interrupted, so such a client would hold the relay
+and its upstream connection until it reads or goes away. On descriptors
+a send left unread for `sendTimeoutMs` fails, and the end of either
+direction closes both. -/
 
 namespace LeanTea.Auth.Proxy
 
@@ -138,14 +145,10 @@ def Target.describe : Target → String
   | .unix p => s!"unix:{p}"
   | .deny => "deny"
 
-/-- Open a connection to the target (not `deny`). -/
+/-- Open a connection to the target (not `deny`), as a descriptor so a
+    blocked send can be ended. -/
 def Target.connect : Target → IO LeanTea.Net.Transport
-  | .tcp h p => do
-    let some a := LeanTea.Net.Server.parseIPv4? h
-      | throw (IO.userError s!"not an IPv4 address: {h}")
-    let c ← Std.Async.TCP.Socket.Client.mk
-    (c.connect (.v4 { addr := a, port := p })).block
-    LeanTea.Net.Transport.ofTcp c
+  | .tcp h p => LeanTea.Net.Transport.connectTcp (if h == "localhost" then "127.0.0.1" else h) p
   | .unix path => LeanTea.Net.Transport.connectUnix path
   | .deny => throw (IO.userError "deny is not an upstream")
 
@@ -220,6 +223,9 @@ structure Config where
   origins       : List String := []
   /-- How long the upstream may take to send its response head. -/
   headTimeoutMs : Nat := 30000
+  /-- How long either side may leave the relay's data unread before the
+      relay gives up on it (0: forever). -/
+  sendTimeoutMs : Nat := 60000
 
 /-- Is the request's `Origin` (if any) allowed? -/
 def originOk (cfg : Config) (g : GateConfig) (req : Request) : Bool :=
@@ -310,6 +316,8 @@ def relay (cfg : Config) (g : GateConfig) (user : Option User) (target : Target)
   let up ← try target.connect catch e =>
     IO.eprintln s!"auth proxy: upstream {target.describe}: {e}"
     return ← answer client (Response.text 502 "upstream unavailable\n")
+  client.setSendTimeout cfg.sendTimeoutMs
+  up.setSendTimeout cfg.sendTimeoutMs
   try
     let path := if req.query.isEmpty then req.path else req.path ++ "?" ++ req.query
     let mut head := s!"{req.method} {path} HTTP/1.1\r\nHost: {target.hostHeader}\r\n"
@@ -336,11 +344,14 @@ def relay (cfg : Config) (g : GateConfig) (user : Option User) (target : Target)
       client.send (("HTTP/1.1 101 Switching Protocols\r\n" ++
         String.join (h.lines.map (· ++ "\r\n")) ++ "\r\n").toUTF8 ++ h.rest)
       if leftover.size > 0 then up.send leftover
-      -- Whichever side ends first, closing the other end wakes the
-      -- task still waiting on it.
+      -- Whichever direction ends first (end of stream, an error, or a
+      -- send the other side left unread past the timeout) closes both
+      -- connections, which wakes the other direction whether it waits
+      -- to receive or to send.
       let back ← IO.asTask (prio := .dedicated) do
         pump client up none
         up.close
+        client.close
       pump up client none
       up.close
       client.close

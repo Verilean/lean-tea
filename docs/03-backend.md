@@ -112,6 +112,11 @@ owner, group and mode and the directory it is in, so a service behind
 a proxy needs no token and no free TCP port. `HttpClient.requestUnix`
 is the matching client.
 
+`serveThreads port host handler` is the same on TCP: plain descriptors
+and a thread per connection instead of libuv. Closing such a connection
+also ends a send waiting for a client that stopped reading, which a
+libuv socket cannot do; relays (the proxy below) need it.
+
 The matching client is `LeanTea.Net.HttpClient` — pure Lean HTTP/1.1
 with `Content-Length` honouring (no curl shell-out, no node bridge).
 Used by every MCP server and the LLM streaming client.
@@ -286,6 +291,9 @@ the login is the e-mail address, used only when the provider marks it
 In Lean the same proxy is `Proxy.takeover cfg g sessions`, a
 `Server.Takeover`: a hook that the server asks before the WebSocket
 router and the handler, and that answers on the connection itself.
+Serve it with `serveThreads` or `serveUnix`. Data either side leaves
+unread for `sendTimeoutMs` (default 60 s) ends the relay, and the end
+of either direction of a tunnel closes both connections.
 
 Provider calls use `TlsClient` for `https://`, with a 10 s timeout, and
 the plain `HttpClient` for `http://`, which only a local test IdP

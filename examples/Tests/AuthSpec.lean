@@ -625,6 +625,13 @@ def slow : Server.Takeover := fun req => pure <|
     c.send "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nfirst\n".toUTF8
     IO.sleep 600
     c.send "second\n".toUTF8
+  -- 64 MiB, more than any socket buffer holds, until the reader goes.
+  else if req.path == "/flood" then some fun c _ => do
+    c.send s!"HTTP/1.1 200 OK\r\nContent-Length: {64 * 1024 * 1024}\r\n\r\n".toUTF8
+    let chunk := ByteArray.mk (Array.replicate 65536 0x62)
+    for _ in [:1024] do
+      let ok ← try c.send chunk; pure true catch _ => pure false
+      if !ok then break
   -- An interim 103 before the answer, in one write or two.
   else if req.path == "/hints" then some fun c _ =>
     c.send ("HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\n" ++
@@ -639,16 +646,22 @@ def slow : Server.Takeover := fun req => pure <|
 
 /-- WebSocket echo on `/stream`, prefixed with the upstream's name. -/
 def wsEcho (name : String) : WebSocketServer.Router := fun req => pure <|
-  if req.path != "/stream" then none else some (.ok fun conn => do
+  -- `/flood-ws`: 64 KiB frames from the start, until the other end goes.
+  if req.path == "/flood-ws" then some (.ok fun conn => do
+    let chunk := ByteArray.mk (Array.replicate 65536 0x78)
+    repeat
+      let ok ← try conn.sendBinary chunk; pure true catch _ => pure false
+      if !ok then break)
+  else if req.path != "/stream" then none else some (.ok fun conn => do
     repeat
       match ← conn.recv with
       | some (.text "bye") => break  -- the upstream ends the session
       | some (.text "spam") =>
-        -- Sends until the other end is gone.
+        -- 64 KiB frames, as fast as they go, until the other end is gone.
+        let chunk := ByteArray.mk (Array.replicate 65536 0x78)
         repeat
-          let ok ← try conn.sendText "x"; pure true catch _ => pure false
+          let ok ← try conn.sendBinary chunk; pure true catch _ => pure false
           if !ok then break
-          IO.sleep 5
         break
       | some (.text s) => conn.sendText s!"{name}:{s}"
       | some (.binary b) => conn.sendBinary b
@@ -705,18 +718,51 @@ def tcpPair (port : UInt16) : IO (Transport × Transport) := do
 /-- A connected pair of Unix transports through a socket in `dir`. -/
 def unixPair (dir : System.FilePath) (name : String) : IO (Transport × Transport) := do
   let path := (dir / name).toString
-  let l ← Unix.listen path 0o600
-  let acc ← IO.asTask (prio := .dedicated) (Unix.accept l)
-  let c ← Unix.connect path
+  let l ← Sock.listenUnix path 0o600
+  let acc ← IO.asTask (prio := .dedicated) (Sock.accept l)
+  let c ← Sock.connectUnix path
   let s ← IO.ofExcept (← IO.wait acc)
-  Unix.close l
-  return (← Transport.ofUnix c, ← Transport.ofUnix s)
+  Sock.close l
+  return (← Transport.ofFd c, ← Transport.ofFd s)
 
 /-- How long `t` took to finish, waiting at most `ms` (then `ms`). -/
 def finishesIn (t : Task (Except IO.Error Unit)) (ms : Nat) : IO Nat := do
   let t0 ← IO.monoMsNow
   while !(← IO.hasFinished t) && (← IO.monoMsNow) - t0 < ms do IO.sleep 10
   return (← IO.monoMsNow) - t0
+
+/-- A connected pair of TCP descriptor transports on `port`, as
+    `serveThreads` and the proxy's upstreams use. -/
+def fdTcpPair (port : UInt16) : IO (Transport × Transport) := do
+  let l ← Sock.listenTcp "127.0.0.1" port
+  let acc ← IO.asTask (prio := .dedicated) (Sock.accept l)
+  let c ← Sock.connectTcp "127.0.0.1" port
+  let s ← IO.ofExcept (← IO.wait acc)
+  Sock.close l
+  return (← Transport.ofFd c, ← Transport.ofFd s)
+
+/-- `srv` sends 8 MiB to a peer that reads nothing, so the send blocks;
+    then `srv` is closed. Whether the send was still blocked, how long
+    `close` took, and how long the send took to end after it (at most
+    3 s). The peer reads only afterwards, to clean up. -/
+def blockedSend (peer srv : Transport) : IO (Bool × Nat × Nat) := do
+  let big := ByteArray.mk (Array.replicate (8 * 1024 * 1024) 0x61)
+  let t ← IO.asTask (prio := .dedicated) (srv.send big)
+  IO.sleep 300
+  let blocked := !(← IO.hasFinished t)
+  -- `close` runs in its own task, so a close that waits does not hang
+  -- the spec: it shows up as taking the whole 3 s.
+  let c ← IO.asTask (prio := .dedicated) srv.close
+  let closeMs ← finishesIn c 3000
+  let ms ← finishesIn t 3000
+  -- Clean up: read what is left so nothing stays pending.
+  let drain ← IO.asTask (prio := .dedicated) do
+    let deadline := (← IO.monoMsNow) + 3000
+    while (← peer.recv deadline).isSome do pure ()
+  let _ ← finishesIn t 5000
+  let _ ← finishesIn drain 5000
+  peer.close
+  return (blocked, closeMs, ms)
 
 /-- `close` wakes a task waiting in `recv`, on TCP and on a Unix socket:
     whether the receive was still waiting just before, and how long it
@@ -742,15 +788,16 @@ def upgradeRequest : Request := {
   headers := #[("host", "127.0.0.1"), ("upgrade", "websocket"), ("connection", "Upgrade"),
                ("sec-websocket-version", "13"), ("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")] }
 
-/-- Run `relay` for a WebSocket upgrade on `srv`, read the 101 on `ours`,
-    then `act`; how long the relay took to end after that (at most 3 s). -/
+/-- Run `relay` for `req` (a WebSocket upgrade by default) on `srv`, read
+    the response head on `ours`, then `act`; whether the head was `expect`,
+    and how long the relay took to end after `act` (at most 3 s). -/
 def tunnelEnds (g : GateConfig) (aSock : System.FilePath) (ours srv : Transport)
-    (act : IO Unit) : IO (Bool × Nat) := do
+    (act : IO Unit) (cfg : LeanTea.Auth.Proxy.Config := { routes := [] }) (req := upgradeRequest)
+    (expect := "101") : IO (Bool × Nat) := do
   let r ← IO.asTask (prio := .dedicated)
-    (relay { routes := [] } g (some (userOf "alice@example.com")) (.unix aSock.toString)
-      upgradeRequest srv .empty)
+    (relay cfg g (some (userOf "alice@example.com")) (.unix aSock.toString) req srv .empty)
   let head ← ours.recv ((← IO.monoMsNow) + 3000)
-  let ok := (String.fromUTF8? (head.getD .empty)).any (fun h => (h.splitOn "101").length > 1)
+  let ok := (String.fromUTF8? (head.getD .empty)).any (fun h => (h.splitOn s!" {expect} ").length > 1)
   act
   let ms ← finishesIn r 3000
   -- Our end stays referenced until now, so it is not closed by being freed.
@@ -782,7 +829,7 @@ def run : IO LSpec := do
     client := cfg, publicPaths := ["/health"]
     allowedLogins := ["alice@example.com", "bob@example.com", "carol@example.com"] }
   let sessions ← signedSessions "relay-test-secret-0123456789abcdef".toUTF8
-  let _ ← IO.asTask (prio := .dedicated) (Server.serveConcurrent proxyPort "127.0.0.1"
+  let _ ← IO.asTask (prio := .dedicated) (Server.serveThreads proxyPort "127.0.0.1"
     (fun _ => pure Response.notFound) (takeover := takeover { routes } g sessions))
   IO.sleep 300
   let exp := (← wallSec) + 3600
@@ -847,6 +894,44 @@ def run : IO LSpec := do
     o3.send (frame "spam")
     let _ ← o3.recv ((← IO.monoMsNow) + 3000)
     o3.close
+  -- Backpressure: a peer that keeps the connection but reads nothing.
+  let (fdPeer, fdSrv) ← fdTcpPair 18784
+  let (fdBlocked, fdCloseMs, fdSendMs) ← blockedSend fdPeer fdSrv
+  let (uvPeer, uvSrv) ← tcpPair 18785
+  let (uvBlocked, uvCloseMs, _) ← blockedSend uvPeer uvSrv
+  let quick : LeanTea.Auth.Proxy.Config := { routes := [], sendTimeoutMs := 300 }
+  let (o4, p4) ← fdTcpPair 18786
+  let (up4, stalledTunnel) ← tunnelEnds g aSock o4 p4 (o4.send (frame "spam")) quick
+  let (o5, p5) ← fdTcpPair 18787
+  let floodReq : Request := { method := "GET", path := "/flood", query := "", body := .empty,
+                              headers := #[("host", "127.0.0.1")], version := "HTTP/1.1" }
+  let (up5, stalledStream) ← tunnelEnds g aSock o5 p5 (pure ()) quick floodReq "200"
+  -- No send timeout, and a client that never takes data in: its `send`
+  -- blocks until the connection is closed. When the client stops sending,
+  -- only the end of that direction can free the other.
+  let halfShut ← IO.Promise.new
+  let shut ← IO.Promise.new
+  let sends ← IO.mkRef 0
+  let stuck : Transport := {
+    recv := fun _ => do
+      let _ ← IO.wait halfShut.result?
+      return none
+    send := fun _ => do
+      -- The 101 goes through; every later send waits for `close`.
+      if (← sends.modifyGet fun n => (n, n + 1)) == 0 then return
+      let _ ← IO.wait shut.result?
+      throw (IO.userError "send: connection closed")
+    shutdownWrite := pure ()
+    close := do halfShut.resolve (); shut.resolve () }
+  let r6 ← IO.asTask (prio := .dedicated)
+    (relay { routes := [], sendTimeoutMs := 0 } g (some (userOf "alice@example.com"))
+      (.unix aSock.toString) { upgradeRequest with path := "/flood-ws" } stuck .empty)
+  IO.sleep 300
+  let stuckBefore := !(← IO.hasFinished r6) && (← sends.get) ≥ 2
+  halfShut.resolve ()
+  let halfClosed ← finishesIn r6 3000
+  shut.resolve ()  -- clean up whatever is left
+  let up6 := stuckBefore
   -- Interim responses.
   let hints ← ask "/hints" alice
   let hintsSplit ← ask "/hints-split" alice
@@ -889,6 +974,15 @@ def run : IO LSpec := do
     it s!"the tunnel ends when the upstream closes first ({upFirst} ms)" (up1 && upFirst < 2000),
     it s!"the tunnel ends when the client closes first ({clientFirst} ms)" (up2 && clientFirst < 2000),
     it s!"the tunnel ends when sending to the client fails ({sendFails} ms)" (up3 && sendFails < 2000),
+    it s!"close ends a send blocked on a peer that reads nothing (close {fdCloseMs} ms, send {fdSendMs} ms)"
+      (fdBlocked && fdCloseMs < 300 && fdSendMs < 1000),
+    it s!"a libuv close does not wait for a blocked send ({uvCloseMs} ms)" (uvBlocked && uvCloseMs < 300),
+    it s!"a tunnel to a client that reads nothing ends after the send timeout ({stalledTunnel} ms)"
+      (up4 && stalledTunnel < 2500),
+    it s!"a streamed response to a client that reads nothing ends too ({stalledStream} ms)"
+      (up5 && stalledStream < 2500),
+    it s!"with no send timeout, a client that stops sending ends the tunnel though it reads nothing ({halfClosed} ms)"
+      (up6 && halfClosed < 2000),
     it "an interim 103 is passed on and the final answer follows (one write)"
       (hasSubstr hints "103 Early Hints" && hasSubstr hints "HTTP/1.1 200 OK" &&
         hints.endsWith "\r\n\r\nok") hints,

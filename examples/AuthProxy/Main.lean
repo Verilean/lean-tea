@@ -221,7 +221,7 @@ def run (args : List String) : IO Unit := do
   IO.eprintln s!"auth_proxy: {o.provider} sign-in for {allowed}, {routes.length} route(s)"
   -- Every request is answered by the proxy's takeover; the handler is
   -- never reached.
-  LeanTea.Net.Server.serveConcurrent lPort lHost (fun _ => pure LeanTea.Net.Http.Response.notFound)
+  LeanTea.Net.Server.serveThreads lPort lHost (fun _ => pure LeanTea.Net.Http.Response.notFound)
     (takeover := LeanTea.Auth.Proxy.takeover cfg g sessions)
 
 def main (args : List String) : IO UInt32 := do
