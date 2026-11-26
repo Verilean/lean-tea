@@ -74,7 +74,16 @@ def ofTcp (client : Socket.Client) : IO Transport := do
       -- Started, not awaited: it completes after queued sends.
       try discard client.native.shutdown catch _ => pure () }
 
-/-- State of a Unix descriptor shared by `recv`, `send` and `close`. -/
+/-- The descriptor calls `ofFd` makes; tests replace them to control the
+    order in which concurrent calls finish. -/
+structure FdOps where
+  recv           : UInt32 → UInt32 → UInt32 → IO ByteArray := fun fd n t => Sock.recv fd n t
+  send           : UInt32 → ByteArray → IO Unit := fun fd b => Sock.send fd b
+  shutdown       : UInt32 → UInt8 → IO Unit := fun fd how => Sock.shutdown fd how
+  close          : UInt32 → IO Unit := fun fd => Sock.close fd
+  setSendTimeout : UInt32 → UInt32 → IO Unit := fun fd ms => Sock.setSendTimeout fd ms
+
+/-- State of a descriptor shared by every call on it and `close`. -/
 private structure FdState where
   closed   : Bool := false
   users    : Nat := 0
@@ -85,16 +94,18 @@ private structure FdState where
     `close` may run while another task waits in `recv` or `send` (a relay
     closes both ends when one side finishes). It shuts the socket down,
     which wakes that task, and the descriptor is released only once no
-    task is inside `recv` or `send`: a descriptor number closed under a
-    waiting task could be reused by another connection. -/
-def ofFd (fd : UInt32) (peerUid : Option Nat := none) : IO Transport := do
+    task is inside `recv` or `send`, and `close` itself has finished its
+    shutdown: a descriptor number closed while still in use could be
+    reused by another connection, and the call would reach that one. -/
+def ofFd (fd : UInt32) (peerUid : Option Nat := none) (ops : FdOps := {}) : IO Transport := do
   let st ← IO.mkRef ({} : FdState)
   let release : IO Unit := do
     let go ← st.modifyGet fun s =>
       if s.closed && s.users == 0 && !s.released then (true, { s with released := true })
       else (false, s)
-    if go then try Sock.close fd catch _ => pure ()
-  -- `recv` and `send` hold the descriptor between `enter` and `leave`.
+    if go then try ops.close fd catch _ => pure ()
+  -- Every call that uses the descriptor holds it between `enter` and
+  -- `leave`; it is released when closed and no longer held.
   let enter : IO Bool := st.modifyGet fun s =>
     if s.closed then (false, s) else (true, { s with users := s.users + 1 })
   let leave : IO Unit := do
@@ -106,7 +117,7 @@ def ofFd (fd : UInt32) (peerUid : Option Nat := none) : IO Transport := do
       pure (if now ≥ deadline then 0 else deadline - now)
     if deadline != 0 && timeout == 0 then return none
     try
-      let b ← Sock.recv fd 65536 timeout.toUInt32
+      let b ← ops.recv fd 65536 timeout.toUInt32
       return if b.isEmpty then none else some b
     catch _ => return none
   return {
@@ -115,19 +126,23 @@ def ofFd (fd : UInt32) (peerUid : Option Nat := none) : IO Transport := do
       try recvOnce deadline finally leave
     send := fun b => do
       if !(← enter) then throw (IO.userError "send: connection closed")
-      try Sock.send fd b finally leave
+      try ops.send fd b finally leave
     shutdownWrite := do
       if ← enter then
-        try Sock.shutdown fd 1 catch _ => pure ()
+        try ops.shutdown fd 1 catch _ => pure ()
         leave
     close := do
-      if ← st.modifyGet (fun s => (s.closed, { s with closed := true })) then return
-      try Sock.shutdown fd 2 catch _ => pure ()
-      release
+      -- Marking it closed and taking a hold for the shutdown is one step,
+      -- so a call finishing meanwhile cannot release it under us.
+      let first ← st.modifyGet fun s =>
+        if s.closed then (false, s) else (true, { s with closed := true, users := s.users + 1 })
+      if !first then return
+      try ops.shutdown fd 2 catch _ => pure ()
+      leave
     peerUid
     setSendTimeout := fun ms => do
       if ← enter then
-        try Sock.setSendTimeout fd ms.toUInt32 finally leave }
+        try ops.setSendTimeout fd ms.toUInt32 finally leave }
 
 /-- Connect to the Unix socket at `path`. -/
 def connectUnix (path : String) : IO Transport := do

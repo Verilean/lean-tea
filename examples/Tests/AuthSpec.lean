@@ -764,6 +764,39 @@ def blockedSend (peer srv : Transport) : IO (Bool × Nat × Nat) := do
   peer.close
   return (blocked, closeMs, ms)
 
+/-- The descriptor's last receive finishes while `close` is between
+    marking it closed and its shutdown. The descriptor (a made-up number;
+    the calls are stand-ins that log) must not be released before that
+    shutdown, or the shutdown could reach a connection that reused the
+    number. The log at that point, and at the end. -/
+def closeOrder : IO (List String × List String) := do
+  let log ← IO.mkRef ([] : List String)
+  let note (e : String) := log.modify (· ++ [e])
+  let recvGo ← IO.Promise.new
+  let inShutdown ← IO.Promise.new
+  let shutdownGo ← IO.Promise.new
+  let ops : Transport.FdOps := {
+    recv := fun _ _ _ => do
+      let _ ← IO.wait recvGo.result?
+      note "recv done"
+      return .empty
+    shutdown := fun _ _ => do
+      inShutdown.resolve ()
+      let _ ← IO.wait shutdownGo.result?
+      note "shutdown"
+    close := fun _ => note "release" }
+  let t ← Transport.ofFd 999 (ops := ops)
+  let reader ← IO.asTask (prio := .dedicated) (t.recv 0)
+  IO.sleep 50
+  let closer ← IO.asTask (prio := .dedicated) t.close
+  let _ ← IO.wait inShutdown.result?      -- `close` is now inside its shutdown
+  recvGo.resolve ()                       -- the last receive ends meanwhile
+  let _ ← IO.wait reader
+  let mid ← log.get
+  shutdownGo.resolve ()
+  let _ ← IO.wait closer
+  return (mid, ← log.get)
+
 /-- `close` wakes a task waiting in `recv`, on TCP and on a Unix socket:
     whether the receive was still waiting just before, and how long it
     took to return after. The peer stays open throughout (dropping its
@@ -885,6 +918,7 @@ def run : IO LSpec := do
   let kept ← IO.FS.readFile plain
   -- How the tunnel ends.
   let ((tcpWaiting, tcpWake), (unixWaiting, unixWake)) ← closeWakes sockDir
+  let (orderMid, orderEnd) ← closeOrder
   let (o1, p1) ← tcpPair 18782
   let (up1, upFirst) ← tunnelEnds g aSock o1 p1 (o1.send (frame "bye"))
   let (o2, p2) ← tcpPair 18783
@@ -969,6 +1003,9 @@ def run : IO LSpec := do
         pick routes none "/api" == none),
     it "a malformed table is refused with its line number"
       (match parseRoutes "a / unix:/s\nb /x" with | .error e => hasSubstr e "line 2" | .ok _ => false),
+    it "a receive ending during close's shutdown does not release the descriptor before it"
+      (orderMid == ["recv done"] && orderEnd == ["recv done", "shutdown", "release"])
+      s!"{orderMid} / {orderEnd}",
     it s!"close wakes a waiting recv (TCP {tcpWake} ms, Unix {unixWake} ms)"
       (tcpWaiting && unixWaiting && tcpWake < 500 && unixWake < 500),
     it s!"the tunnel ends when the upstream closes first ({upFirst} ms)" (up1 && upFirst < 2000),
