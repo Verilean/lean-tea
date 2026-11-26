@@ -142,8 +142,13 @@ jobs:
       - name: Vision QA offline (coord parsing + frames + stb image FFI + ANSI render + cache replay, ~53 LSpec assertions)
         run: ./.lake/build/bin/vision_spec
 
-      - name: Static site generator (LeanTea.Site fixture build — layouts, nav, listings, links, assets, sitemap, 22 LSpec assertions)
+      - name: Static site generator (LeanTea.Site fixture build — markdown, layouts, nav, listings, links, assets, sitemap, 24 LSpec assertions)
+        timeout-minutes: 5
         run: ./.lake/build/bin/site_spec
+
+      - name: Docs site builds (gen_site over docs/, as the pages workflow runs it)
+        timeout-minutes: 5
+        run: ./.lake/build/bin/gen_site --out "$RUNNER_TEMP/docs-site"
 
       - name: TUI widget kit (layout, combinators, elements, app loop, raw-mode ANSI, wide chars, input decoding, mouse, repaint; 67 LSpec assertions)
         run: ./.lake/build/bin/tui_spec
