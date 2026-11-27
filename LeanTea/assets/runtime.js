@@ -56,10 +56,10 @@ async function step(msg, opts){
     model = r.headers.get('X-Model') || ''
     root.dataset.model = model
     root.innerHTML = await r.text()
-    /- History API: if the server sent an `X-Url` header, push it
+    /* History API: if the server sent an `X-Url` header, push it
        into the address bar so the Back button replays the right
        state. `opts.replace` skips pushState — used when handling a
-       popstate event so we don't churn the stack. -/
+       popstate event so we don't churn the stack. */
     const newUrl = r.headers.get('X-Url')
     if (newUrl && !opts.replace) {
       try { history.pushState({ model }, '', newUrl) } catch(e){}
