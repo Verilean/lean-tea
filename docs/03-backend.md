@@ -281,8 +281,13 @@ bob@example.com    /            unix:/run/app/bob/daemon.sock
 *                  /admin       deny
 ```
 
-The longest prefix wins, segment by segment (`deny` wins a tie, `*`
-lines apply to everyone). A login or a path the map does not route gets
+The longest prefix wins, segment by segment (`deny` wins a tie). LOGIN
+is a login, several separated by commas, `*` for every signed-in user,
+or `-` for everyone without signing in (a guest area). A trailing
+`strip` passes the path on without the prefix and adds
+`X-Forwarded-Prefix`, for an app that cannot live below a path; a
+`Location: /…` it answers with gets the prefix back. One sign-in covers
+every route, so several apps can share one host name and one OAuth app. A login or a path the map does not route gets
 403. Paths are matched after `canonicalPath?`, so `/x/../admin` is 400,
 not a way around `deny`, and they are passed on unchanged. With Google,
 the login is the e-mail address, used only when the provider marks it

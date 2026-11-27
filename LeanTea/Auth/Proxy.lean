@@ -157,15 +157,33 @@ def Target.hostHeader : Target → String
   | .tcp h p => s!"{h}:{p}"
   | _ => "localhost"
 
-/-- One line of the table: requests by `login` (any login, signed in or
-    not, for `*`) under `pathPrefix` go to `target`. -/
+/-- One line of the table: requests under `pathPrefix` by the logins
+    `login` names go to `target`.
+
+    `login` is one login, several separated by commas (`alice,bob`), `*`
+    for whoever got past the sign-in (signed in, or on one of the gate's
+    public paths), or `-` for everyone, signed in or not: such a route
+    never asks to sign in, and still gets `X-Forwarded-User` when there is
+    a session. With `strip`, the upstream gets the path without the
+    prefix (`/manager/x` → `/x`) and the prefix in `X-Forwarded-Prefix`. -/
 structure Route where
   login      : String
   pathPrefix : String
   target     : Target
+  strip      : Bool := false
   deriving Inhabited, Repr
 
-/-- Parse a table: one route per line, `LOGIN PATH-PREFIX TARGET`
+/-- Does the route's `login` field let `login` (`none`: no session) in? -/
+def Route.admits (r : Route) (login : Option String) : Bool :=
+  r.login == "-" || r.login == "*" ||
+    login.any fun l => (r.login.splitOn ",").any (·.trimAscii.toString.toLower == l.toLower)
+
+/-- The logins a table names (not `*` or `-`), for the sign-in allow list. -/
+def namedLogins (routes : List Route) : List String :=
+  (routes.flatMap fun r => (r.login.splitOn ",").map (·.trimAscii.toString))
+    |>.filter (fun l => !l.isEmpty && l != "*" && l != "-") |>.eraseDups
+
+/-- Parse a table: one route per line, `LOGIN PATH-PREFIX TARGET [strip]`
     separated by spaces; `#` starts a comment. -/
 def parseRoutes (text : String) : Except String (List Route) := do
   let mut out := #[]
@@ -175,13 +193,18 @@ def parseRoutes (text : String) : Except String (List Route) := do
     let line := ((raw.splitOn "#").headD "").trimAscii.toString
     if line.isEmpty then continue
     let ws := (line.split (fun c => c == ' ' || c == '\t')).toList.map (·.toString) |>.filter (!·.isEmpty)
-    match ws with
-    | [login, pre, tgt] =>
-      unless pre.startsWith "/" do throw s!"line {n}: the path prefix must start with /: {pre}"
-      let some t := Target.parse? tgt
-        | throw s!"line {n}: expected unix:/path, HOST:PORT or deny, got {tgt}"
-      out := out.push { login, pathPrefix := pre, target := t }
-    | _ => throw s!"line {n}: expected LOGIN PATH-PREFIX TARGET"
+    let (login, pre, tgt, opts) ← match ws with
+      | [l, p, t] => pure (l, p, t, [])
+      | l :: p :: t :: o => pure (l, p, t, o)
+      | _ => throw s!"line {n}: expected LOGIN PATH-PREFIX TARGET [strip]"
+    unless pre.startsWith "/" do throw s!"line {n}: the path prefix must start with /: {pre}"
+    let some t := Target.parse? tgt
+      | throw s!"line {n}: expected unix:/path, HOST:PORT or deny, got {tgt}"
+    for o in opts do
+      unless o == "strip" do throw s!"line {n}: unknown option {o} (only strip)"
+    if (login.splitOn ",").any (fun l => l.trimAscii.isEmpty) then
+      throw s!"line {n}: empty login in {login}"
+    out := out.push { login, pathPrefix := pre, target := t, strip := opts.contains "strip" }
   return out.toList
 
 /-- A path prefix without its trailing slashes (`/mcp/` is `/mcp`), so
@@ -201,9 +224,8 @@ def prefixCovers (pre path : String) : Bool :=
 /-- The target for `login` (`none`: not signed in) at the canonical
     `path`: the longest covering prefix among the login's own lines and
     the `*` lines; on a tie, `deny` wins. `none` when nothing covers it. -/
-def pick (routes : List Route) (login : Option String) (path : String) : Option Target :=
-  let mine := routes.filter fun r =>
-    (r.login == "*" || login.any (·.toLower == r.login.toLower)) && prefixCovers r.pathPrefix path
+def pickRoute (routes : List Route) (login : Option String) (path : String) : Option Route :=
+  let mine := routes.filter fun r => r.admits login && prefixCovers r.pathPrefix path
   -- Compared as normalised, as `prefixCovers` matches them.
   let len (r : Route) := (normPrefix r.pathPrefix).length
   let best := mine.foldl (fun (acc : Option Route) r =>
@@ -211,7 +233,25 @@ def pick (routes : List Route) (login : Option String) (path : String) : Option 
     | none => some r
     | some a =>
       if len r > len a || (len r == len a && r.target == .deny) then some r else acc) none
-  best.map (·.target)
+  best
+
+/-- `pickRoute`'s target. -/
+def pick (routes : List Route) (login : Option String) (path : String) : Option Target :=
+  (pickRoute routes login path).map (·.target)
+
+/-- `path` (as received, canonical) without the first segments that make
+    up `pre`: `/manager/x` under `/manager` is `/x`, and `/manager` is `/`. -/
+def stripPrefix (pre path : String) : String :=
+  let n := ((normPrefix pre).splitOn "/").filter (!·.isEmpty) |>.length
+  let rest := ((path.splitOn "/").drop (n + 1))
+  "/" ++ String.intercalate "/" rest
+
+/-- A `Location` the upstream sent, with the stripped prefix put back
+    when it is a path on this host (`/login` → `/manager/login`). -/
+def relocate (pre loc : String) : String :=
+  if loc.startsWith "/" && !loc.startsWith "//" && !loc.startsWith "/\\" then
+    normPrefix pre ++ loc
+  else loc
 
 structure Config where
   routes        : List Route
@@ -304,11 +344,13 @@ private def answer (client : LeanTea.Net.Transport) (r : Response) : IO Unit :=
     a response as it arrives, or, after a `101`, the connection both ways
     until either side closes. -/
 def relay (cfg : Config) (g : GateConfig) (user : Option User) (target : Target) (req : Request)
-    (client : LeanTea.Net.Transport) (leftover : ByteArray) : IO Unit := do
+    (client : LeanTea.Net.Transport) (leftover : ByteArray) (strip : Option String := none)
+    : IO Unit := do
   if req.body.size > cfg.maxBody then
     return ← answer client (Response.text 413 s!"request body over {cfg.maxBody} bytes\n")
   let upgrade := LeanTea.Net.WebSocketServer.isUpgrade req
-  let headers := upstreamHeaders g user req
+  let headers := upstreamHeaders g user req ++
+    ((strip.map fun p => #[("X-Forwarded-Prefix", normPrefix p)]).getD #[])
   -- Client headers were parsed line by line, but the identity comes from
   -- the provider: a line break in it would add headers of its choosing.
   if headers.any (fun (k, v) => (k ++ v).any fun c => c == '\r' || c == '\n') then
@@ -319,7 +361,10 @@ def relay (cfg : Config) (g : GateConfig) (user : Option User) (target : Target)
   client.setSendTimeout cfg.sendTimeoutMs
   up.setSendTimeout cfg.sendTimeoutMs
   try
-    let path := if req.query.isEmpty then req.path else req.path ++ "?" ++ req.query
+    let base := match strip with
+      | some p => stripPrefix p req.path
+      | none => req.path
+    let path := if req.query.isEmpty then base else base ++ "?" ++ req.query
     let mut head := s!"{req.method} {path} HTTP/1.1\r\nHost: {target.hostHeader}\r\n"
     for (k, v) in headers do
       head := head ++ s!"{k}: {v}\r\n"
@@ -358,6 +403,12 @@ def relay (cfg : Config) (g : GateConfig) (user : Option User) (target : Target)
       let _ ← IO.wait back
     else
       let kept := h.lines.filter fun l => !["connection", "keep-alive"].contains (name l)
+      let kept := match strip with
+        | some p => kept.map fun l =>
+          if name l == "location" then
+            "Location: " ++ relocate p (((l.splitOn ":").drop 1 |> String.intercalate ":").trimAscii.toString)
+          else l
+        | none => kept
       client.send (h.statusLine ++ "\r\n" ++
         String.join (kept.map (· ++ "\r\n")) ++ "Connection: close\r\n\r\n").toUTF8
       let length := h.lines.findSome? fun l =>
@@ -381,15 +432,25 @@ def relay (cfg : Config) (g : GateConfig) (user : Option User) (target : Target)
 def takeover (cfg : Config) (g : GateConfig) (sessions : Sessions)
     : LeanTea.Net.Server.Takeover := fun req => do
   let respond (r : Response) := some fun (c : LeanTea.Net.Transport) (_ : ByteArray) => answer c r
-  match ← gateCheck g sessions req with
-  | .error r => return respond r
-  | .ok user =>
+  let checked ← gateCheck g sessions req
+  -- The gate's own routes (sign in, callback, sign out) stay the gate's.
+  if req.path == g.loginPath || req.path == g.callbackPath || req.path == g.logoutPath then
+    if let .error r := checked then return respond r
+  -- `.error` here means no session on a path that needs one; a `-` route
+  -- does not, so the gate's answer (a redirect or 401) is kept for later.
+  let user := match checked with | .ok u => u | .error _ => none
   let some path := canonicalPath? req.path
     | return respond (Response.text 400 "bad path\n")
-  if (LeanTea.Net.WebSocketServer.isUpgrade req || unsafeMethod req.method) && !originOk cfg g req then
-    return respond (Response.text 403 "cross-origin request refused\n")
-  match pick cfg.routes (user.map (·.login)) path with
-  | none | some .deny => return respond (Response.text 403 "not allowed here\n")
-  | some t => return some fun c leftover => relay cfg g user t req c leftover
+  match pickRoute cfg.routes (user.map (·.login)) path, checked with
+  | some r, _ =>
+    if r.target == .deny then return respond (Response.text 403 "not allowed here\n")
+    if r.login != "-" then
+      if let .error ans := checked then return respond ans
+    if (LeanTea.Net.WebSocketServer.isUpgrade req || unsafeMethod req.method) && !originOk cfg g req then
+      return respond (Response.text 403 "cross-origin request refused\n")
+    let strip := if r.strip && normPrefix r.pathPrefix != "/" then some r.pathPrefix else none
+    return some fun c leftover => relay cfg g user r.target req c leftover strip
+  | none, .error ans => return respond ans  -- signing in may open a route
+  | none, .ok _ => return respond (Response.text 403 "not allowed here\n")
 
 end LeanTea.Auth.Proxy

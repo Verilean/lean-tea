@@ -617,11 +617,15 @@ def dir : System.FilePath := ".lake/build/relay_test"
 /-- Answers who it is and what it was sent. -/
 def echoAs (name : String) : Handler := fun req =>
   pure <| Response.text 200
-    s!"{name}|{req.path}|{(req.header? "x-forwarded-user").getD ""}|{(req.header? "host").getD ""}|{(req.header? "cookie").getD ""}"
+    (s!"{name}|{req.path}|{(req.header? "x-forwarded-user").getD ""}|{(req.header? "host").getD ""}|{(req.header? "cookie").getD ""}" ++
+      ((req.header? "x-forwarded-prefix").map (s!"|prefix={·}")).getD "")
 
 /-- `/slow` answers in two parts, 600 ms apart, with no length. -/
 def slow : Server.Takeover := fun req => pure <|
-  if req.path == "/slow" then some fun c _ => do
+  -- An upstream that redirects to one of its own paths.
+  if req.path == "/redirect" then some fun c _ =>
+    c.send "HTTP/1.1 302 Found\r\nLocation: /login?x=1\r\nContent-Length: 0\r\n\r\n".toUTF8
+  else if req.path == "/slow" then some fun c _ => do
     c.send "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nfirst\n".toUTF8
     IO.sleep 600
     c.send "second\n".toUTF8
@@ -855,7 +859,10 @@ def run : IO LSpec := do
     s!"alice@example.com  /stream  unix:{aSock}\n" ++
     s!"bob@example.com    /        unix:{bSock}\n" ++
     s!"*                  /mcp     deny\n" ++
-    s!"*                  /health  unix:{bSock}\n"
+    s!"*                  /health  unix:{bSock}\n" ++
+    s!"alice@example.com,bob@example.com  /manager  unix:{bSock}  strip\n" ++
+    s!"alice@example.com  /app     unix:{aSock}  strip\n" ++
+    s!"-                  /guest   unix:{bSock}  strip\n"
   let routes ← IO.ofExcept (parseRoutes table)
   let cfg ← GateGroup.idpConfig
   let g : GateConfig := {
@@ -869,6 +876,14 @@ def run : IO LSpec := do
   let alice ← sessions.create (userOf "alice@example.com") exp
   let bob ← sessions.create (userOf "bob@example.com") exp
   let carol ← sessions.create (userOf "carol@example.com") exp
+  -- Apps under path prefixes, one sign-in for all of them.
+  let mAlice ← ask "/manager/x" alice
+  let mBob ← ask "/manager" bob
+  let mCarol ← ask "/manager/x" carol
+  let mAnon ← ask "/manager/x"
+  let guestAnon ← ask "/guest/play"
+  let guestAlice ← ask "/guest/play" alice
+  let moved ← ask "/app/redirect" alice
 
   let aGet ← ask "/api/x" alice "X-Forwarded-User: mallory\r\nX-Forwarded_User: mallory\r\n"
   let bGet ← ask "/api/x" bob
@@ -1031,6 +1046,29 @@ def run : IO LSpec := do
        let deny : Route := { login := "*", pathPrefix := "/mcp", target := .deny }
        [[deny, allow], [allow, deny]].all fun rs =>
          ["/mcp", "/mcp/", "/mcp/tools"].all fun p => pick rs (some "alice") p == some .deny),
+    it "strip: the upstream sees the path without the prefix, and the prefix in X-Forwarded-Prefix"
+      (bodyOf mAlice == "bob|/x|alice@example.com|localhost|theme=dark|prefix=/manager" &&
+        bodyOf mBob == "bob|/|bob@example.com|localhost|theme=dark|prefix=/manager") s!"{mAlice} / {mBob}",
+    it "a login list: someone signed in but not on it gets 403" (statusOf mCarol == "403") mCarol,
+    it "without a session, a signed-in route asks to sign in (not 403)"
+      (statusOf mAnon == "302" && hasSubstr mAnon "next=%2Fmanager%2Fx") mAnon,
+    it "a `-` route needs no sign-in, and still names a signed-in user"
+      (bodyOf guestAnon == "bob|/play||localhost||prefix=/guest" &&
+        bodyOf guestAlice == "bob|/play|alice@example.com|localhost|theme=dark|prefix=/guest")
+      s!"{guestAnon} / {guestAlice}",
+    it "a Location the upstream sends gets the stripped prefix back"
+      (statusOf moved == "302" && hasSubstr moved "Location: /app/login?x=1") moved,
+    it "one session covers every route (the cookie is Path=/)"
+      (statusOf aGet == "200" && statusOf mAlice == "200" && statusOf guestAlice == "200"),
+    it "stripPrefix and relocate"
+      (stripPrefix "/manager" "/manager" == "/" && stripPrefix "/manager/" "/manager/" == "/" &&
+        stripPrefix "/manager" "/manager/a/b" == "/a/b" && stripPrefix "/a/b" "/a/b/c" == "/c" &&
+        relocate "/m" "/x" == "/m/x" && relocate "/m" "//evil.test/x" == "//evil.test/x" &&
+        relocate "/m/" "https://other.test/" == "https://other.test/"),
+    it "table lines: login lists, `-`, strip; unknown options and empty logins are refused"
+      (namedLogins routes == ["alice@example.com", "bob@example.com"] &&
+        (match parseRoutes "a / unix:/s bogus" with | .error e => hasSubstr e "unknown option" | .ok _ => false) &&
+        (match parseRoutes "a,,b / unix:/s" with | .error e => hasSubstr e "empty login" | .ok _ => false)),
     it "targets: unix needs an absolute path, TCP an IPv4 address"
       (Target.parse? "unix:rel" == none && Target.parse? "example.com:80" == none &&
         Target.parse? "http://127.0.0.1:8080/" == some (.tcp "127.0.0.1" 8080))

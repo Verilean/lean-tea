@@ -20,17 +20,31 @@ Responses are relayed as they arrive and WebSocket upgrades become a
 tunnel to the upstream. `--upstream` is `HOST:PORT` or
 `unix:/path/to.sock`.
 
-**One upstream per user**: `--user-map FILE` instead of `--upstream`.
-One route per line, `LOGIN PATH-PREFIX UPSTREAM`, where LOGIN is the
-signed-in login (with Google, the verified e-mail address) or `*` for
-everyone, and UPSTREAM is `unix:/path`, `HOST:PORT` or `deny`. The
-longest prefix wins (segment-wise; `deny` wins a tie); a login or path
-the map does not route gets 403. The path is passed on unchanged.
+**Routes per user and per path**: `--user-map FILE` instead of
+`--upstream`. One route per line, `LOGIN PATH-PREFIX UPSTREAM [strip]`:
+
+* LOGIN: a signed-in login (with Google, the verified e-mail address),
+  several separated by commas, `*` for every signed-in user, or `-` for
+  everyone with no sign-in at all (a guest area, static files; a
+  session, if there is one, still sets `X-Forwarded-User`);
+* UPSTREAM: `unix:/path`, `HOST:PORT` or `deny`;
+* `strip`: pass the path on without the prefix (`/manager/x` → `/x`),
+  with the prefix in `X-Forwarded-Prefix`, and put the prefix back on a
+  `Location: /…` the upstream answers with. Without it the path is
+  passed on unchanged.
+
+The longest prefix wins (segment-wise; `deny` wins a tie). A signed-in
+login or a path the map does not route gets 403; without a session,
+any route but a `-` one asks to sign in first. One sign-in (one cookie,
+`Path=/`) covers every route.
 
 ```
-alice@example.com  /        unix:/run/app/alice/daemon.sock
-alice@example.com  /stream  unix:/run/app/alice/stream.sock
-*                  /mcp     deny
+alice@example.com      /         unix:/run/app/alice/daemon.sock
+alice@example.com      /stream   unix:/run/app/alice/stream.sock
+alice,bob              /manager  127.0.0.1:8080  strip
+*                      /grafana  127.0.0.1:3000
+-                      /tavern   127.0.0.1:2346  strip
+*                      /mcp      deny
 ```
 
 Without `--allowed-users`, the logins named in the map may sign in.
@@ -200,7 +214,7 @@ def run (args : List String) : IO Unit := do
       | some t@(.tcp ..) | some t@(.unix _) => pure [{ login := "*", pathPrefix := "/", target := t }]
       | _ => throw <| IO.userError s!"--upstream: expected HOST:PORT or unix:/path, got {u}"
   let allowed := if !o.allowed.isEmpty then o.allowed
-    else (routes.map (·.login)).filter (· != "*") |>.eraseDups
+    else LeanTea.Auth.Proxy.namedLogins routes
   if allowed.isEmpty then
     throw <| IO.userError "--allowed-users (or logins in --user-map) is required (nobody could sign in otherwise)"
   let (lHost, lPort) ← IO.ofExcept (hostPort "--listen" o.listen)
