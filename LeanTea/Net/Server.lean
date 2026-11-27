@@ -1,5 +1,7 @@
 import LeanTea.Net.Http
 import LeanTea.Net.WebSocketServer
+import LeanTea.Net.Transport
+import LeanTea.Net.Sock
 import Std.Async.TCP
 import Std.Net
 import Std.Async.Timer
@@ -23,7 +25,18 @@ Two accept-loop flavours:
 
 The bench data in `docs/BENCHMARKS.md` shows why the sync variant
 wins on trivial handlers — the task-spawn overhead exceeds the
-handler cost. -/
+handler cost.
+
+`serveUnix` serves the same handler and WebSocket router on a Unix
+domain socket, and `serveThreads` on TCP, both with plain descriptors
+(`LeanTea.Net.Sock`) and one dedicated thread per connection. Their
+connections can be closed while a send waits for a client that stopped
+reading, which libuv sockets cannot do; `auth_proxy` uses `serveThreads`.
+
+Before the WebSocket router and the handler, an optional `Takeover`
+can claim a request and answer on the connection itself, for as long
+as it likes (`LeanTea.Auth.Proxy` relays upstream responses and
+WebSocket traffic this way). The connection closes when it returns. -/
 
 namespace LeanTea.Net.Server
 
@@ -63,21 +76,9 @@ private inductive Recv where
 private def maxHeaderBytes : Nat := 64 * 1024
 private def maxRequestBytes : Nat := 8 * 1024 * 1024
 
-/-- One receive that gives up at `deadline` (monotonic ms): `none` on
-    EOF or when the deadline passes. The selector cancels whichever of
-    the receive and the timer loses, so nothing is left running. -/
-private def recvBefore (client : Socket.Client) (deadline : Nat) : IO (Option ByteArray) := do
-  let now ← IO.monoMsNow
-  if now ≥ deadline then return none
-  let wait : Async (Option ByteArray) := do
-    let timer ← Selector.sleep (Std.Time.Millisecond.Offset.ofNat (deadline - now))
-    Selectable.one #[.case (client.recvSelector 4096) pure,
-                     .case timer (fun _ => pure none)]
-  wait.block
-
 /-- Read until `acc` holds one whole request. The deadline is absolute:
     a client that trickles bytes cannot hold the connection past it. -/
-private partial def recvUntilRequest (client : Socket.Client) (acc : ByteArray) (deadline : Nat)
+private partial def recvUntilRequest (client : Transport) (acc : ByteArray) (deadline : Nat)
     : IO Recv := do
   match splitHeaders acc with
   | some (headersStr, bodySoFar) =>
@@ -93,14 +94,14 @@ private partial def recvUntilRequest (client : Socket.Client) (acc : ByteArray) 
       let reqEnd := headBytes.size + 4 + cl
       return .request { reqBytes := acc.extract 0 reqEnd, leftover := acc.extract reqEnd acc.size }
     else
-      match ← recvBefore client deadline with
+      match ← client.recv deadline with
       | some b => recvUntilRequest client (acc ++ b) deadline
       | none   => return .closed  -- EOF or deadline mid-request → give up
   | none =>
     -- Bound the header wait so a client that never sends "\r\n\r\n"
     -- can't grow `acc` without limit (slowloris).
     if acc.size > maxHeaderBytes then return .refuse 431
-    match ← recvBefore client deadline with
+    match ← client.recv deadline with
     | some b => recvUntilRequest client (acc ++ b) deadline
     | none   => return .closed
 
@@ -131,21 +132,37 @@ connection until the client (or the handler) opts to close it.
 (HTTP pipelining or piggy-backed subsequent request in the same
 segment), so we don't pay an extra `recv?` in the common case. -/
 
+/-- A route that answers on the connection itself: given the request, it
+    may return a function that gets the connection and the bytes already
+    read past the request, writes the whole answer (or relays a stream or
+    tunnel) and returns. The server then closes the connection. `none`
+    leaves the request to the WebSocket router and the handler. -/
+abbrev Takeover := Request → IO (Option (Transport → ByteArray → IO Unit))
+
+def Takeover.none : Takeover := fun _ => pure Option.none
+
 private partial def handleConnLoop (handler : Handler) (ws : WebSocketServer.Router)
-    (client : Socket.Client) (leftover : ByteArray) (requestTimeoutMs : Nat) : IO Unit := do
+    (takeover : Takeover) (client : Transport) (leftover : ByteArray) (requestTimeoutMs : Nat)
+    : IO Unit := do
   -- 0 means the default, as in `ReactorServer` (not "close at once").
   let deadline := (← IO.monoMsNow) + (if requestTimeoutMs == 0 then 30000 else requestTimeoutMs)
   match ← recvUntilRequest client leftover deadline with
-  | .closed => (client.shutdown).block
+  | .closed => pure ()
   | .refuse status =>
-    (client.send (annotateConnection (Response.framingError status) true).toBytes).block
-    (client.shutdown).block
+    client.send (annotateConnection (Response.framingError status) true).toBytes
   | .request ⟨raw, next⟩ =>
     let body : ByteArray :=
       match baFindSeq raw CRLFCRLF with
       | some h => raw.extract (h + 4) raw.size
       | none   => .empty
     let req? := parseRequest raw body
+    let taken? ← match req? with
+      | some req => try takeover req
+                    catch e => pure (some fun c _ => c.send
+                      (annotateConnection (Response.serverError s!"takeover: {e}") true).toBytes)
+      | none => pure none
+    if let some answer := taken? then
+      return ← answer client next
     -- WebSocket upgrade: the router decides; the session then owns the
     -- connection until it ends (no more HTTP on this socket).
     let upgrade? ← match req? with
@@ -159,8 +176,7 @@ private partial def handleConnLoop (handler : Handler) (ws : WebSocketServer.Rou
     match upgrade? with
     | some (req, .ok session) => WebSocketServer.run client req next session
     | some (_, .error resp) =>
-      (client.send (annotateConnection resp true).toBytes).block
-      (client.shutdown).block
+      client.send (annotateConnection resp true).toBytes
     | none =>
     let (resp, close) ← match req? with
       | some req =>
@@ -170,29 +186,27 @@ private partial def handleConnLoop (handler : Handler) (ws : WebSocketServer.Rou
         pure (r, c)
       | none => pure (Response.badRequest, true)
     let resp := annotateConnection resp close
-    (client.send resp.toBytes).block
-    if close then
-      (client.shutdown).block
-    else
-      handleConnLoop handler ws client next requestTimeoutMs
+    client.send resp.toBytes
+    unless close do
+      handleConnLoop handler ws takeover client next requestTimeoutMs
 
-private def handleConn (handler : Handler) (ws : WebSocketServer.Router) (client : Socket.Client)
-    (requestTimeoutMs : Nat) : IO Unit := do
+private def handleConn (handler : Handler) (ws : WebSocketServer.Router) (takeover : Takeover)
+    (client : Transport) (requestTimeoutMs : Nat) : IO Unit := do
   try
-    handleConnLoop handler ws client .empty requestTimeoutMs
+    handleConnLoop handler ws takeover client .empty requestTimeoutMs
   catch e =>
     IO.eprintln s!"conn error: {e}"
   finally
-    try (client.shutdown).block catch _ => pure ()
+    client.close
 
 /-! ## Accept loops -/
 
 partial def serveLoop (server : Socket.Server) (handler : Handler)
     (ws : WebSocketServer.Router := WebSocketServer.Router.none)
-    (requestTimeoutMs : Nat := 30000) : IO Unit := do
+    (requestTimeoutMs : Nat := 30000) (takeover : Takeover := Takeover.none) : IO Unit := do
   let client ← (server.accept).block
-  handleConn handler ws client requestTimeoutMs
-  serveLoop server handler ws requestTimeoutMs
+  handleConn handler ws takeover (← Transport.ofTcp client) requestTimeoutMs
+  serveLoop server handler ws requestTimeoutMs takeover
 
 /-- Concurrent variant: each accepted connection is handled in its
     own `IO.asTask` so a long-running handler doesn't stall the rest
@@ -203,10 +217,11 @@ partial def serveLoop (server : Socket.Server) (handler : Handler)
     no task-spawn overhead. See `docs/BENCHMARKS.md` for numbers. -/
 partial def serveLoopConcurrent (server : Socket.Server) (handler : Handler)
     (ws : WebSocketServer.Router := WebSocketServer.Router.none)
-    (requestTimeoutMs : Nat := 30000) : IO Unit := do
+    (requestTimeoutMs : Nat := 30000) (takeover : Takeover := Takeover.none) : IO Unit := do
   let client ← (server.accept).block
-  let _ ← IO.asTask (handleConn handler ws client requestTimeoutMs)
-  serveLoopConcurrent server handler ws requestTimeoutMs
+  let conn ← Transport.ofTcp client
+  let _ ← IO.asTask (handleConn handler ws takeover conn requestTimeoutMs)
+  serveLoopConcurrent server handler ws requestTimeoutMs takeover
 
 /-- A dotted IPv4 address (four decimal octets, each 0–255), or
     `localhost` as 127.0.0.1. `none` for anything else — the caller must
@@ -241,7 +256,7 @@ def parseIPv4 (s : String) : IPv4Addr :=
     event that has to be resolved via another HTTP request. -/
 def serveConcurrent (port : UInt16 := 8001) (host : String := "0.0.0.0")
     (handler : Handler) (ws : WebSocketServer.Router := WebSocketServer.Router.none)
-    (requestTimeoutMs : Nat := 30000) : IO Unit := do
+    (requestTimeoutMs : Nat := 30000) (takeover : Takeover := Takeover.none) : IO Unit := do
   let server ← Socket.Server.mk
   let addr : SocketAddress := .v4 {
     addr := (← listenAddress host),
@@ -253,7 +268,7 @@ def serveConcurrent (port : UInt16 := 8001) (host : String := "0.0.0.0")
   try server.noDelay catch _ => pure ()
   server.listen 128
   IO.eprintln s!"serving (concurrent, keep-alive) on http://{host}:{port}/"
-  serveLoopConcurrent server handler ws requestTimeoutMs
+  serveLoopConcurrent server handler ws requestTimeoutMs takeover
 
 /-- Sequential accept loop. A WebSocket session (`ws`) holds the loop for
     its whole lifetime, so servers with WebSockets want `serveConcurrent`.
@@ -267,7 +282,7 @@ def serveConcurrent (port : UInt16 := 8001) (host : String := "0.0.0.0")
     `serveConcurrent` does not have that problem. -/
 def serve (port : UInt16 := 8001) (host : String := "0.0.0.0")
     (handler : Handler) (ws : WebSocketServer.Router := WebSocketServer.Router.none)
-    (requestTimeoutMs : Nat := 30000) : IO Unit := do
+    (requestTimeoutMs : Nat := 30000) (takeover : Takeover := Takeover.none) : IO Unit := do
   let server ← Socket.Server.mk
   let addr : SocketAddress := .v4 {
     addr := (← listenAddress host),
@@ -277,6 +292,54 @@ def serve (port : UInt16 := 8001) (host : String := "0.0.0.0")
   try server.noDelay catch _ => pure ()
   server.listen 128
   IO.eprintln s!"serving (keep-alive) on http://{host}:{port}/"
-  serveLoop server handler ws requestTimeoutMs
+  serveLoop server handler ws requestTimeoutMs takeover
+
+/-- Accept on a listening descriptor forever, each connection on its own
+    dedicated thread. -/
+private partial def serveFd (listener : UInt32) (handler : Handler) (ws : WebSocketServer.Router)
+    (requestTimeoutMs : Nat) (takeover : Takeover) : IO Unit := do
+  let rec loop : IO Unit := do
+    match ← (Sock.accept listener).toBaseIO with
+    | .ok fd =>
+      let conn ← Transport.ofFd fd
+      let _ ← IO.asTask (prio := .dedicated) (handleConn handler ws takeover conn requestTimeoutMs)
+    | .error e =>
+      -- Out of descriptors and the like: wait a little rather than spin.
+      IO.eprintln s!"accept: {e}"
+      IO.sleep 100
+    loop
+  -- `accept` blocks its thread, so the loop runs on one of its own.
+  let t ← IO.asTask (prio := .dedicated) loop
+  match t.get with
+  | .ok () => pure ()
+  | .error e => throw e
+
+/-- `serveConcurrent` on a Unix domain socket at `path`, created with file
+    mode `mode` (who may connect is decided by the file's owner, group and
+    mode, and by the directory it is in). A stale socket at `path` is
+    replaced; any other file there is an error. Each connection runs on
+    its own dedicated thread.
+
+    `requestTimeoutMs` (0 = the default 30 s) bounds how long each request
+    may take to arrive, as on the TCP servers. -/
+def serveUnix (path : String) (mode : UInt32 := 0o660)
+    (handler : Handler) (ws : WebSocketServer.Router := WebSocketServer.Router.none)
+    (requestTimeoutMs : Nat := 30000) (takeover : Takeover := Takeover.none) : IO Unit := do
+  let listener ← Sock.listenUnix path mode
+  IO.eprintln s!"serving (concurrent, keep-alive) on unix:{path}"
+  serveFd listener handler ws requestTimeoutMs takeover
+
+/-- `serveConcurrent` with plain TCP descriptors and one dedicated thread
+    per connection instead of libuv. Closing a connection then also ends a
+    send that waits for a client that stopped reading, which a relay
+    (`LeanTea.Auth.Proxy.takeover`) needs. `host` is an IPv4 address or
+    `localhost`. -/
+def serveThreads (port : UInt16 := 8001) (host : String := "127.0.0.1")
+    (handler : Handler) (ws : WebSocketServer.Router := WebSocketServer.Router.none)
+    (requestTimeoutMs : Nat := 30000) (takeover : Takeover := Takeover.none) : IO Unit := do
+  let _ ← listenAddress host  -- refuses anything but an IPv4 address
+  let listener ← Sock.listenTcp (if host == "localhost" then "127.0.0.1" else host) port
+  IO.eprintln s!"serving (threads, keep-alive) on http://{host}:{port}/"
+  serveFd listener handler ws requestTimeoutMs takeover
 
 end LeanTea.Net.Server

@@ -43,11 +43,26 @@ def proxyClient : OAuth2.Client := {
   user := aliceUser
 }
 
+/-- Users without a `login`, so the address is the user name: `bob`'s
+    is verified, `eve`'s is not (and must not be used). -/
+def verifiedClient : OAuth2.Client := {
+  clientId := "verified-client", clientSecret := "shh",
+  redirectUri := "http://127.0.0.1:18766/cb",
+  user := { sub := "bob-sub-002", email := "bob@example.com", name := "Bob" }
+}
+
+def unverifiedClient : OAuth2.Client := {
+  clientId := "unverified-client", clientSecret := "shh",
+  redirectUri := "http://127.0.0.1:18766/cb",
+  user := { sub := "eve-sub-003", email := "alice@example.com", name := "Eve",
+            emailVerified := false }
+}
+
 def main : IO Unit := do
   let port : UInt16 := match (← IO.getEnv "AUTH_TEST_PORT").bind String.toNat? with
     | some n => n.toUInt16
     | none   => 18765
   let codes  ← IO.mkRef ([] : List OAuth2.IssuedCode)
   let tokens ← IO.mkRef ([] : List OAuth2.IssuedToken)
-  let st : OAuth2.State := { cfg := { clients := [aliceClient, proxyClient] }, codes, tokens }
+  let st : OAuth2.State := { cfg := { clients := [aliceClient, proxyClient, verifiedClient, unverifiedClient] }, codes, tokens }
   LeanTea.Net.Server.serve port "127.0.0.1" (OAuth2.handler st)

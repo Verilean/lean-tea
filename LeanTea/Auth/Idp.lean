@@ -48,6 +48,8 @@ structure User where
   picture : String := ""
   /-- GitHub-style user name, sent as `login` when non-empty. -/
   login   : String := ""
+  /-- Sent as OIDC `email_verified`. -/
+  emailVerified : Bool := true
   deriving Inhabited, Repr
 
 /-- A single registered client. Multiple clients can share an IdP
@@ -212,6 +214,7 @@ private def handleUserInfo (st : State) (req : Request) : IO Response := do
       return Response.json 200 <| Lean.Json.mkObj <| [
         ("sub",     Lean.Json.str u.sub),
         ("email",   Lean.Json.str u.email),
+        ("email_verified", Lean.Json.bool u.emailVerified),
         ("name",    Lean.Json.str u.name),
         ("picture", Lean.Json.str u.picture)
       ] ++ (if u.login.isEmpty then [] else [("login", Lean.Json.str u.login)])

@@ -16,6 +16,28 @@ login in `X-Forwarded-User` (see `LeanTea.Auth.Proxy` for exactly which
 headers pass). Without a session, paths under `--api-prefix` (default
 `/api/`) get 401 and pages redirect to the login route.
 
+Responses are relayed as they arrive and WebSocket upgrades become a
+tunnel to the upstream. `--upstream` is `HOST:PORT` or
+`unix:/path/to.sock`.
+
+**One upstream per user**: `--user-map FILE` instead of `--upstream`.
+One route per line, `LOGIN PATH-PREFIX UPSTREAM`, where LOGIN is the
+signed-in login (with Google, the verified e-mail address) or `*` for
+everyone, and UPSTREAM is `unix:/path`, `HOST:PORT` or `deny`. The
+longest prefix wins (segment-wise; `deny` wins a tie); a login or path
+the map does not route gets 403. The path is passed on unchanged.
+
+```
+alice@example.com  /        unix:/run/app/alice/daemon.sock
+alice@example.com  /stream  unix:/run/app/alice/stream.sock
+*                  /mcp     deny
+```
+
+Without `--allowed-users`, the logins named in the map may sign in.
+WebSocket upgrades and POST/PUT/PATCH/DELETE must come from the proxy's
+own origin (`Host`, and `https://` with Secure cookies) or one given
+with `--allow-origin https://host[:port]` (repeatable).
+
 **Secrets are read from files, never from arguments** (arguments are
 visible to every local user in `/proc/PID/cmdline`):
 
@@ -69,10 +91,13 @@ structure Opts where
   authUrl         : Option String := none
   tokenUrl        : Option String := none
   userInfoUrl     : Option String := none
+  userMap         : Option String := none
+  origins         : List String := []
 
 private def usage : String :=
-  "usage: auth_proxy --upstream HOST:PORT --client-id ID --redirect-url URL " ++
-  "--allowed-users a,b [--listen HOST:PORT] [--provider github|google|microsoft] " ++
+  "usage: auth_proxy (--upstream HOST:PORT|unix:PATH | --user-map FILE) --client-id ID " ++
+  "--redirect-url URL [--allowed-users a,b] [--listen HOST:PORT] " ++
+  "[--provider github|google|microsoft] [--allow-origin URL] " ++
   "[--client-secret-file F] [--cookie-secret-file F] [--cookie-secure true|false] ..."
 
 private def bool? : String → Option Bool
@@ -88,6 +113,8 @@ partial def parse (o : Opts) : List String → Except String Opts
       .error s!"{flag} is not accepted: pass the secret in a file ({flag}-file)"
     | "--listen", v :: r => parse { o with listen := v } r
     | "--upstream", v :: r => parse { o with upstream := v } r
+    | "--user-map", v :: r => parse { o with userMap := some v } r
+    | "--allow-origin", v :: r => parse { o with origins := o.origins ++ [v] } r
     | "--provider", v :: r => parse { o with provider := v } r
     | "--client-id", v :: r => parse { o with clientId := v } r
     | "--client-secret-file", v :: r => parse { o with clientSecretFile := some v } r
@@ -158,12 +185,25 @@ private def provider (o : Opts) : Except String Provider := do
 
 def run (args : List String) : IO Unit := do
   let o ← IO.ofExcept (parse {} args)
-  if o.upstream.isEmpty || o.clientId.isEmpty || o.redirectUrl.isEmpty then
-    throw <| IO.userError s!"--upstream, --client-id and --redirect-url are required\n{usage}"
-  if o.allowed.isEmpty then
-    throw <| IO.userError "--allowed-users is required (nobody could sign in otherwise)"
+  if o.clientId.isEmpty || o.redirectUrl.isEmpty then
+    throw <| IO.userError s!"--client-id and --redirect-url are required\n{usage}"
+  let routes ← match o.userMap, o.upstream with
+    | some _, u =>
+      if !u.isEmpty then throw <| IO.userError "give --upstream or --user-map, not both"
+      let path := o.userMap.getD ""
+      let text ← try IO.FS.readFile path catch _ =>
+        throw <| IO.userError s!"--user-map: cannot read {path}"
+      IO.ofExcept ((LeanTea.Auth.Proxy.parseRoutes text).mapError (s!"--user-map {path}: " ++ ·))
+    | none, "" => throw <| IO.userError s!"--upstream or --user-map is required\n{usage}"
+    | none, u =>
+      match LeanTea.Auth.Proxy.Target.parse? u with
+      | some t@(.tcp ..) | some t@(.unix _) => pure [{ login := "*", pathPrefix := "/", target := t }]
+      | _ => throw <| IO.userError s!"--upstream: expected HOST:PORT or unix:/path, got {u}"
+  let allowed := if !o.allowed.isEmpty then o.allowed
+    else (routes.map (·.login)).filter (· != "*") |>.eraseDups
+  if allowed.isEmpty then
+    throw <| IO.userError "--allowed-users (or logins in --user-map) is required (nobody could sign in otherwise)"
   let (lHost, lPort) ← IO.ofExcept (hostPort "--listen" o.listen)
-  let (uHost, uPort) ← IO.ofExcept (hostPort "--upstream" o.upstream)
   let p ← IO.ofExcept (provider o)
   let clientSecret ← readSecret "client secret" o.clientSecretFile "client-secret"
   let cookieSecret ← readSecret "cookie secret" o.cookieSecretFile "cookie-secret"
@@ -173,13 +213,16 @@ def run (args : List String) : IO Unit := do
     client := p.withClient o.clientId clientSecret o.redirectUrl o.scope
     loginPath := "/oauth2/start", logoutPath := "/oauth2/sign_out"
     cookieName := o.cookieName, cookieSecure := o.cookieSecure, sessionTtl := o.sessionTtl
-    allowedLogins := o.allowed
+    allowedLogins := allowed
     publicPaths := o.publicPaths, publicPrefixes := o.publicPrefixes
     apiPrefixes := if o.apiPrefixes.isEmpty then ["/api/"] else o.apiPrefixes }
   let sessions ← signedSessions cookieSecret.toUTF8
-  IO.eprintln s!"auth_proxy: {o.provider} sign-in for {o.allowed}, forwarding to {uHost}:{uPort}"
-  LeanTea.Net.Server.serveConcurrent lPort lHost
-    (LeanTea.Auth.Proxy.handler { host := uHost, port := uPort, maxBody := o.maxBody } g sessions)
+  let cfg : LeanTea.Auth.Proxy.Config := { routes, maxBody := o.maxBody, origins := o.origins }
+  IO.eprintln s!"auth_proxy: {o.provider} sign-in for {allowed}, {routes.length} route(s)"
+  -- Every request is answered by the proxy's takeover; the handler is
+  -- never reached.
+  LeanTea.Net.Server.serveThreads lPort lHost (fun _ => pure LeanTea.Net.Http.Response.notFound)
+    (takeover := LeanTea.Auth.Proxy.takeover cfg g sessions)
 
 def main (args : List String) : IO UInt32 := do
   try
