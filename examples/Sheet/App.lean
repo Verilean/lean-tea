@@ -186,24 +186,33 @@ def view (m : Model) : Html :=
     )
   ]
 
-/-! ## Codec — short tab-separated wire format. -/
+/-! ## Codec — the model as one header-safe line.
+
+The model travels in the `X-Model` header and back. Browsers drop
+whitespace at either end of a header value, so the line must not end in
+one: an empty sheet used to encode as `B2<tab>` and come back as `B2`,
+which did not decode (the page then fell back to the initial model).
+Each part is percent-encoded (`LeanTea.Auth.urlEncode`, which leaves
+only letters, digits, `-_.~` and `%xx`), so values may hold spaces,
+tabs or the separators: `/` after the selected cell, `,` between cells,
+`:` inside a cell. -/
 
 def encodeModel (m : Model) : String :=
-  let cellsEnc :=
-    m.cells.map (fun (k, v) => s!"{k}|{v}")
-      |> String.intercalate ";"
-  s!"{m.selected}\t{cellsEnc}"
+  let enc := LeanTea.Auth.urlEncode
+  let cellsEnc := m.cells.map (fun (k, v) => s!"{enc k}:{enc v}") |> String.intercalate ","
+  s!"{enc m.selected}/{cellsEnc}"
 
 def decodeModel (s : String) : Option Model :=
-  match s.splitOn "\t" with
+  let dec := LeanTea.Auth.OAuth2.formDecode
+  match s.splitOn "/" with
   | [sel, cellsStr] =>
     let pairs : List (CellRef × String) :=
       if cellsStr.isEmpty then [] else
-      cellsStr.splitOn ";" |>.filterMap fun p =>
-        match p.splitOn "|" with
-        | [k, v] => some (k, v)
+      cellsStr.splitOn "," |>.filterMap fun p =>
+        match p.splitOn ":" with
+        | [k, v] => some (dec k, dec v)
         | _      => none
-    some { selected := sel, cells := pairs }
+    some { selected := dec sel, cells := pairs }
   | _ => none
 
 def decodeMsg (s : String) : Option Msg :=

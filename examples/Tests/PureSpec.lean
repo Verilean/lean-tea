@@ -9,6 +9,7 @@ import LeanTea.Crypto.Native
 import LeanTea.Auth.Saml
 import LeanTea.Auth.Security
 import Lean.Data.Json
+import Sheet.App
 
 /-! # examples/Tests/PureSpec.lean — pure-Lean subsystems in one binary.
 
@@ -312,10 +313,38 @@ end HardeningGroup
 
 /-! ## Entry point. -/
 
+/-! ## Sheet's model in the `X-Model` header -/
+
+namespace SheetGroup
+
+/-- What a browser does to a header value: drop spaces and tabs at the ends. -/
+def trimmed (s : String) : String := s.trimAscii.toString
+
+def roundTrips (m : Sheet.Model) : Bool :=
+  match Sheet.decodeModel (trimmed (Sheet.encodeModel m)) with
+  | some m' => m'.selected == m.selected && m'.cells == m.cells
+  | none => false
+
+def run : IO LSpec := do
+  let empty : Sheet.Model := { selected := "B2" }
+  let awkward : Sheet.Model := {
+    selected := "C3"
+    cells := [("A1", "6*7"), ("B2", "A1 + 1 "), ("C3", "a|b;c\td/e,f:g%h+i"), ("D4", " ")] }
+  return group "Sheet model codec (X-Model header)" [
+    it "an empty sheet survives header trimming" (roundTrips empty) (Sheet.encodeModel empty),
+    it "values with spaces, tabs, separators, % and + round-trip" (roundTrips awkward)
+      (Sheet.encodeModel awkward),
+    it "the encoding never starts or ends with whitespace"
+      ([empty, awkward].all fun m => trimmed (Sheet.encodeModel m) == Sheet.encodeModel m)
+  ]
+
+end SheetGroup
+
 def main : IO Unit := do
   let t ← TemplateGroup.run
   let c ← CryptoGroup.run
   let h ← HardeningGroup.run
-  let tree := group "LeanTEA pure-Lean subsystems" [t, c, h]
+  let sh ← SheetGroup.run
+  let tree := group "LeanTEA pure-Lean subsystems" [t, c, h, sh]
   let code ← lspecIO tree
   if code != 0 then IO.Process.exit code.toUInt8
